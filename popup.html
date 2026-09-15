@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LaTeX Islands</title>
+  <link rel="stylesheet" href="ui.css">
+  <script src="popup.js" defer></script>
+</head>
+<body class="popup-page">
+  <main class="popup">
+    <header class="popup-header">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m7 5-5 7 5 7m10-14 5 7-5 7M14 3l-4 18"/></svg></span><h1>LaTeX Islands</h1></div>
+      <span class="version">1.4</span>
+    </header>
+    <p class="popup-subtitle">Vos schémas, directement dans ChatGPT.</p>
+    <button id="open-demo" class="button primary full" type="button"><span>Ouvrir l’éditeur</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></button>
+    <section class="settings" aria-label="Réglages de l’extension">
+      <label class="setting"><span><strong>Activer dans ChatGPT</strong><small>Afficher les schémas dans les réponses.</small></span><input type="checkbox" id="enabled" checked role="switch"><span class="toggle" aria-hidden="true"></span></label>
+      <label class="setting"><span><strong>Rendu automatique</strong><small>Compiler dès que le code est prêt.</small></span><input type="checkbox" id="autoRender" checked role="switch"><span class="toggle" aria-hidden="true"></span></label>
+      <label class="setting select-setting" for="scale"><span><strong>Zoom initial</strong></span><select id="scale"><option value="0.75">75 %</option><option value="1" selected>100 %</option><option value="1.25">125 %</option><option value="1.5">150 %</option><option value="2">200 %</option></select></label>
+      <label class="setting select-setting" for="uiTheme"><span><strong>Apparence</strong><small id="theme-help">Suit le dernier thème de ChatGPT.</small></span><select id="uiTheme" aria-describedby="theme-help"><option value="chatgpt">ChatGPT</option><option value="system">Système</option><option value="light">Clair</option><option value="dark">Sombre</option></select></label>
+      <label class="setting color-setting" for="renderColors"><span><strong>Couleurs des schémas</strong></span><select id="renderColors"><option value="chatgpt">Adaptées au thème</option><option value="native">Couleurs LaTeX · fond blanc</option></select></label>
+    </section>
+    <footer class="popup-footer"><span id="save-status" role="status" aria-live="polite">Préférences enregistrées localement</span><span class="local-note"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Sur cet appareil</span></footer>
+  </main>
+</body>
+</html>

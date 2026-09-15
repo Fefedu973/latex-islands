@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.web-ext-artifacts/
+web-ext-artifacts/
+tests/engine-fixtures/
+tests/*-report.json
+tests/*-results.md
+!tests/performance-results.md
+*.har
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db

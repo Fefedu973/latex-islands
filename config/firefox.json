@@ -1,0 +1,18 @@
+{
+  "minimum_chrome_version": null,
+  "permissions": ["storage", "clipboardWrite"],
+  "background": {
+    "service_worker": null,
+    "scripts": ["core.js", "compiler.js", "background-firefox.js"],
+    "persistent": false
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "latex-islands@fefedu973",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["authenticationInfo", "browsingActivity"]
+      }
+    }
+  }
+}
