@@ -58,7 +58,7 @@ test('answers-only text export and saved preferences honor the chosen options wi
 test('changing options updates the preview without another request and changed messages cause a fresh fetch',async t=>{
   const h=harness(async()=>({ok:true,payload:apiPage([message('q','user','Question visible'),message('a','assistant','Réponse visible',{channel:'final'})])}));t.after(h.close);
   h.get('.li-export-inspect').click();await h.settle();h.change('#li-export-preset','answers');assert.ok(!h.get('.li-export-preview pre').textContent.includes('Question visible'));assert.equal(h.sent.filter(x=>x.data.type==='request').length,1);
-  h.get('main article').firstChild.data+=' New response token';await h.settle();assert.match(h.get('.li-export-status').textContent,/conversation a changé/);h.get('.li-export-save').click();await h.settle();assert.equal(h.sent.filter(x=>x.data.type==='request').length,2);
+  h.get('main article').firstChild.data+=' New response token';await h.settle();assert.match(h.get('.li-export-status').textContent,/conversation has changed/);h.get('.li-export-save').click();await h.settle();assert.equal(h.sent.filter(x=>x.data.type==='request').length,2);
 });
 
 test('a failed later page gives an error without a partial archive',async t=>{
@@ -75,7 +75,7 @@ test('responses from another origin or window cannot satisfy an export request',
 test('cancel and navigation discard in-flight exports without downloading',async t=>{
   for(const mode of ['cancel','navigate']){const h=harness();t.after(h.close);h.get('.li-export-save').click();const request=h.sent.find(item=>item.data.type==='request').data;
     if(mode==='cancel')h.get('.li-export-cancel').click();else{h.w.history.pushState({},'','/c/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');h.reply(request,{ok:true,payload:apiPage()});}
-    await h.settle();assert.equal(h.downloads.length,0);assert.equal(h.get('.li-export-status').dataset.state,'error');assert.match(h.get('.li-export-status').textContent,/annulé/);
+    await h.settle();assert.equal(h.downloads.length,0);assert.equal(h.get('.li-export-status').dataset.state,'error');assert.match(h.get('.li-export-status').textContent,/cancelled/);
   }
 });
 
@@ -86,7 +86,7 @@ test('export absent on new chats/shared links; options restored without fetching
 
 test('clipboard failure exposes an actionable preview without an automatic download',async t=>{
   const h=harness(async()=>({ok:true,payload:apiPage([message('a','assistant','Copie manuelle')])}));t.after(h.close);h.w.navigator.clipboard.writeText=async()=>{throw new Error('denied');};
-  h.get('.li-export-copy').click();await h.settle();assert.equal(h.get('.li-export-preview').hidden,false);assert.equal(h.get('.li-export-status').dataset.state,'error');assert.match(h.get('.li-export-status').textContent,/Copie indisponible/);assert.equal(h.downloads.length,0);
+  h.get('.li-export-copy').click();await h.settle();assert.equal(h.get('.li-export-preview').hidden,false);assert.equal(h.get('.li-export-status').dataset.state,'error');assert.match(h.get('.li-export-status').textContent,/Copy unavailable/);assert.equal(h.downloads.length,0);
 });
 
 test('dialogue preview is paged, inert and configurable independently of the file view',async t=>{
@@ -106,6 +106,8 @@ test('dialogue preview is paged, inert and configurable independently of the fil
 test('closing the modal cancels an in-flight operation and restores focus',async t=>{
   const h=harness();t.after(h.close);h.get('.li-export-toggle').focus();h.get('.li-export-toggle').click();
   h.get('.li-export-save').click();const request=h.sent.find(x=>x.data.type==='request').data;
-  h.get('.li-export-close').click();h.reply(request,{ok:true,payload:apiPage()});await h.settle();
+  const close=h.get('.li-export-close');assert.equal(close.getAttribute('aria-label'),'Close export options');assert.equal(close.textContent,'');
+  const icon=close.querySelector('svg');assert.equal(icon.getAttribute('viewBox'),'0 0 24 24');assert.equal(icon.getAttribute('aria-hidden'),'true');
+  icon.querySelector('path').dispatchEvent(new h.w.MouseEvent('click',{bubbles:true}));h.reply(request,{ok:true,payload:apiPage()});await h.settle();
   assert.equal(h.downloads.length,0);assert.equal(h.get('.li-export-panel').hidden,true);assert.equal(h.w.document.activeElement,h.get('.li-export-toggle'));assert.ok(h.sent.some(x=>x.data.type==='cancel'));
 });

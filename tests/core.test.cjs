@@ -93,7 +93,7 @@ test('repairs common Circuitikz labels containing equals signs for rendering', (
   const source = String.raw`\begin{circuitikz}\draw (0,0) to[V,l=$E=10\,\mathrm{V}$] (0,3);\end{circuitikz}`;
   const normalized = core.normalizeTeX(source);
   assert.match(normalized.body, /l=\{\$E=10\\,\\mathrm\{V\}\$\}/);
-  assert.match(normalized.warnings.join('\n'), /Compatibilité Circuitikz/);
+  assert.match(normalized.warnings.join('\n'), /Circuitikz compatibility/);
 });
 
 test('downgrades unsupported interpolated PGFPlots surface shader for TikZJax', () => {

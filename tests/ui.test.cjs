@@ -61,15 +61,15 @@ test('popup explicit theme wins over system, then system follows OS and cross-pa
 
 test('popup reports failed saves without claiming success',async t=>{
   const h=harness('popup');t.after(h.close);await tick();h.w.chrome.storage.local.set=async()=>{throw Error('disk unavailable');};
-  h.change('autoRender',false);await tick();assert.match(h.el('save-status').textContent,/impossible/);
+  h.change('autoRender',false);await tick();assert.match(h.el('save-status').textContent,/Could not save/);
 });
 
 test('editor restores custom source and saved scale before first render',async t=>{
   const h=harness('demo',{demoSource:CUSTOM,demoExample:'custom',scale:1.25,uiTheme:'dark'});t.after(h.close);await tick();
-  const {frame,sent}=h.connect();assert.equal(frame.title,'Rendu du schéma TikZ');assert.equal(sent[0].origin,EXT);
+  const {frame,sent}=h.connect();assert.equal(frame.title,'TikZ diagram preview');assert.equal(sent[0].origin,EXT);
   assert.equal(sent[0].data.source,CUSTOM);assert.equal(sent[0].data.scale,1.25);assert.equal(sent[0].data.theme,'dark');
-  assert.equal(h.el('example').value,'custom');assert.equal(h.el('source-count').textContent,'3 lignes');assert.equal(h.el('render').disabled,true);
-  h.message(frame,{type:'result',ok:true});assert.equal(h.el('render').disabled,false);assert.equal(h.el('render-status').textContent,'Schéma prêt');
+  assert.equal(h.el('example').value,'custom');assert.equal(h.el('source-count').textContent,'3 lines');assert.equal(h.el('render').disabled,true);
+  h.message(frame,{type:'result',ok:true});assert.equal(h.el('render').disabled,false);assert.equal(h.el('render-status').textContent,'Diagram ready');
 });
 
 test('editor theme changes update the island view without recompiling or losing source',async t=>{
@@ -90,17 +90,17 @@ test('source edits debounce and flush on pagehide before the delay expires',asyn
   const h=harness('demo');t.after(h.close);await tick();h.el('source').value=CUSTOM;
   h.el('source').dispatchEvent(new h.w.Event('input'));assert.equal(h.writes.length,0);
   h.w.dispatchEvent(new h.w.Event('pagehide'));await tick();assert.deepEqual(h.writes,[{demoSource:CUSTOM,demoExample:'custom'}]);
-  assert.equal(h.el('source-status').textContent,'Enregistré localement');await h.flush();assert.equal(h.writes.length,1);
+  assert.equal(h.el('source-status').textContent,'Saved locally');await h.flush();assert.equal(h.writes.length,1);
 });
 
 test('edits during compilation leave a dirty preview indication, then Ctrl+Enter renders current source',async t=>{
   const h=harness('demo');t.after(h.close);await tick();const {frame,sent}=h.connect();
   h.el('source').value=CUSTOM;h.el('source').dispatchEvent(new h.w.Event('input'));
-  h.message(frame,{type:'result',ok:true});assert.equal(h.el('render-status').textContent,'Modifications à compiler');
+  h.message(frame,{type:'result',ok:true});assert.equal(h.el('render-status').textContent,'Uncompiled changes');
   h.w.document.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,cancelable:true}));
   assert.equal(sent.at(-1).data.source,CUSTOM);assert.equal(sent.at(-1).data.id,'demo-2');
   h.message(frame,{type:'result',ok:false});assert.equal(h.el('render').disabled,true,'stale result must not finish a newer render');
-  h.message(frame,{id:'demo-2',type:'result',ok:true});assert.equal(h.el('render-status').textContent,'Schéma prêt');
+  h.message(frame,{id:'demo-2',type:'result',ok:true});assert.equal(h.el('render-status').textContent,'Diagram ready');
 });
 
 test('fullscreen dialog restores focus and synchronizes iframe edits; foreign messages are ignored',async t=>{
@@ -120,7 +120,7 @@ test('ChatGPT is the default popup appearance and uses the observed palette',asy
   assert.equal(h.el('uiTheme').value,'chatgpt');assert.equal(h.w.document.documentElement.dataset.theme,'dark');
   assert.equal(h.w.document.documentElement.style.getPropertyValue('--surface'),'#000000');
   assert.equal(h.w.document.documentElement.style.getPropertyValue('--page'),'#202020');
-  assert.match(h.el('theme-help').textContent,/ChatGPT : sombre/);
+  assert.match(h.el('theme-help').textContent,/ChatGPT theme: dark/);
   h.systemDark(false);assert.equal(h.w.document.documentElement.dataset.theme,'dark');
   h.change('uiTheme','light');await tick();assert.equal(h.w.document.documentElement.dataset.theme,'light');
   assert.equal(h.w.document.documentElement.style.getPropertyValue('--surface'),'');
@@ -130,7 +130,7 @@ test('ChatGPT is the default popup appearance and uses the observed palette',asy
 test('ChatGPT appearance falls back to system until a palette is observed and follows cache changes',async t=>{
   const h=harness('popup',{},true);t.after(h.close);await tick();
   assert.equal(h.el('uiTheme').value,'chatgpt');assert.equal(h.w.document.documentElement.dataset.theme,'dark');
-  assert.match(h.el('theme-help').textContent,/en attendant ChatGPT/);
+  assert.match(h.el('theme-help').textContent,/until ChatGPT is opened/);
   h.systemDark(false);assert.equal(h.w.document.documentElement.dataset.theme,'light');
   h.storage({chatgptTheme:{theme:'dark',colors:{background:'#111111'}}});
   assert.equal(h.w.document.documentElement.dataset.theme,'dark');assert.equal(h.w.document.documentElement.style.getPropertyValue('--surface'),'#111111');

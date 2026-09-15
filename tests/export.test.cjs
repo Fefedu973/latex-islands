@@ -34,12 +34,12 @@ test('modern API follows every previous cursor and preserves every raw payload a
 });
 
 test('missing pagination metadata, stalled cursors and an unfinished latest page fail visibly', async () => {
-  await assert.rejects(core.collectConversation({id: ID, fetchJSON: async () => ({messages: []})}), /Format de réponse/);
-  await assert.rejects(core.collectConversation({id: ID, fetchJSON: async () => ({messages: [], page_info: {has_previous_page: true}})}), /Curseur/);
+  await assert.rejects(core.collectConversation({id: ID, fetchJSON: async () => ({messages: []})}), /Unrecognized ChatGPT response format/);
+  await assert.rejects(core.collectConversation({id: ID, fetchJSON: async () => ({messages: [], page_info: {has_previous_page: true}})}), /pagination cursor/);
   let count = 0;
-  await assert.rejects(core.collectConversation({id: ID, fetchJSON: async () => { count++; return page([], 'stuck'); }}), /boucle/);
+  await assert.rejects(core.collectConversation({id: ID, fetchJSON: async () => { count++; return page([], 'stuck'); }}), /repeating/);
   assert.equal(count, 2, 'stalled API cannot run forever');
-  await assert.rejects(core.collectConversation({id: ID, fetchJSON: async () => page([], null, {page_info: {has_previous_page: false, has_next_page: true}})}), /derniers messages/);
+  await assert.rejects(core.collectConversation({id: ID, fetchJSON: async () => page([], null, {page_info: {has_previous_page: false, has_next_page: true}})}), /latest messages/);
 });
 
 test('pagination failures and limits never produce a success archive', async () => {
@@ -47,7 +47,7 @@ test('pagination failures and limits never produce a success archive', async () 
   await assert.rejects(core.collectConversation({id: ID, fetchJSON: async () => { if (++count === 2) throw Object.assign(new Error('Rate limit'), {status: 429}); return fixture()[0]; }}), /Rate limit/);
   assert.equal(count, 2);
   count = 0;
-  await assert.rejects(core.collectConversation({id: ID, maxPages: 2, fetchJSON: async () => page([], 'cursor-' + (++count))}), /Limite/);
+  await assert.rejects(core.collectConversation({id: ID, maxPages: 2, fetchJSON: async () => page([], 'cursor-' + (++count))}), /Pagination limit/);
   assert.equal(count, 2);
 });
 
@@ -68,9 +68,9 @@ test('only a missing modern endpoint triggers legacy fallback; legacy preserves 
 
 test('input and server conversation IDs are checked before export', async () => {
   let called = false;
-  await assert.rejects(core.collectConversation({id: '../../secret', fetchJSON: async () => { called = true; }}), /conversation enregistrée/);
+  await assert.rejects(core.collectConversation({id: '../../secret', fetchJSON: async () => { called = true; }}), /saved conversation/);
   assert.equal(called, false);
-  await assert.rejects(core.collectConversation({id: ID, fetchJSON: async () => page([], null, {conversation_id: 'another'})}), /ne correspond pas/);
+  await assert.rejects(core.collectConversation({id: ID, fetchJSON: async () => page([], null, {conversation_id: 'another'})}), /does not match/);
   assert.equal(core.conversationId('/c/' + ID), ID);
   assert.equal(core.conversationId('/g/g-example/c/' + ID), ID);
   assert.equal(core.conversationId('/share/' + ID), null);
@@ -85,12 +85,12 @@ test('default Markdown is a visible dialogue preserving code and math, without J
   let index = 0;
   const archive = await core.collectConversation({id: ID, fetchJSON: async () => pages[index++]});
   const markdown = core.toMarkdown(archive);
-  assert.match(markdown, /## Vous/);
+  assert.match(markdown, /## You/);
   assert.match(markdown, /## ChatGPT/);
   assert.doesNotMatch(markdown, /System context|Technical message|Tool result/);
   assert.ok(markdown.includes('Final **answer** with $x^2$'));
   assert.ok(markdown.includes('```mermaid\ngraph TD\nA --> B\n```'));
-  assert.match(markdown, /Image générée/);
+  assert.match(markdown, /Generated image/);
   assert.match(markdown, /plot\.png/);
   assert.doesNotMatch(markdown, /image_asset_pointer|file-service:|unknown_new_field|is_visually_hidden_from_conversation|<details>|```json/);
   assert.equal(core.buildTranscript(archive).messageCount, 3, 'image-only tool output remains a visible response');
@@ -135,7 +135,7 @@ test('sample-shaped multimodal turns become a chronological transcript without d
   assert.equal(transcript.entries.filter(entry => entry.role === 'assistant').length, 14);
   assert.equal((markdown.match(/640 × 480 px/g) || []).length, 6);
   assert.equal((markdown.match(/photo-0\.png/g) || []).length, 1, 'part pointer and metadata attachment are one file');
-  assert.match(markdown, /Image générée.*1024 × 768 px/);
+  assert.match(markdown, /Generated image.*1024 × 768 px/);
   assert.doesNotMatch(markdown, /Preparing|Internal context|Worked briefly|sediment:|opaque|internal\.identifier/);
   assert.equal(transcript.entries[0].role, 'user', 'server turn order wins over unreliable create_time');
   assert.equal(transcript.entries[1].text, 'Answer 0');
@@ -160,12 +160,12 @@ test('options independently control answers, progress, tools, attachments and UT
   assert.match(detailed, /Searching now/);
   assert.match(detailed, /A visible summary/);
   assert.match(detailed, /```python\nprint\(2\)\n```/);
-  assert.match(detailed, /Outil · python/);
+  assert.match(detailed, /Tool · python/);
   assert.match(detailed, /1970-01-01 00:00:00 UTC/);
   assert.doesNotMatch(detailed, /Hidden analysis|Do not show/);
   assert.doesNotMatch(core.toMarkdown(archive, {includeAttachments: false}), /diagram\.pdf/);
   const answers = core.toMarkdown(archive, {includeUser: false});
-  assert.doesNotMatch(answers, /## Vous|Visible question|diagram\.pdf/);
+  assert.doesNotMatch(answers, /## You|Visible question|diagram\.pdf/);
   assert.match(answers, /Visible answer/);
 });
 
@@ -212,7 +212,7 @@ test('search-group lookup, unresolved citations and entities render without opaq
   const archive = transcriptArchive([message('a', 'assistant', '\uE200cite\uE202turn7search2\uE201 Unknown \uE200cite\uE202turn8search0\uE201 \uE200entity\uE202["city","Paris","France"]\uE201', {metadata: {search_result_groups: [{entries: [{ref_id: 'turn7search2', title: 'Known page', url: 'https://example.org/known'}]}]}})]);
   const markdown = core.toMarkdown(archive);
   assert.match(markdown, /\[Known page\]\(https:\/\/example.org\/known\)/);
-  assert.match(markdown, /source non disponible dans l’export/);
+  assert.match(markdown, /source unavailable in this export/);
   assert.match(markdown, /Paris/);
   assert.doesNotMatch(markdown, /\uE200|turn7|turn8/);
 });
@@ -224,7 +224,7 @@ test('citations never alter literal fenced code, inline code or TeX', () => {
   assert.ok(markdown.includes('~~~text\n' + token + '\n~~~'));
   assert.ok(markdown.includes('`' + token + '`'));
   assert.ok(markdown.includes('\\[' + token + '\\]'));
-  assert.match(markdown, /Prose \[source non disponible/);
+  assert.match(markdown, /Prose \[source unavailable/);
 });
 
 test('plain text retains equations and code while removing conversational Markdown decoration', () => {
@@ -246,7 +246,7 @@ test('structured audio and unsupported rich content use readable labels without 
   ]);
   const markdown = core.toMarkdown(archive);
   assert.match(markdown, /Spoken question/);
-  assert.match(markdown, /Audio joint/);
+  assert.match(markdown, /Attached audio/);
   assert.match(markdown, /future\\_widget/);
   assert.doesNotMatch(markdown, /file-service:|configuration|do not print/);
   assert.match(markdown, /````json\n\{"requestedCode": true/, 'JSON explicitly written as conversation code remains intact');
@@ -255,15 +255,15 @@ test('structured audio and unsupported rich content use readable labels without 
 test('text_audio keeps its transcript and media reference, with media independently switchable', () => {
   const archive = transcriptArchive([message('audio', 'assistant', '', {content: {content_type: 'text_audio', text: 'Spoken answer', audio: {content_type: 'audio', asset_pointer: 'file-service://audio-1'}}})]);
   assert.match(core.toMarkdown(archive), /Spoken answer/);
-  assert.match(core.toMarkdown(archive), /Audio joint/);
-  assert.doesNotMatch(core.toMarkdown(archive, {includeAttachments: false}), /Audio joint/);
+  assert.match(core.toMarkdown(archive), /Attached audio/);
+  assert.doesNotMatch(core.toMarkdown(archive, {includeAttachments: false}), /Attached audio/);
   assert.match(core.toMarkdown(archive, {includeAttachments: false}), /Spoken answer/);
 });
 
 test('empty filters and malformed optional fields produce readable output, not exceptions', () => {
   const archive = transcriptArchive([null, 3, message('a', 'assistant', '', {content: null}), message('b', 'user', 'Question', {create_time: 'invalid', metadata: {attachments: [null]}})]);
-  assert.match(core.toMarkdown(archive, {includeUser: false}), /Aucun message/);
-  assert.match(core.toText(archive, {includeUser: false}), /Aucun message/);
+  assert.match(core.toMarkdown(archive, {includeUser: false}), /No messages/);
+  assert.match(core.toText(archive, {includeUser: false}), /No messages/);
   assert.doesNotMatch(core.toMarkdown(archive, {timestamps: true}), /Invalid Date/);
   assert.deepEqual(core.normalizeOptions(null), core.DEFAULT_OPTIONS);
 });

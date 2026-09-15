@@ -24,11 +24,11 @@
     examples.append(option);
   }
   const custom = document.createElement('option');
-  custom.value = 'custom'; custom.textContent = 'Mon schéma'; examples.append(custom);
+  custom.value = 'custom'; custom.textContent = 'My diagram'; examples.append(custom);
 
   function countLines() {
     const lines = source.value.split('\n').length;
-    document.getElementById('source-count').textContent = lines + (lines === 1 ? ' ligne' : ' lignes');
+    document.getElementById('source-count').textContent = lines + (lines === 1 ? ' line' : ' lines');
   }
   async function persistSource() {
     clearTimeout(saveTimer);
@@ -37,15 +37,15 @@
     try {
       if (extensionAPI?.storage?.local) {
         await extensionAPI.storage.local.set({demoSource: source.value, demoExample: examples.value});
-        if (revision === saveRevision) {dirty = false; sourceStatus.textContent = 'Enregistré localement';}
-      } else sourceStatus.textContent = 'Conservé pour cette session';
-    } catch { sourceStatus.textContent = 'Enregistrement impossible'; }
+        if (revision === saveRevision) {dirty = false; sourceStatus.textContent = 'Saved locally';}
+      } else sourceStatus.textContent = 'Kept for this session';
+    } catch { sourceStatus.textContent = 'Could not save'; }
   }
   function saveSource() {
     clearTimeout(saveTimer);
     dirty = true; saveRevision++;
     countLines();
-    sourceStatus.textContent = 'Enregistrement…';
+    sourceStatus.textContent = 'Saving…';
     saveTimer = setTimeout(persistSource, 350);
   }
   function applyTheme(value) {
@@ -59,7 +59,7 @@
       const color = followed && chatgptTheme.colors?.[key];
       if (typeof color === 'string' && /^(#[\da-f]{3,8}|rgba?\([\d\s.,%/]+\))$/i.test(color)) root.style.setProperty(property, color);
     }
-    themeSelect.title = themeSelect.value !== 'chatgpt' ? 'Apparence de l’éditeur' : followed ? 'Suit le dernier thème observé dans ChatGPT' : 'Thème système en attendant un onglet ChatGPT';
+    themeSelect.title = themeSelect.value !== 'chatgpt' ? 'Editor appearance' : followed ? 'Uses the last theme seen in ChatGPT' : 'System theme until a ChatGPT tab is opened';
     updateView();
   }
   function applyRenderColors(value) {
@@ -74,12 +74,12 @@
     sourcePanel.hidden = !visible;
     document.getElementById('workspace').classList.toggle('source-hidden', !visible);
     toggleSource.setAttribute('aria-expanded', String(visible));
-    toggleSource.querySelector('span').textContent = visible ? 'Masquer le code' : 'Afficher le code';
+    toggleSource.querySelector('span').textContent = visible ? 'Hide code' : 'Show code';
   }
   function setRunning(value) {
     running = value;
     renderButton.disabled = value;
-    renderButton.querySelector('span').textContent = value ? 'Compilation…' : 'Compiler';
+    renderButton.querySelector('span').textContent = value ? 'Compiling…' : 'Compile';
     preview.setAttribute('aria-busy', String(value));
   }
   function sendRender() {
@@ -104,7 +104,7 @@
   function openEditor() {
     if (editorState || !frame) return;
     editorState={previewStyle:preview.style.cssText,frameStyle:frame.style.cssText,overflow:document.body.style.overflow,focus:document.activeElement};
-    preview.setAttribute('role','dialog');preview.setAttribute('aria-modal','true');preview.setAttribute('aria-label','Éditeur du schéma TikZ');
+    preview.setAttribute('role','dialog');preview.setAttribute('aria-modal','true');preview.setAttribute('aria-label','TikZ diagram editor');
     preview.classList.add('editor-expanded');
     frame.style.cssText='width:100%;height:100%;display:block;border:0';document.body.style.overflow='hidden';
     if (typeof preview.showPopover==='function') {preview.setAttribute('popover','manual');preview.showPopover();}
@@ -112,14 +112,14 @@
   }
   function render() {
     if (running) return;
-    if (!source.value.trim()) { renderStatus.textContent = 'Ajoutez du code TikZ pour commencer.'; source.focus(); return; }
-    if (source.value.length > 60000) { renderStatus.textContent = 'Le code dépasse la limite de 60 000 caractères.'; return; }
+    if (!source.value.trim()) { renderStatus.textContent = 'Add TikZ code to get started.'; source.focus(); return; }
+    if (source.value.length > 60000) { renderStatus.textContent = 'Code exceeds the 60,000-character limit.'; return; }
     setRunning(true);
-    renderStatus.textContent = 'Compilation locale…';
+    renderStatus.textContent = 'Compiling locally…';
     currentRender = {channel:'latex-islands',type:'render',id:'demo-'+(++renderId),source:source.value,kind:'tikz',autoRender:true,scale,...theme()};
     if (!frame) {
       frame = document.createElement('iframe');
-      frame.title = 'Rendu du schéma TikZ';
+      frame.title = 'TikZ diagram preview';
       frame.allow = 'clipboard-write';
       frame.className = 'island-frame';
       frame.src = extensionAPI?.runtime?.getURL ? extensionAPI.runtime.getURL('island.html') : 'island.html';
@@ -139,16 +139,16 @@
     if (message.type === 'close-editor') {closeEditor();return;}
     if (message.type === 'source-change' && typeof message.source==='string' && message.source.length<=60000) {
       source.value=message.source;currentRender={...currentRender,source:message.source};examples.value='custom';saveSource();
-      setRunning(true);renderStatus.textContent='Compilation locale…';return;
+      setRunning(true);renderStatus.textContent='Compiling locally…';return;
     }
     if (message.type === 'result') {
       setRunning(false);
-      renderStatus.textContent = source.value !== currentRender.source ? 'Modifications à compiler' : message.ok === false || message.error ? 'Erreur de compilation' : 'Schéma prêt';
+      renderStatus.textContent = source.value !== currentRender.source ? 'Uncompiled changes' : message.ok === false || message.error ? 'Compilation error' : 'Diagram ready';
     }
   });
-  source.addEventListener('input', () => { examples.value = 'custom'; saveSource(); if (!running) renderStatus.textContent = 'Modifications à compiler'; });
+  source.addEventListener('input', () => { examples.value = 'custom'; saveSource(); if (!running) renderStatus.textContent = 'Uncompiled changes'; });
   source.addEventListener('keydown', event => {
-    if (event.key === 'Tab' && !event.shiftKey) { event.preventDefault(); const start=source.selectionStart,end=source.selectionEnd; source.setRangeText('  ',start,end,'end'); examples.value='custom';saveSource(); if (!running) renderStatus.textContent = 'Modifications à compiler'; }
+    if (event.key === 'Tab' && !event.shiftKey) { event.preventDefault(); const start=source.selectionStart,end=source.selectionEnd; source.setRangeText('  ',start,end,'end'); examples.value='custom';saveSource(); if (!running) renderStatus.textContent = 'Uncompiled changes'; }
   });
   examples.addEventListener('change', () => {
     const example = globalThis.LatexIslandsExamples.find(item => item.id === examples.value);
@@ -162,18 +162,18 @@
   expandPreview.addEventListener('click', openEditor);
   toggleSource.addEventListener('click', () => setSourceVisible(sourcePanel.hidden));
   document.getElementById('copy-source').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(source.value); sourceStatus.textContent = 'Code copié'; }
-    catch { sourceStatus.textContent = 'Copie impossible'; }
+    try { await navigator.clipboard.writeText(source.value); sourceStatus.textContent = 'Code copied'; }
+    catch { sourceStatus.textContent = 'Could not copy'; }
   });
   themeSelect.addEventListener('change', async () => {
     applyTheme(themeSelect.value);
     try { if (extensionAPI?.storage?.local) await extensionAPI.storage.local.set({uiTheme: themeSelect.value}); }
-    catch { sourceStatus.textContent = 'Apparence non enregistrée'; }
+    catch { sourceStatus.textContent = 'Appearance could not be saved'; }
   });
   colorSelect.addEventListener('change', async () => {
     applyRenderColors(colorSelect.value);
     try { if (extensionAPI?.storage?.local) await extensionAPI.storage.local.set({renderColors: colorSelect.value}); }
-    catch { sourceStatus.textContent = 'Couleurs non enregistrées'; }
+    catch { sourceStatus.textContent = 'Colors could not be saved'; }
   });
   systemTheme.addEventListener('change', () => applyTheme(themeSelect.value));
   extensionAPI?.storage?.onChanged?.addListener((changes, area) => {
@@ -187,7 +187,7 @@
   async function initialize() {
     const first = globalThis.LatexIslandsExamples[0];
     let saved = {};
-    try { if (extensionAPI?.storage?.local) saved=await extensionAPI.storage.local.get({demoSource:first.source,demoExample:first.id,scale:1,uiTheme:'chatgpt',chatgptTheme:null,renderColors:'chatgpt'}); } catch { sourceStatus.textContent='Préférences indisponibles'; }
+    try { if (extensionAPI?.storage?.local) saved=await extensionAPI.storage.local.get({demoSource:first.source,demoExample:first.id,scale:1,uiTheme:'chatgpt',chatgptTheme:null,renderColors:'chatgpt'}); } catch { sourceStatus.textContent='Settings unavailable'; }
     chatgptTheme = saved.chatgptTheme;
     applyTheme(saved.uiTheme);
     applyRenderColors(saved.renderColors);

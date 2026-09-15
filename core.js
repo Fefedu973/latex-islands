@@ -119,12 +119,12 @@
         labels++;
         return prefix + '{' + value + '}';
       });
-      if (labels) warnings.push(`Compatibilité Circuitikz : ${labels} libellé${labels > 1 ? 's' : ''} contenant « = » protégé${labels > 1 ? 's' : ''} automatiquement.`);
+      if (labels) warnings.push(`Circuitikz compatibility: automatically protected ${labels} label${labels > 1 ? 's' : ''} containing “=”.`);
     }
     if (context.pgfplots) {
       let shaders = 0;
       result = result.replace(/shader\s*=\s*(?:faceted\s+)?interp\b/gi, () => { shaders++; return 'shader=flat'; });
-      if (shaders) warnings.push('Compatibilité TikZJax : shader=interp remplacé par shader=flat (le driver SVG/Ximera ne prend pas en charge l’interpolation de surface).');
+      if (shaders) warnings.push('TikZJax compatibility: replaced shader=interp with shader=flat (the SVG/Ximera driver does not support surface interpolation).');
     }
     return result;
   }
@@ -162,7 +162,7 @@
     }
 
     const warnings = [];
-    if (documentClass && documentClass.name !== 'standalone') warnings.push('Le moteur de diagrammes utilise la classe standalone ; la mise en page de la classe ' + documentClass.name + ' est ignorée.');
+    if (documentClass && documentClass.name !== 'standalone') warnings.push('The diagram engine uses the standalone class; the layout of the ' + documentClass.name + ' class is ignored.');
 
     const uncommentedBody = () => withoutComments(body);
     if (!/\\(?:begin\s*\{(?:tikzpicture|circuitikz|tikzcd|axis|semilogxaxis|semilogyaxis|loglogaxis)\}|tikz\b|chemfig\b)/.test(uncommentedBody()) && /\\(?:draw|node|path|fill|coordinate|shade)\b/.test(uncommentedBody())) body = '\\begin{tikzpicture}\n' + body + '\n\\end{tikzpicture}';

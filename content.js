@@ -130,8 +130,8 @@
   }
   function addIsland(el,state) {
     const container=document.createElement('div');container.className='latex-islands-container';
-    container.setAttribute('role','region');container.setAttribute('aria-label','Diagramme TikZ');
-    const frame=document.createElement('iframe');frame.title='Diagramme TikZ — aperçu, code et téléchargement';
+    container.setAttribute('role','region');container.setAttribute('aria-label','TikZ diagram');
+    const frame=document.createElement('iframe');frame.title='TikZ diagram — preview, code and download';
     frame.src=chrome.runtime.getURL('island.html')+'#'+encodeURIComponent(state.id);
     frame.setAttribute('scrolling','no');frame.setAttribute('allow','clipboard-write');frame.referrerPolicy='no-referrer';
     frame.addEventListener('load',()=>{state.ready=true;send(state,true);});

@@ -18,7 +18,7 @@
       const color = followed && chatgptTheme.colors?.[key];
       if (typeof color === 'string' && /^(#[\da-f]{3,8}|rgba?\([\d\s.,%/]+\))$/i.test(color)) root.style.setProperty(property, color);
     }
-    document.getElementById('theme-help').textContent = themeSelect.value !== 'chatgpt' ? 'Popup et éditeur.' : followed ? 'Dernier thème ChatGPT : ' + (chatgptTheme.theme === 'dark' ? 'sombre.' : 'clair.') : 'Thème système en attendant ChatGPT.';
+    document.getElementById('theme-help').textContent = themeSelect.value !== 'chatgpt' ? 'Popup and editor.' : followed ? 'Last ChatGPT theme: ' + (chatgptTheme.theme === 'dark' ? 'dark.' : 'light.') : 'System theme until ChatGPT is opened.';
   }
   systemTheme.addEventListener('change', () => applyTheme(themeSelect.value));
   extensionAPI?.storage?.onChanged?.addListener((changes, area) => {
@@ -36,7 +36,7 @@
       chatgptTheme = settings.chatgptTheme;
       applyTheme(settings.uiTheme);
       document.getElementById('renderColors').value = settings.renderColors === 'native' ? 'native' : 'chatgpt';
-    } catch { status.textContent = 'Impossible de lire les préférences.'; }
+    } catch { status.textContent = 'Could not load settings.'; }
   }
   for (const key of Object.keys(defaults)) document.getElementById(key).addEventListener('change', async event => {
     const value = key === 'uiTheme' || key === 'renderColors' ? event.target.value : key === 'scale' ? Number(event.target.value) : event.target.checked;
@@ -44,9 +44,9 @@
     try {
       await extensionAPI.storage.local.set({[key]: value});
       clearTimeout(feedbackTimer);
-      status.textContent = 'Préférence enregistrée';
-      feedbackTimer = setTimeout(() => { status.textContent = 'Préférences enregistrées localement'; }, 2200);
-    } catch { status.textContent = 'Enregistrement impossible. Réessayer.'; }
+      status.textContent = 'Setting saved';
+      feedbackTimer = setTimeout(() => { status.textContent = 'Settings saved locally'; }, 2200);
+    } catch { status.textContent = 'Could not save. Please try again.'; }
   });
   document.getElementById('open-demo').addEventListener('click', () => {
     if (extensionAPI?.tabs?.create) extensionAPI.tabs.create({url: extensionAPI.runtime.getURL('demo.html')});

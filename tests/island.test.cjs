@@ -105,14 +105,14 @@ test('RPC errors and malformed SVG remain visible errors and allow retry',async 
   assert.equal(h.el('error').hidden,false);assert.equal(h.el('error').textContent,'failed <img src=x>');assert.equal(h.el('error').querySelector('img'),null);
   assert.equal(h.el('compile').disabled,false);assert.equal(h.el('download').disabled,true);
   h.el('compile').click();h.calls[1].resolve({ok:true,svg:'<svg><broken></svg>'});await tick();
-  assert.match(h.el('error').textContent,/SVG.*invalide/);assert.equal(h.el('output').children.length,0);
+  assert.match(h.el('error').textContent,/SVG.*invalid/);assert.equal(h.el('output').children.length,0);
   h.el('compile').click();h.calls[2].resolve({ok:true,svg:svg('recovered'),cached:true});await tick();
   assert.equal(h.el('error').hidden,true);assert.equal(h.el('output').textContent,'recovered');assert.match(h.el('status').textContent,/cache/);
 });
 
 test('SVG download embeds the used local font and preserves diagram labels',async t=>{
   const h=harness();t.after(h.close);h.send();h.calls[0].resolve({ok:true,svg:svg('R = 10 kΩ')});await tick();
-  h.el('download').click();await tick();assert.equal(h.exports.length,1);assert.equal(h.exports[0].filename,'schema-tikz.svg');
+  h.el('download').click();await tick();assert.equal(h.exports.length,1);assert.equal(h.exports[0].filename,'tikz-diagram.svg');
   assert.deepEqual(h.requests,['vendor/tikzjax/fonts/cmr10.woff2']);
   const xml=await h.exports[0].blob.text();assert.match(xml,/data:font\/woff2;base64,QUJD/);assert.match(xml,/R = 10 kΩ/);
   assert.doesNotMatch(xml,/data-width=/);assert.match(xml,/@font-face/);
@@ -127,7 +127,7 @@ test('sibling SVG diagrams are stacked into one SVG while extra HTML roots remai
   assert.equal(root.children[0].getAttribute('y'),'0');assert.equal(root.children[1].getAttribute('y'),'96');
   assert.equal(root.children[0].textContent,'first diagram');assert.equal(root.children[1].textContent,'second diagram');
   h.send({source:'invalid roots'});h.calls[1].resolve({ok:true,svg:svg('first diagram')+svg('second diagram')+'<div>unexpected HTML</div>'});await tick();
-  assert.equal(output.children.length,0);assert.equal(h.el('error').hidden,false);assert.match(h.el('error').textContent,/SVG.*invalide/);
+  assert.equal(output.children.length,0);assert.equal(h.el('error').hidden,false);assert.match(h.el('error').textContent,/SVG.*invalid/);
 });
 
 test('streaming prepares one warmup and compiles immediately when the completed block arrives',async t=>{
@@ -136,7 +136,7 @@ test('streaming prepares one warmup and compiles immediately when the completed 
   h.send({type:'prepare',source:'\\begin{tikzpicture}\\node {Hello};',streaming:true});
   assert.equal(h.calls.length,1);assert.equal(h.calls[0].message.action,'warmup');
   assert.equal(h.el('spinner').hidden,false);assert.equal(h.el('compile').disabled,true);
-  assert.match(h.el('status').textContent,/Écriture/);
+  assert.match(h.el('status').textContent,/Writing/);
   h.calls[0].resolve({ok:true,ready:true});await tick();
   h.send({source:'\\begin{tikzpicture}\\node {Hello};\\end{tikzpicture}'});
   assert.equal(h.calls.length,2);assert.equal(h.calls[1].message.source,'\\begin{tikzpicture}\\node {Hello};\\end{tikzpicture}');
@@ -148,7 +148,7 @@ test('streaming replacement suppresses stale render without compiling incomplete
   const h=harness();t.after(h.close);h.send({source:'complete old'});
   h.send({type:'prepare',source:'new partial'});
   h.calls[0].resolve({ok:true,svg:svg('old')});h.calls[1].resolve({ok:true});await tick();
-  assert.equal(h.el('output').textContent,'');assert.equal(h.calls.length,2);assert.match(h.el('status').textContent,/Écriture/);
+  assert.equal(h.el('output').textContent,'');assert.equal(h.calls.length,2);assert.match(h.el('status').textContent,/Writing/);
   h.send({source:'new partial'});assert.equal(h.calls.length,3);
   h.calls[2].resolve({ok:true,svg:svg('new')});await tick();assert.equal(h.el('output').textContent,'new');
 });
@@ -186,7 +186,7 @@ test('zoom, keyboard movement and pointer drag operate on a stable viewport',asy
 test('PNG export embeds fonts, matches dark mode and produces a bounded raster download',async t=>{
   const h=harness();t.after(h.close);h.send({theme:'dark'});h.calls[0].resolve({ok:true,svg:svg('Ω')});await tick();
   h.el('download-png').click();await tick();await tick();
-  assert.equal(h.exports.at(-1).filename,'schema-tikz.png');assert.equal(h.exports.at(-1).blob.type,'image/png');
+  assert.equal(h.exports.at(-1).filename,'tikz-diagram.png');assert.equal(h.exports.at(-1).blob.type,'image/png');
   assert.deepEqual(h.requests,['vendor/tikzjax/fonts/cmr10.woff2']);
   assert.match(await h.exports[0].blob.text(),/@font-face/);
   assert.ok(h.canvasCalls.some(call=>call[0]==='filter'&&call[1]==='invert(1) hue-rotate(180deg)'));
@@ -215,7 +215,7 @@ test('native PNG uses white background without inversion and SVG export retains 
   const h=harness();t.after(h.close);h.send({theme:'dark',renderColors:'native',colors:{background:'#121212'}});
   h.calls[0].resolve({ok:true,svg:'<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><path fill="#e60000" stroke="#0044cc" d="M0 0h10v10z"/></svg>'});await tick();
   h.el('download-png').click();await tick();await tick();
-  assert.equal(h.exports.at(-1).filename,'schema-tikz.png');
+  assert.equal(h.exports.at(-1).filename,'tikz-diagram.png');
   assert.ok(h.canvasCalls.some(call=>call[0]==='fillStyle'&&call[1]==='#ffffff'));
   assert.equal(h.canvasCalls.some(call=>call[0]==='filter'),false);
   h.el('download').click();await tick();

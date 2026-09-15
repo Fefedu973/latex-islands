@@ -1,54 +1,12 @@
-# Store listing drafts — 1.4.0
+# Store listing — 1.4.1
 
-These are submission materials, not a claim that either store has published or approved the extension. Use the browser-specific build. The repository URL is https://github.com/Fefedu973/latex-islands. Privacy policy: https://github.com/Fefedu973/latex-islands/blob/main/PRIVACY.md. Check that public URLs resolve before entering them into a store dashboard.
+Repository: https://github.com/Fefedu973/latex-islands. Privacy policy: https://github.com/Fefedu973/latex-islands/blob/main/PRIVACY.md.
 
-## Texte français prêt à coller
-
-### Nom
-
-LaTeX Islands — TikZ & Export pour ChatGPT
-
-### Description courte
-
-Affichez vos schémas TikZ dans ChatGPT et exportez les conversations en Markdown, texte ou JSON.
-
-### Description détaillée
-
-Rendez vos conversations techniques ChatGPT plus faciles à lire et à réutiliser.
-
-LaTeX Islands affiche directement les schémas TikZ, Circuitikz, PGFPlots, tikz-cd, Chemfig et TikZ-3DPlot pris en charge dans les réponses ChatGPT. Zoomez, déplacez le dessin, modifiez son code dans un éditeur plein écran et téléchargez le résultat en PNG ou SVG. Le moteur TeX WebAssembly est inclus dans l’extension : la compilation reste sur votre appareil, sans service de compilation distant. Un indicateur apparaît pendant la rédaction de la réponse ; le rendu commence dès que le bloc de schéma est prêt.
-
-Exportez aussi la conversation ouverte en Markdown, texte brut ou archive JSON complète. Choisissez le dialogue, le contexte détaillé ou les réponses uniquement, puis ajustez les options : vos messages, références des pièces jointes, sources et citations, dates, étapes intermédiaires et outils. Vérifiez le résultat dans les vues Dialogue et Fichier avant de copier ou télécharger. Le code et les formules LaTeX sont conservés dans l’export. Dans l’aperçu d’export, les formules restent sous forme de source TeX. Les pièces jointes sont mentionnées ou liées ; leurs fichiers ne sont pas intégrés.
-
-L’export est déclenché par votre action. Il relit les pages de la conversation auprès de ChatGPT avec votre session connectée, puis prépare le fichier localement. L’authentification et l’identifiant de la conversation sont utilisés uniquement pour ces requêtes à ChatGPT. Aucun contenu de conversation n’est envoyé au développeur. L’extension ne comporte ni statistiques d’usage, ni publicité, ni serveur du développeur.
-
-L’interface est en français. Elle propose les apparences claire, sombre, système ou le dernier thème ChatGPT observé. Les schémas peuvent s’adapter au thème ou conserver leurs couleurs LaTeX sur fond blanc, y compris dans les exports.
-
-LaTeX Islands est un outil pour schémas, pas une distribution complète de TeX. Les fichiers externes et les packages absents ne sont pas pris en charge. L’API interne de ChatGPT peut évoluer et nécessiter une mise à jour de l’export.
-
-Projet indépendant et open source, sans affiliation ni approbation d’OpenAI, Google ou Mozilla.
-
-### Usage unique — Chrome
-
-Améliorer la lecture et la réutilisation du contenu technique de la conversation ChatGPT ouverte : rendre ses schémas LaTeX localement et permettre son export à la demande dans un format lisible ou archivable. Les deux fonctions sont limitées au contenu ChatGPT et décrites dans l’interface.
-
-### Justifications des permissions — français
-
-- **storage** : conserver localement les réglages d’affichage et d’export ainsi que le dernier code de l’éditeur autonome, sans enregistrer les conversations exportées ni les jetons de session.
-- **offscreen, Chrome uniquement** : héberger un moteur TeX local partagé entre les onglets pour préparer, compiler et mettre en cache les schémas sans ouvrir un onglet auxiliaire visible.
-- **clipboardWrite, Firefox uniquement** : exécuter l’action Copier après la récupération asynchrone des pages de la conversation, lorsque l’activation initiale du clic n’est plus disponible. L’extension écrit le résultat demandé ; elle ne lit pas le presse-papiers.
-- **Accès à chatgpt.com et chat.openai.com** : détecter les schémas dans les réponses, ajouter les contrôles et récupérer la conversation ouverte lorsque l’utilisateur demande un aperçu, une copie ou un téléchargement. Aucun accès aux autres sites.
-- **wasm-unsafe-eval dans la CSP** : exécuter le moteur TeX WebAssembly fourni dans le paquet. Aucun code distant n’est téléchargé.
-
-### Déclaration de données — Firefox
-
-Le paquet Firefox déclare **authenticationInfo** et **browsingActivity**. À la demande d’export, il utilise la session ChatGPT existante et transmet à ChatGPT l’identifiant de la conversation ainsi que les curseurs de pagination. Le contenu reçu est transformé localement. Aucun contenu de conversation ni jeton n’est envoyé au développeur. Firefox desktop 140 ou ultérieur est requis pour présenter ces déclarations dans son interface de consentement.
-
-## English copy
+## Listing
 
 ### Name
 
-LaTeX Islands — TikZ & Export pour ChatGPT
+LaTeX Islands — TikZ & Export for ChatGPT
 
 ### Short description
 
@@ -64,7 +22,7 @@ The extension also exports the open conversation as Markdown, plain text or a co
 
 Export is user-initiated. It reads the current conversation's pages from ChatGPT using your existing signed-in session, then prepares the file on your device. Authentication information and the current conversation identifier/cursors are sent only to ChatGPT for those requests. There is no analytics, developer backend, advertising, or upload of conversations to the maintainer.
 
-The interface is currently French. It supports light/dark/system appearance and the last observed ChatGPT theme, plus either adapted diagram colors or original LaTeX colors on white. This is a diagram renderer rather than a full TeX document editor. Missing packages and external files are not supported. ChatGPT's internal API may change and temporarily affect exports.
+Supports light/dark/system appearance and the last observed ChatGPT theme, plus either adapted diagram colors or original LaTeX colors on white. This is a diagram renderer rather than a full TeX document editor. Missing packages and external files are not supported. ChatGPT's internal API may change and temporarily affect exports.
 
 Independent open-source project; not affiliated with or endorsed by OpenAI, Google or Mozilla.
 

@@ -2,22 +2,22 @@
 'use strict';
 globalThis.LatexIslandsExamples = [
   {
-    id: 'optics', title: 'TikZ · lentille convergente',
+    id: 'optics', title: 'TikZ · converging lens',
     source: String.raw`\begin{tikzpicture}[>=stealth,scale=0.9]
-  % Axe optique et lentille mince
+  % Optical axis and thin lens
   \draw[->,gray] (-4,0) -- (4.8,0) node[right] {$x$};
   \draw[<->,very thick,teal] (0,-2) -- (0,2);
   \node[below left] at (0,0) {$O$};
   \fill (-1.5,0) circle (1.5pt) node[below] {$F$};
   \fill (1.5,0) circle (1.5pt) node[below] {$F'$};
 
-  % Objet AB et image A'B'
+  % Object AB and image A'B'
   \draw[->,very thick] (-3,0) node[below] {$A$}
     -- (-3,1.5) node[above] {$B$};
   \draw[->,very thick] (3,0) node[above] {$A'$}
     -- (3,-1.5) node[below] {$B'$};
 
-  % Deux rayons remarquables
+  % Two principal rays
   \draw[orange,thick,->] (-3,1.5) -- (0,1.5);
   \draw[orange,thick,->] (0,1.5) -- (3.8,-2.3);
   \draw[blue,thick,->] (-3,1.5) -- (0,0);
@@ -25,7 +25,7 @@ globalThis.LatexIslandsExamples = [
 \end{tikzpicture}`
   },
   {
-    id: 'circuit', title: 'Circuitikz · filtre RC',
+    id: 'circuit', title: 'Circuitikz · RC filter',
     source: String.raw`\usepackage{amsmath}
 \usepackage[european]{circuitikz}
 \begin{circuitikz}
@@ -37,7 +37,7 @@ globalThis.LatexIslandsExamples = [
 \end{circuitikz}`
   },
   {
-    id: 'plot', title: 'PGFPlots · réponse fréquentielle',
+    id: 'plot', title: 'PGFPlots · frequency response',
     source: String.raw`\usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
 \begin{tikzpicture}
@@ -50,14 +50,14 @@ globalThis.LatexIslandsExamples = [
   samples=100,domain=0.01:100
 ]
   \addplot[teal,very thick] {-10*ln(1+x^2)/ln(10)};
-  \addlegendentry{Filtre passe-bas RC}
+  \addlegendentry{RC low-pass filter}
   \addplot[orange,dashed,thick] coordinates {(1,-42) (1,3)};
-  \addlegendentry{Pulsation de coupure}
+  \addlegendentry{Cutoff angular frequency}
 \end{semilogxaxis}
 \end{tikzpicture}`
   },
   {
-    id: 'diagram', title: 'TikZ · chaîne d’acquisition',
+    id: 'diagram', title: 'TikZ · signal acquisition chain',
     source: String.raw`\usetikzlibrary{arrows.meta,positioning}
 \begin{tikzpicture}[
   node distance=12mm,
@@ -65,17 +65,17 @@ globalThis.LatexIslandsExamples = [
     minimum width=28mm,minimum height=12mm,align=center},
   >={Stealth},thick
 ]
-  \node[block] (sensor) {Capteur};
-  \node[block,right=of sensor] (amp) {Amplification};
-  \node[block,below=of amp] (adc) {Conversion\\analogique/numérique};
-  \node[block,left=of adc] (mcu) {Microcontrôleur};
+  \node[block] (sensor) {Sensor};
+  \node[block,right=of sensor] (amp) {Amplifier};
+  \node[block,below=of amp] (adc) {Analog-to-digital\\conversion};
+  \node[block,left=of adc] (mcu) {Microcontroller};
   \draw[->] (sensor) -- (amp);
   \draw[->] (amp) -- (adc);
   \draw[->] (adc) -- (mcu);
 \end{tikzpicture}`
   },
   {
-    id: 'flowchart', title: 'TikZ · flowchart automatique',
+    id: 'flowchart', title: 'TikZ · flowchart',
     source: String.raw`\begin{tikzpicture}[
   node distance=11mm and 18mm,
   startstop/.style={rectangle,rounded corners,draw,minimum width=28mm,minimum height=9mm,align=center},
@@ -83,23 +83,23 @@ globalThis.LatexIslandsExamples = [
   io/.style={trapezium,trapezium left angle=70,trapezium right angle=110,draw,align=center},
   arrow/.style={->,thick,>={Stealth}}
 ]
-  \node[startstop] (start) {Début};
-  \node[io,below=of start] (input) {Lire $n$};
+  \node[startstop] (start) {Start};
+  \node[io,below=of start] (input) {Read $n$};
   \node[decision,below=of input] (test) {$n>1$ ?};
-  \node[startstop,below left=of test] (again) {Continuer};
-  \node[startstop,below right=of test] (stop) {Fin};
+  \node[startstop,below left=of test] (again) {Continue};
+  \node[startstop,below right=of test] (stop) {End};
   \draw[arrow] (start)--(input);
   \draw[arrow] (input)--(test);
-  \draw[arrow] (test)--node[above left]{oui}(again);
-  \draw[arrow] (test)--node[above right]{non}(stop);
+  \draw[arrow] (test)--node[above left]{yes}(again);
+  \draw[arrow] (test)--node[above right]{no}(stop);
 \end{tikzpicture}`
   },
   {
-    id: 'molecule', title: 'Chemfig · molécule organique',
+    id: 'molecule', title: 'Chemfig · organic molecule',
     source: String.raw`\chemfig{HO-*6(-=-(-OH)-(-CH_2CH_2NH_2)=-)}`
   },
   {
-    id: 'surface3d', title: 'PGFPlots · surface 3D',
+    id: 'surface3d', title: 'PGFPlots · 3D surface',
     source: String.raw`\begin{tikzpicture}
 \begin{axis}[
   view={55}{30},
@@ -114,7 +114,7 @@ globalThis.LatexIslandsExamples = [
 \end{tikzpicture}`
   },
   {
-    id: 'axes3d', title: 'TikZ 3D · repère spatial',
+    id: 'axes3d', title: 'TikZ 3D · coordinate axes',
     source: String.raw`\tdplotsetmaincoords{70}{110}
 \begin{tikzpicture}[tdplot_main_coords]
   \draw[->] (0,0,0)--(2.4,0,0) node[anchor=north east]{$x$};

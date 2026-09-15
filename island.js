@@ -23,11 +23,11 @@ function cleanSVG(markup) {
     if(!wrapped.querySelector('parsererror')&&children.length>1&&children.every(el=>el.localName==='svg')&&[...wrapped.documentElement.childNodes].every(n=>n.nodeType===1||!n.textContent.trim())){
       const toPx=value=>{const m=String(value||'').match(/^([\d.]+)(pt|px|cm|mm|in)?$/);return m?Number(m[1])*({pt:4/3,px:1,cm:96/2.54,mm:96/25.4,in:96}[m[2]]||1):0;};
       let y=0,width=0;
-      for(const child of children){const w=toPx(child.getAttribute('width')),h=toPx(child.getAttribute('height'));if(!w||!h)throw new Error('Dimensions de schéma invalides.');child.setAttribute('x','0');child.setAttribute('y',String(y));y+=h+16;width=Math.max(width,w);}
+      for(const child of children){const w=toPx(child.getAttribute('width')),h=toPx(child.getAttribute('height'));if(!w||!h)throw new Error('Invalid diagram dimensions.');child.setAttribute('x','0');child.setAttribute('y',String(y));y+=h+16;width=Math.max(width,w);}
       wrapped.documentElement.setAttribute('width',String(width));wrapped.documentElement.setAttribute('height',String(y-16));wrapped.documentElement.setAttribute('viewBox',`0 0 ${width} ${y-16}`);xml=wrapped;
     }
   }
-  if(xml.querySelector('parsererror') || xml.documentElement.localName!=='svg') throw new Error('Le SVG produit est invalide.');
+  if(xml.querySelector('parsererror') || xml.documentElement.localName!=='svg') throw new Error('Generated SVG is invalid.');
   const allowed=new Set(['svg','g','path','defs','use','text','tspan','rect','circle','ellipse','line','polyline','polygon','clippath','mask','lineargradient','radialgradient','stop','pattern','marker','title','desc']);
   for(const el of [...xml.querySelectorAll('*')]) {
     if(!allowed.has(el.localName.toLowerCase())) {el.remove();continue;}
@@ -52,7 +52,7 @@ function setTheme(message) {
 }
 function setSourceVisible(visible){
   $('source-details').hidden=!visible;$('source-toggle').setAttribute('aria-expanded',String(visible));
-  $('source-toggle').querySelector('span').textContent=visible?'Masquer le code':'Afficher le code';
+  $('source-toggle').querySelector('span').textContent=visible?'Hide code':'Show code';
   fit();resize();
 }
 function setView(mode){
@@ -116,21 +116,21 @@ async function warmup(){
 async function render(){
   if(!current||busy||current.streaming)return;
   const mine=version,source=current.source;busy=true;$('error').hidden=true;$('error-actions').hidden=true;$('warning').hidden=true;
-  setState('loading','Rendu du schéma…');
+  setState('loading','Rendering diagram…');
   try{
     let result;
     if(extensionAPI?.runtime?.id)result=await extensionAPI.runtime.sendMessage({channel:'latex-islands',target:'background',source});
     else {previewCompiler ||=new TikZCompiler();result=await previewCompiler.compile(source);}
     if(mine!==version)return;
-    if(!result?.ok)throw new Error(result?.error||'Le compilateur est indisponible. Recharge la page après l’installation.');
+    if(!result?.ok)throw new Error(result?.error||'Compiler unavailable. Reload the page after installation.');
     svgNode=cleanSVG(result.svg);$('output').replaceChildren(svgNode);
     const size=dimensions(svgNode);naturalWidth=size.width;naturalHeight=size.height;
     $('output').style.width=naturalWidth+'px';$('output').style.height=naturalHeight+'px';
-    panX=panY=0;fit();setAvailable(true);setState('ready',result.cached?'Rendu prêt · en cache':'Rendu prêt');
+    panX=panY=0;fit();setAvailable(true);setState('ready',result.cached?'Diagram ready · cached':'Diagram ready');
     if(result.warnings?.length){$('warning').textContent=result.warnings.join('\n');$('warning').hidden=false;}
     send('result',{ok:true,source});
   }catch(e){
-    if(mine===version){$('error').textContent=e.message;$('error').hidden=false;$('error-actions').hidden=false;setState('error','Le schéma n’a pas pu être affiché');send('result',{ok:false,error:e.message,source});}
+    if(mine===version){$('error').textContent=e.message;$('error').hidden=false;$('error-actions').hidden=false;setState('error','Could not render the diagram');send('result',{ok:false,error:e.message,source});}
   }finally{
     busy=false;$('compile').disabled=current?.streaming===true;$('retry').disabled=current?.streaming===true;resize();
     if(mine!==version&&current.autoRender!==false&&!current.streaming)render();
@@ -153,8 +153,8 @@ window.addEventListener('message',e=>{
   current={...m,streaming};
   if(!same||m.scale!==previous?.scale)zoomValue=[.75,1,1.25,1.5,2].includes(Number(m.scale))?Number(m.scale):1;
   if(m.mode)setView(m.mode);
-  if(streaming){setState('streaming','Écriture du schéma…');warmup();}
-  else if(!svgNode&&!busy){setState('idle','Schéma prêt à afficher');if(m.autoRender!==false)render();}
+  if(streaming){setState('streaming','Writing diagram…');warmup();}
+  else if(!svgNode&&!busy){setState('idle','Diagram ready to render');if(m.autoRender!==false)render();}
   else if(svgNode)fit();
   resize();
 });
@@ -224,8 +224,8 @@ document.addEventListener('keydown',event=>{
 $('open-editor').addEventListener('click',()=>send('open-editor',{source:current?.source||''}));
 $('close-editor').addEventListener('click',()=>send('close-editor'));
 async function copySource(){
-  try{await navigator.clipboard.writeText($('source').value);$('announcement').textContent='Code copié';}
-  catch{setSourceVisible(true);$('source').focus();$('source').select();$('announcement').textContent='Sélectionne le code puis copie-le avec Ctrl ou ⌘ + C.';}
+  try{await navigator.clipboard.writeText($('source').value);$('announcement').textContent='Code copied';}
+  catch{setSourceVisible(true);$('source').focus();$('source').select();$('announcement').textContent='Select the code, then copy it with Ctrl or ⌘ + C.';}
 }
 $('copy-source').addEventListener('click',copySource);$('copy-header').addEventListener('click',copySource);
 const fontCache=new Map();
@@ -262,20 +262,20 @@ async function download(kind){
   const background=nativeColors?'#ffffff':getComputedStyle(document.documentElement).getPropertyValue('--background').trim()||(adaptDark?'#212121':'#ffffff');
   try{
     const exported=await exportSVG();if(!exported)return;
-    if(kind==='svg'){downloadBlob(exported.blob,'schema-tikz.svg');return;}
+    if(kind==='svg'){downloadBlob(exported.blob,'tikz-diagram.svg');return;}
     const url=URL.createObjectURL(exported.blob);
     try{
       const img=new Image();
-      await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('Impossible de préparer le PNG.'));img.src=url;});
+      await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('Could not prepare the PNG.'));img.src=url;});
       const scale=Math.min(2,8192/exported.width,8192/exported.height,Math.sqrt(16777216/(exported.width*exported.height)));
       const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.ceil(exported.width*scale));canvas.height=Math.max(1,Math.ceil(exported.height*scale));
-      const ctx=canvas.getContext('2d');if(!ctx)throw new Error('Le navigateur ne permet pas l’export PNG.');
+      const ctx=canvas.getContext('2d');if(!ctx)throw new Error('This browser does not support PNG export.');
       ctx.fillStyle=background;
       ctx.fillRect(0,0,canvas.width,canvas.height);
       if(adaptDark)ctx.filter='invert(1) hue-rotate(180deg)';
       ctx.drawImage(img,0,0,canvas.width,canvas.height);
-      const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));if(!blob)throw new Error('Impossible de créer le PNG.');
-      downloadBlob(blob,'schema-tikz.png');
+      const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));if(!blob)throw new Error('Could not create the PNG.');
+      downloadBlob(blob,'tikz-diagram.png');
     }finally{URL.revokeObjectURL(url);}
   }catch(e){$('announcement').textContent=e.message;$('warning').textContent=e.message;$('warning').hidden=false;resize();}
 }

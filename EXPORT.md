@@ -1,23 +1,23 @@
-# Exporter une conversation ChatGPT — v1.4.0
+# Exporter une conversation ChatGPT — v1.4.1
 
-Le bouton d’export dans l’en-tête d’une conversation enregistrée ouvre une fenêtre à deux panneaux : les réglages et l’aperçu. L’export récupère les données JSON de ChatGPT, sans reconstruire le contenu à partir du texte affiché sur la page.
+Le bouton **Export conversation** dans l’en-tête d’une conversation enregistrée ouvre une fenêtre à deux panneaux : les réglages et l’aperçu. L’export récupère les données JSON de ChatGPT, sans reconstruire le contenu à partir du texte affiché sur la page.
 
 ## Choisir le contenu et le format
 
 | Format | Contenu |
 | --- | --- |
 | **Markdown (.md)** | Transcript de la conversation avec messages utilisateur, réponses ChatGPT, code et TeX, sans copie du JSON technique sous chaque message. |
-| **Texte brut (.txt)** | Même sélection de messages, avec les principales décorations Markdown retirées. Le code et les expressions TeX sont conservés. |
-| **Archive complète (.json)** | Toutes les pages JSON reçues, leurs métadonnées et une liste regroupée des messages. Les options du transcript ne filtrent pas cette archive. |
+| **Plain text (.txt)** | Même sélection de messages, avec les principales décorations Markdown retirées. Le code et les expressions TeX sont conservés. |
+| **Complete archive (.json)** | Toutes les pages JSON reçues, leurs métadonnées et une liste regroupée des messages. Les options du transcript ne filtrent pas cette archive. |
 
-Pour Markdown et texte brut, trois préréglages sont proposés : **Dialogue**, **Contexte détaillé** et **Réponses uniquement**. Les réglages personnalisés permettent de choisir séparément :
+L’interface est en anglais. Pour Markdown et texte brut, le menu **Content** propose trois préréglages : **Conversation**, **Detailed context** et **Answers only**. La section **Customize transcript** permet de choisir séparément :
 
-- **Inclure mes messages** ;
-- **Mentionner les pièces jointes** ;
-- **Conserver les sources et citations** ;
-- **Afficher les dates et heures**, en UTC ;
-- **Inclure les étapes intermédiaires** affichables ;
-- **Inclure les appels et résultats d’outils**.
+- **Include my messages** ;
+- **Include attachment references** ;
+- **Include sources and citations** ;
+- **Show dates and times**, en UTC ;
+- **Include progress updates** affichables ;
+- **Include tool calls and results**.
 
 Par défaut, le transcript contient les messages utilisateur et les réponses finales, avec les références des médias générés. Le contexte interne, les messages système, les analyses cachées et les sorties d’outil vides sont omis. Le préréglage détaillé ajoute les étapes intermédiaires et les outils affichables ; il ne transforme pas le transcript en copie intégrale de tous les champs internes. Ces champs restent dans le JSON.
 
@@ -25,14 +25,14 @@ Les sources structurées disponibles sont converties en liens lisibles. Une cita
 
 ## Prévisualiser, copier, télécharger
 
-1. Choisir un format et un contenu.
-2. Cliquer sur **Aperçu** pour récupérer la conversation.
+1. Choisir un format dans **Format** et un contenu dans **Content**.
+2. Cliquer sur **Preview** pour récupérer la conversation.
 3. Ajuster les options et contrôler le résultat.
-4. Utiliser **Copier** ou **Télécharger**.
+4. Utiliser **Copy** ou **Download**.
 
-La vue **Dialogue** affiche les messages dans une présentation de lecture ; la vue **Fichier** montre le contenu produit. Le JSON utilise la vue fichier. Le Markdown courant est mis en forme dans la vue dialogue ; **les formules y restent du code TeX**, sans rendu mathématique. La vue fichier et les téléchargements conservent le TeX et le code source.
+La vue **Conversation** affiche les messages dans une présentation de lecture ; la vue **File** montre le contenu produit. Le JSON utilise la vue fichier. Le Markdown courant est mis en forme dans la vue dialogue ; **les formules y restent du code TeX**, sans rendu mathématique. La vue fichier et les téléchargements conservent le TeX et le code source.
 
-Pour éviter un aperçu trop volumineux, l’affichage commence par **20 messages** en vue dialogue ou **50 000 caractères** en vue fichier. **Afficher la suite** ajoute les messages ou caractères suivants. **Copier** et **Télécharger** utilisent toujours tout le fichier, indépendamment de la portion affichée.
+Pour éviter un aperçu trop volumineux, l’affichage commence par **20 messages** en vue dialogue ou **50 000 caractères** en vue fichier. **Show more** ajoute les messages ou caractères suivants. **Copy** et **Download** utilisent toujours tout le fichier, indépendamment de la portion affichée.
 
 Changer les options met à jour l’aperçu déjà chargé sans nouvelle requête. Si les messages de ChatGPT évoluent, l’interface signale que l’aperçu doit être actualisé ; l’action suivante récupère la version à jour. Les options sont mémorisées localement, mais la conversation récupérée reste en mémoire. Choisir un format ou une option ne déclenche pas à lui seul de lecture de conversation.
 

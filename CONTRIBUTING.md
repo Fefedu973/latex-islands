@@ -1,6 +1,6 @@
 # Contributing
 
-The UI is currently French; public project documentation is available in English. Keep changes focused and preserve the distinction between local rendering and authenticated conversation retrieval.
+Keep changes focused and preserve the distinction between local rendering and authenticated conversation retrieval.
 
 ## Development
 

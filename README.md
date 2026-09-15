@@ -2,9 +2,7 @@
 
 **Local TikZ diagrams and readable conversation exports for ChatGPT.**
 
-LaTeX Islands turns supported LaTeX code blocks in ChatGPT replies into interactive diagrams. The TeX compiler, packages and fonts run locally in your browser. The interface is currently in French.
-
-Version **1.4.0** prepares separate Chrome and Firefox desktop packages. Store listings are not yet available; this repository does not claim store approval.
+LaTeX Islands turns supported LaTeX code blocks in ChatGPT replies into interactive diagrams. The TeX compiler, packages and fonts run locally in your browser.
 
 ## Features
 
@@ -25,16 +23,16 @@ The conversation exporter requests the current conversation's JSON pages from Ch
 
 ### Chrome desktop
 
-1. Build the package below, or obtain the Chrome package from a published repository release when one is available.
+1. Download the Chrome ZIP from [Releases](https://github.com/Fefedu973/latex-islands/releases/latest).
 2. Extract the ZIP into a permanent folder.
 3. Open `chrome://extensions`, enable **Developer mode**, and select **Load unpacked**.
 4. Select the folder containing `manifest.json` directly, then reload your ChatGPT tabs.
 
-Chrome 116 or newer is required. An unpacked installation uses files on that computer; it is not a store installation.
+Requires Chrome 116 or newer.
 
 ### Firefox desktop
 
-Build the Firefox package, open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `dist/firefox/manifest.json`. Temporary installations are removed when Firefox closes. Normal persistent installation requires a Mozilla-signed package; an unsigned ZIP is not a signed store release. The Firefox target requires Firefox 140 or newer.
+For development, build the Firefox package, open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `dist/firefox/manifest.json`. Temporary installations are removed when Firefox closes. Requires Firefox 140 or newer.
 
 See the [French user guide](LISEZ-MOI.md), [export guide](EXPORT.md), and [validation status](VALIDATION.md).
 

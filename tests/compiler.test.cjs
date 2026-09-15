@@ -92,7 +92,7 @@ snippets.push(...LatexIslandsExamples.map(example=>['example-'+example.id,exampl
  const fresh=await compiler.compile(String.raw`\begin{tikzpicture}\draw[orange] (0,0) circle(.5);\end{tikzpicture}`);assert.equal(fresh.ok,true,fresh.error);assert.equal(compiler.worker,retainedWorker);console.log('PASS same worker after error',fresh.duration+'ms');
  const originalRpc=compiler.rpc.bind(compiler);
  compiler.rpc=function(method,args,timeout){return originalRpc(method,args,method==='texify'?1500:timeout);};
- const infinite=await compiler.compile(String.raw`\begin{tikzpicture}\loop\iftrue\repeat\end{tikzpicture}`);assert.equal(infinite.ok,false);assert.match(infinite.error,/secondes/);console.log('PASS actual infinite-TeX worker termination');
+ const infinite=await compiler.compile(String.raw`\begin{tikzpicture}\loop\iftrue\repeat\end{tikzpicture}`);assert.equal(infinite.ok,false);assert.match(infinite.error,/30-second/);console.log('PASS actual infinite-TeX worker termination');
  compiler.rpc=originalRpc;
  const afterTimeout=await compiler.compile(String.raw`\begin{tikzpicture}\draw[violet] (0,0)--(1,1);\end{tikzpicture}`);assert.equal(afterTimeout.ok,true,afterTimeout.error);console.log('PASS fresh worker after timeout');
  compiler.stop();

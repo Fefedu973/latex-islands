@@ -42,8 +42,8 @@
     if (type === 'release') { token = null; return; }
     if (type !== 'request') return;
     const safePath = validPath(path);
-    if (!safePath) { reply(requestId, {ok: false, error: 'Chemin d’export non autorisé.'}); return; }
-    if (active) { reply(requestId, {ok: false, error: 'Une requête d’export est déjà en cours.'}); return; }
+    if (!safePath) { reply(requestId, {ok: false, error: 'Export request path is not allowed.'}); return; }
+    if (active) { reply(requestId, {ok: false, error: 'An export request is already in progress.'}); return; }
     const controller = new AbortController();
     active = {requestId, controller};
     const timer = setTimeout(() => controller.abort(), 45000);
@@ -58,11 +58,11 @@
         }
         if (token) response = await get(safePath, controller.signal);
       }
-      if (!response.ok) { reply(requestId, {ok: false, status: response.status, error: 'ChatGPT a refusé la lecture (HTTP ' + response.status + '). Rechargez la page puis réessayez.'}); return; }
+      if (!response.ok) { reply(requestId, {ok: false, status: response.status, error: 'ChatGPT refused the request (HTTP ' + response.status + '). Reload the page and try again.'}); return; }
       const payload = await response.json();
       reply(requestId, {ok: true, payload});
     } catch (error) {
-      reply(requestId, {ok: false, error: error.name === 'AbortError' ? 'Lecture annulée ou délai de 45 secondes dépassé.' : 'Lecture de la conversation impossible. Vérifiez votre connexion puis réessayez.'});
+      reply(requestId, {ok: false, error: error.name === 'AbortError' ? 'Request cancelled or timed out after 45 seconds.' : 'Could not read the conversation. Check your connection and try again.'});
     } finally { clearTimeout(timer); active = null; }
   });
   window.addEventListener('pagehide', () => { token = null; if (active) active.controller.abort(); });

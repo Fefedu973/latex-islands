@@ -12,7 +12,7 @@
     return match && ID.test(match[1]) ? match[1] : null;
   }
   function pathFor(id, cursor) {
-    if (!ID.test(id)) throw new Error('Identifiant de conversation invalide.');
+    if (!ID.test(id)) throw new Error('Invalid conversation ID.');
     const query = new URLSearchParams({include_has_versions: 'true', num_turns: '10'});
     if (cursor != null) query.set('before', cursor);
     return '/backend-api/conversations/' + id + (cursor == null ? '' : '/messages') + '?' + query;
@@ -20,14 +20,14 @@
   function assertPage(payload, first) {
     if (!payload || typeof payload !== 'object' || !Array.isArray(payload.messages) ||
         !payload.page_info || typeof payload.page_info.has_previous_page !== 'boolean') {
-      throw new Error('Format de réponse ChatGPT non reconnu. Export arrêté pour éviter un fichier incomplet.');
+      throw new Error('Unrecognized ChatGPT response format. Export stopped to avoid an incomplete file.');
     }
     if (first && payload.page_info.has_next_page === true) {
-      throw new Error('ChatGPT n’a pas renvoyé les derniers messages. Rechargez la conversation puis réessayez.');
+      throw new Error('ChatGPT did not return the latest messages. Reload the conversation and try again.');
     }
     if (payload.page_info.has_previous_page &&
         (typeof payload.page_info.start_cursor !== 'string' || !payload.page_info.start_cursor || payload.page_info.start_cursor.length > 512)) {
-      throw new Error('Curseur de pagination absent ou invalide. Export incomplet, téléchargement annulé.');
+      throw new Error('Missing or invalid pagination cursor. Export incomplete; download cancelled.');
     }
   }
   function mergeMessages(pages) {
@@ -57,8 +57,8 @@
       .map(item => item.message);
   }
   async function collectConversation({id, fetchJSON, onProgress = () => {}, maxPages = 500, now = () => new Date().toISOString()}) {
-    if (!ID.test(id)) throw new Error('Ouvrez une conversation enregistrée pour l’exporter.');
-    if (typeof fetchJSON !== 'function') throw new Error('Transport indisponible.');
+    if (!ID.test(id)) throw new Error('Open a saved conversation to export it.');
+    if (typeof fetchJSON !== 'function') throw new Error('Transport unavailable.');
     const rawPages = [];
     let path = pathFor(id), payload, legacy = false;
     try { payload = await fetchJSON(path); }
@@ -70,10 +70,10 @@
     }
     if (payload && payload.mapping && typeof payload.mapping === 'object' && !Array.isArray(payload.mapping)) legacy = true;
     if (legacy && (!payload || !payload.mapping || typeof payload.mapping !== 'object' || Array.isArray(payload.mapping))) {
-      throw new Error('Format de conversation non reconnu. Aucun export incomplet n’a été téléchargé.');
+      throw new Error('Unrecognized conversation format. No incomplete export was downloaded.');
     }
     const reportedId = payload && (payload.conversation_id || payload.id);
-    if (reportedId && reportedId !== id) throw new Error('La réponse ne correspond pas à la conversation demandée.');
+    if (reportedId && reportedId !== id) throw new Error('The response does not match the requested conversation.');
     const cursors = new Set(), messageIds = new Set();
     let anonymousMessages = 0;
     while (true) {
@@ -85,9 +85,9 @@
       }
       onProgress({pages: rawPages.length, messages: legacy ? legacyMessages(payload).length : messageIds.size + anonymousMessages});
       if (legacy || !payload.page_info.has_previous_page) break;
-      if (rawPages.length >= maxPages) throw new Error('Limite de pagination atteinte. Export incomplet, téléchargement annulé.');
+      if (rawPages.length >= maxPages) throw new Error('Pagination limit reached. Export incomplete; download cancelled.');
       const cursor = payload.page_info.start_cursor;
-      if (cursors.has(cursor)) throw new Error('La pagination ChatGPT tourne en boucle. Export incomplet, téléchargement annulé.');
+      if (cursors.has(cursor)) throw new Error('ChatGPT pagination is repeating. Export incomplete; download cancelled.');
       cursors.add(cursor);
       path = pathFor(id, cursor);
       payload = await fetchJSON(path);
@@ -96,13 +96,13 @@
     const messages = legacy ? legacyMessages(conversation) : mergeMessages(rawPages);
     return {
       format: 'latex-islands-conversation', format_version: 1, exported_at: now(),
-      conversation_id: id, title: conversation.title || 'Conversation ChatGPT',
+      conversation_id: id, title: conversation.title || 'ChatGPT conversation',
       source_url: 'https://chatgpt.com/c/' + id,
       completeness: {
         pagination_complete: true, pages: rawPages.length, messages: messages.length,
         scope: legacy ? 'all_nodes_in_returned_mapping' : 'all_pages_of_current_server_conversation',
         attachments: 'references_only',
-        note: 'Le JSON conserve tous les champs renvoyés. Les fichiers joints et les versions non renvoyées par le serveur ne sont pas téléchargés.'
+        note: 'JSON preserves all returned fields. Attachment files and versions not returned by the server are not downloaded.'
       },
       messages, raw_pages: rawPages
     };
@@ -235,7 +235,7 @@
     output = output.replace(/\uE200(?:cite|filecite)\uE202([^\uE201]*)\uE201/g, (_, body) => {
       const sources = body.split('\uE202').map(ref => index.ids.get(ref)).filter(Boolean);
       if (sources.length) return render(sources);
-      return options.includeSources ? '[source non disponible dans l’export]' : '';
+      return options.includeSources ? '[source unavailable in this export]' : '';
     });
     // Entity annotations contain a plain display name as their second field.
     output = output.replace(/\uE200entity\uE202([^\uE201]*)\uE201/g, (_, body) => {
@@ -256,8 +256,8 @@
     const type = String(value.content_type || ''), mime = String(value.mime_type || '');
     if (/image/.test(type) || mime.startsWith('image/')) return 'Image';
     if (/audio/.test(type) || mime.startsWith('audio/')) return 'Audio';
-    if (/video/.test(type) || mime.startsWith('video/')) return 'Vidéo';
-    return 'Fichier';
+    if (/video/.test(type) || mime.startsWith('video/')) return 'Video';
+    return 'File';
   }
   function isAsset(value) {
     return value && typeof value === 'object' && (value.asset_pointer || /^(?:image_asset_pointer|audio|audio_asset_pointer|video|video_asset_pointer|file|file_asset_pointer|input_audio|input_audio_perception|audio_perception)$/.test(value.content_type || ''));
@@ -274,9 +274,8 @@
     const name = typeof value.name === 'string' ? value.name : typeof value.filename === 'string' ? value.filename : '';
     const url = safeURL(value.url || value.download_url || value.asset_pointer_link || part.metadata?.asset_pointer_link || part.asset_pointer);
     const dimensions = Number(value.width) > 0 && Number(value.height) > 0 ? ' · ' + Number(value.width) + ' × ' + Number(value.height) + ' px' : '';
-    const feminine = kind === 'Image' || kind === 'Vidéo';
-    const title = kind + (name ? ' : ' + name : state.role === 'tool' ? feminine ? ' générée' : ' généré' : feminine ? ' jointe' : ' joint');
-    return '> ' + (url ? link(title, url) : '**' + inline(title) + '**') + dimensions + (url ? '' : ' — fichier non intégré à l’export.');
+    const title = name ? kind + ': ' + name : (state.role === 'tool' ? 'Generated ' : 'Attached ') + kind.toLowerCase();
+    return '> ' + (url ? link(title, url) : '**' + inline(title) + '**') + dimensions + (url ? '' : ' — file not included in the export.');
   }
   function partText(part, state, depth = 0) {
     if (typeof part === 'string') return part;
@@ -304,7 +303,7 @@
     if (typeof part.text === 'string') return part.text;
     if (typeof part.transcription === 'string') return part.transcription;
     if (!state.options.includeAttachments) return '';
-    return '> Contenu ' + (type ? '« ' + inline(type) + ' » ' : '') + 'disponible dans l’archive JSON.';
+    return '> Content ' + (type ? '“' + inline(type) + '” ' : '') + 'available in the JSON archive.';
   }
   function mediaParts(content) {
     if (!content || typeof content !== 'object') return [];
@@ -345,7 +344,7 @@
       text = replaceReferences(text, metadata, options).trim();
       if (!text) continue;
       sourceMessageCount++;
-      const label = kind === 'user' ? 'Vous' : kind === 'tool' ? 'Outil' + (message.author?.name ? ' · ' + message.author.name : '') : kind === 'call' ? 'ChatGPT · Appel à ' + message.recipient : kind === 'progress' ? 'ChatGPT · Étape intermédiaire' : 'ChatGPT';
+      const label = kind === 'user' ? 'You' : kind === 'tool' ? 'Tool' + (message.author?.name ? ' · ' + message.author.name : '') : kind === 'call' ? 'ChatGPT · Tool call: ' + message.recipient : kind === 'progress' ? 'ChatGPT · Progress update' : 'ChatGPT';
       const turn = metadata.turn_exchange_id || metadata.working_turn_id || '';
       const previous = entries.at(-1);
       // Consecutive pieces of a single assistant turn form one response. A
@@ -357,17 +356,17 @@
         entries.push({role: kind === 'media' ? 'assistant' : role, label, text, timestamp: options.timestamps ? timestamp(message.create_time) : '', messageIds: message.id ? [message.id] : [], kind, turn});
       }
     }
-    return {title: String(archive.title || 'Conversation ChatGPT'), sourceUrl: safeURL(archive.source_url), entries, messageCount: entries.length, sourceMessageCount, rawMessageCount: Array.isArray(archive.messages) ? archive.messages.length : 0};
+    return {title: String(archive.title || 'ChatGPT conversation'), sourceUrl: safeURL(archive.source_url), entries, messageCount: entries.length, sourceMessageCount, rawMessageCount: Array.isArray(archive.messages) ? archive.messages.length : 0};
   }
   function toMarkdown(archive, options = {}) {
     const transcript = buildTranscript(archive, options), lines = ['# ' + inline(transcript.title), ''];
-    if (transcript.sourceUrl) lines.push(link('Conversation originale', transcript.sourceUrl), '');
+    if (transcript.sourceUrl) lines.push(link('Original conversation', transcript.sourceUrl), '');
     for (const entry of transcript.entries) {
       lines.push('---', '', '## ' + inline(entry.label), '');
       if (entry.timestamp) lines.push('*' + entry.timestamp + '*', '');
       lines.push(entry.text, '');
     }
-    if (!transcript.entries.length) lines.push('_Aucun message ne correspond aux options choisies._', '');
+    if (!transcript.entries.length) lines.push('_No messages match the selected options._', '');
     return lines.join('\n');
   }
   function plainText(markdown) {
@@ -383,11 +382,11 @@
   }
   function toText(archive, options = {}) {
     const transcript = buildTranscript(archive, options), lines = [transcript.title, ''];
-    if (transcript.sourceUrl) lines.push('Conversation originale : ' + transcript.sourceUrl, '');
+    if (transcript.sourceUrl) lines.push('Original conversation: ' + transcript.sourceUrl, '');
     for (const entry of transcript.entries) {
       lines.push('────────────────────────────────────────', '', entry.label + (entry.timestamp ? ' · ' + entry.timestamp : ''), '', plainText(entry.text), '');
     }
-    if (!transcript.entries.length) lines.push('Aucun message ne correspond aux options choisies.', '');
+    if (!transcript.entries.length) lines.push('No messages match the selected options.', '');
     return lines.join('\n');
   }
   function fileName(title, extension) {

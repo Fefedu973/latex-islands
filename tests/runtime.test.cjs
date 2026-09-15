@@ -56,7 +56,7 @@ test('TeX errors release the damaged worker and let later diagrams render',async
 test('timeout terminates the active worker, clears pending RPCs and recovers',async()=>{
   const h=compilerHarness({auto:false});const result=h.compiler.compile('slow');await tick();
   const timer=[...h.timers.values()].find(t=>t.delay===30000);assert.ok(timer);timer.fn();
-  assert.equal((await result).ok,false);assert.match((await result).error,/30 secondes/);
+  assert.equal((await result).ok,false);assert.match((await result).error,/30-second/);
   assert.equal(h.workers[0].terminated,true);assert.equal(h.compiler.pending.size,0);
   const retry=h.compiler.compile('slow');await tick();assert.equal(h.workers.length,2);
   const w=h.workers[1];w.result(w.messages[0].uid);await tick();w.result(w.messages[1].uid,'<svg />');
@@ -72,7 +72,7 @@ test('invalid input does not launch a worker or consume queue slots',async()=>{
 
 test('queue limit rejects excess work and all accepted requests complete',async()=>{
   const h=compilerHarness();const pending=Array.from({length:24},(_,i)=>h.compiler.compile(`figure ${i}`));
-  const rejected=await h.compiler.compile('25th');assert.equal(rejected.ok,false);assert.match(rejected.error,/en attente/);
+  const rejected=await h.compiler.compile('25th');assert.equal(rejected.ok,false);assert.match(rejected.error,/in the queue/);
   const results=await Promise.all(pending);assert.ok(results.every(r=>r.ok));assert.equal(h.compiler.count,0);
   assert.equal(h.workers.length,1);assert.equal(h.workers[0].messages.filter(m=>m.method==='texify').length,24);
   h.compiler.stop();

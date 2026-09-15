@@ -10,7 +10,7 @@
     if(message?.channel!=='latex-islands'||message.target!=='background')return;
     if(sender.id!==api.runtime.id||sender.url?.split(/[?#]/)[0]!==api.runtime.getURL('island.html'))return;
     const warmup=message.action==='warmup'||message.type==='warmup';
-    if(!warmup&&(typeof message.source!=='string'||message.source.length>60000))return Promise.resolve({ok:false,error:'Ce schéma dépasse la limite de 60 000 caractères.'});
+    if(!warmup&&(typeof message.source!=='string'||message.source.length>60000))return Promise.resolve({ok:false,error:'This diagram exceeds the 60,000-character limit.'});
     return Promise.resolve().then(()=>{
       compiler ||= new TikZCompiler();
       return warmup?compiler.warmup():compiler.compile(message.source);
