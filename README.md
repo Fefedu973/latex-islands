@@ -36,6 +36,12 @@ For development, build the Firefox package, open `about:debugging#/runtime/this-
 
 See the [user guide](USER-GUIDE.md), [export guide](EXPORT.md), and [validation status](VALIDATION.md).
 
+## Suggested custom instructions
+
+You can add the following to your ChatGPT custom instructions to encourage diagram responses that work with the extension:
+
+> When I ask for a schematic, diagram, electrical circuit, scientific plot, mathematical graph, 2D/3D representation or molecule, and TikZ is suitable, generate it directly in a fenced Markdown block labeled `tikz` so my extension can render it inline. Use Circuitikz, PGFPlots, Chemfig, tikz-3dplot, tikz-cd or the appropriate TikZ libraries as needed. Prefer Mermaid for simple diagrams where Mermaid is a better fit. Do not generate a complete LaTeX document or PDF unless I explicitly ask for one.
+
 ## Develop and build
 
 Use Node.js 22 or newer and npm. No TeX installation is required to run the extension or its bundled engine tests.
