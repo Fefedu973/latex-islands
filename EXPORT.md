@@ -1,73 +1,73 @@
-# Exporter une conversation ChatGPT — v1.4.1
+# Export a ChatGPT conversation — v1.4.1
 
-Le bouton **Export conversation** dans l’en-tête d’une conversation enregistrée ouvre une fenêtre à deux panneaux : les réglages et l’aperçu. L’export récupère les données JSON de ChatGPT, sans reconstruire le contenu à partir du texte affiché sur la page.
+The **Export conversation** button in the header of a saved conversation opens a window with two panels: settings and preview. The export retrieves ChatGPT's JSON data instead of reconstructing the conversation from the text displayed on the page.
 
-## Choisir le contenu et le format
+## Choose content and format
 
-| Format | Contenu |
+| Format | Content |
 | --- | --- |
-| **Markdown (.md)** | Transcript de la conversation avec messages utilisateur, réponses ChatGPT, code et TeX, sans copie du JSON technique sous chaque message. |
-| **Plain text (.txt)** | Même sélection de messages, avec les principales décorations Markdown retirées. Le code et les expressions TeX sont conservés. |
-| **Complete archive (.json)** | Toutes les pages JSON reçues, leurs métadonnées et une liste regroupée des messages. Les options du transcript ne filtrent pas cette archive. |
+| **Markdown (.md)** | A readable transcript with user messages, ChatGPT replies, code and TeX, without repeating technical JSON under each message. |
+| **Plain text (.txt)** | The same message selection, with common Markdown formatting removed. Code and TeX expressions are preserved. |
+| **Complete archive (.json)** | Every JSON page received, its metadata and a combined message list. Transcript options do not filter this archive. |
 
-L’interface est en anglais. Pour Markdown et texte brut, le menu **Content** propose trois préréglages : **Conversation**, **Detailed context** et **Answers only**. La section **Customize transcript** permet de choisir séparément :
+For Markdown and plain text, the **Content** menu offers three presets: **Conversation**, **Detailed context** and **Answers only**. Under **Customize transcript**, you can choose each option separately:
 
-- **Include my messages** ;
-- **Include attachment references** ;
-- **Include sources and citations** ;
-- **Show dates and times**, en UTC ;
-- **Include progress updates** affichables ;
+- **Include my messages**;
+- **Include attachment references**;
+- **Include sources and citations**;
+- **Show dates and times**, in UTC;
+- **Include progress updates** that can be displayed;
 - **Include tool calls and results**.
 
-Par défaut, le transcript contient les messages utilisateur et les réponses finales, avec les références des médias générés. Le contexte interne, les messages système, les analyses cachées et les sorties d’outil vides sont omis. Le préréglage détaillé ajoute les étapes intermédiaires et les outils affichables ; il ne transforme pas le transcript en copie intégrale de tous les champs internes. Ces champs restent dans le JSON.
+By default, the transcript includes user messages and final replies, along with references to generated media. Internal context, system messages, hidden analysis and empty tool outputs are omitted. The detailed preset adds displayable progress updates and tools; it does not turn the transcript into a complete copy of every internal field. Those fields remain in the JSON archive.
 
-Les sources structurées disponibles sont converties en liens lisibles. Une citation dont la source manque est signalée ; aucune URL n’est inventée. Les images et pièces jointes sont mentionnées une seule fois lorsque le contenu et les métadonnées désignent le même fichier. Un lien utilisable est conservé s’il existe ; les pointeurs internes sont remplacés par une mention lisible. **Les fichiers binaires ne sont pas téléchargés ni intégrés à l’export.**
+Available structured sources become readable links. Citations with missing sources are flagged; no URLs are invented. Images and attachments are mentioned once when their content and metadata refer to the same file. A usable link is preserved when available; internal pointers become readable descriptions. **Binary files are neither downloaded nor embedded in the export.**
 
-## Prévisualiser, copier, télécharger
+## Preview, copy and download
 
-1. Choisir un format dans **Format** et un contenu dans **Content**.
-2. Cliquer sur **Preview** pour récupérer la conversation.
-3. Ajuster les options et contrôler le résultat.
-4. Utiliser **Copy** ou **Download**.
+1. Choose a format under **Format** and a preset under **Content**.
+2. Click **Preview** to retrieve the conversation.
+3. Adjust the options and check the result.
+4. Use **Copy** or **Download**.
 
-La vue **Conversation** affiche les messages dans une présentation de lecture ; la vue **File** montre le contenu produit. Le JSON utilise la vue fichier. Le Markdown courant est mis en forme dans la vue dialogue ; **les formules y restent du code TeX**, sans rendu mathématique. La vue fichier et les téléchargements conservent le TeX et le code source.
+The **Conversation** view presents messages for reading; the **File** view shows the generated content. JSON uses the file view. Common Markdown is formatted in the conversation view; **equations remain TeX source**, without mathematical rendering. The file view and downloads preserve TeX and source code.
 
-Pour éviter un aperçu trop volumineux, l’affichage commence par **20 messages** en vue dialogue ou **50 000 caractères** en vue fichier. **Show more** ajoute les messages ou caractères suivants. **Copy** et **Download** utilisent toujours tout le fichier, indépendamment de la portion affichée.
+To keep the preview manageable, it initially shows **20 messages** in conversation view or **50,000 characters** in file view. **Show more** displays the next messages or characters. **Copy** and **Download** always use the entire file, regardless of how much of the preview is visible.
 
-Changer les options met à jour l’aperçu déjà chargé sans nouvelle requête. Si les messages de ChatGPT évoluent, l’interface signale que l’aperçu doit être actualisé ; l’action suivante récupère la version à jour. Les options sont mémorisées localement, mais la conversation récupérée reste en mémoire. Choisir un format ou une option ne déclenche pas à lui seul de lecture de conversation.
+Changing options updates the loaded preview without making another request. If ChatGPT's messages change, the interface indicates that the preview needs refreshing; the next action retrieves the current version. Options are saved locally, while the retrieved conversation stays in memory. Selecting a format or changing an option does not itself trigger a conversation request.
 
-La récupération doit se terminer avant la copie ou le téléchargement. Un refus HTTP, un format inconnu, un curseur manquant ou répété, un changement de conversation ou une annulation arrête l’export. Fermer la fenêtre annule une récupération en cours. Aucun fichier partiel n’est présenté comme complet.
+Retrieval must finish before copying or downloading. An HTTP failure, unknown format, missing or repeated cursor, conversation change or cancellation stops the export. Closing the window cancels any retrieval in progress. A partial file is never presented as complete.
 
-## Portée de l’archive
+## Archive scope
 
-L’archive correspond aux données renvoyées par ChatGPT au moment de la lecture. Toutes les pages récupérées et leurs champs sont conservés dans `raw_pages`. La liste `messages` regroupe les pages et déduplique les identifiants : si plusieurs copies d’un message se recouvrent, la copie la plus récente est retenue dans cette liste ; toutes les copies restent dans les pages originales.
+The archive contains the data ChatGPT returns at the time of retrieval. Every retrieved page and its fields are preserved in `raw_pages`. The `messages` list combines the pages and deduplicates message IDs: when multiple copies of a message overlap, the most recent copy is used in this list; all copies remain in the original pages.
 
-Le format paginé couvre la conversation courante exposée par le serveur. Il ne promet pas les anciennes branches ou versions que l’API ne renvoie pas. Les champs de versions éventuellement présents sont conservés. L’ancien format `mapping`, quand il est disponible, conserve tous ses nœuds et leurs liens parent/enfants dans `raw_pages` ; le transcript suit alors la branche sélectionnée par `current_node`.
+The paginated format covers the current conversation exposed by the server. It cannot include older branches or versions that the API does not return. Any version fields that are present are preserved. When the older `mapping` format is available, all its nodes and parent/child links are retained in `raw_pages`; the transcript follows the branch selected by `current_node`.
 
-Les messages du format paginé restent dans l’ordre du serveur. Les identifiants de parent et de tour peuvent être incomplets ou réutilisés : ils ne servent pas à reconstruire arbitrairement la conversation. Le JSON fait référence pour la topologie, les champs inconnus, les ressources multimédias et les différentes copies de messages reçues.
+Messages in the paginated format keep the server's order. Parent and turn IDs may be incomplete or reused, so they are not used to arbitrarily reconstruct the conversation. The JSON archive is the reference for structure, unknown fields, media resources and the different message copies received.
 
-Une réponse encore en cours de génération peut évoluer après l’export. Les modifications locales dans l’éditeur TikZ de l’extension ne modifient pas les messages enregistrés par ChatGPT et ne font donc pas partie de cet export.
+A reply that is still being generated may change after export. Local edits in the extension's TikZ editor do not change the messages saved by ChatGPT and are therefore not part of this export.
 
-## Fonctionnement du transport
+## How retrieval works
 
-Le transport utilise les chemins internes suivants :
+Retrieval uses these internal endpoints:
 
 1. `GET /backend-api/conversations/{id}?include_has_versions=true&num_turns=10`
-2. Si `page_info.has_previous_page` vaut `true`, `GET /backend-api/conversations/{id}/messages?include_has_versions=true&num_turns=10&before={start_cursor}` jusqu’à la première page.
-3. Si le premier chemin renvoie HTTP 404 ou 405, essai de l’ancien `GET /backend-api/conversation/{id}` et vérification de la présence du `mapping`.
+2. If `page_info.has_previous_page` is `true`, `GET /backend-api/conversations/{id}/messages?include_has_versions=true&num_turns=10&before={start_cursor}`, continuing back to the first page.
+3. If the first endpoint returns HTTP 404 or 405, try the older `GET /backend-api/conversation/{id}` and check that it contains a `mapping`.
 
-`conversation-bridge.js`, déclaré dans le monde `MAIN`, effectue les lectures avec les cookies de la page. Après un HTTP 401, il peut lire `/api/auth/session` et réessayer avec le jeton de session. Ce jeton reste en mémoire dans le pont et est effacé à la fin ou à l’annulation de l’export. Il n’est ni envoyé au script isolé, ni enregistré, ni ajouté au fichier. Aucun transfert vers un service tiers n’est ajouté.
+`conversation-bridge.js`, declared in the `MAIN` world, makes requests using the page's cookies. After an HTTP 401, it may read `/api/auth/session` and retry with the session token. This token stays in the bridge's memory and is cleared when the export finishes or is cancelled. It is not sent to the isolated content script, saved or added to the exported file. The extension adds no transfer to a third-party service.
 
-Le pont accepte uniquement des requêtes GET vers les chemins autorisés de la conversation actuellement ouverte, sur la même origine, avec des paramètres bornés. Le transport vérifie l’origine, la fenêtre source et l’identifiant de requête. Le pont reste dans le contexte de confiance du site ChatGPT.
+The bridge accepts only GET requests to allowed endpoints for the currently open conversation, on the same origin, with bounded parameters. Retrieval checks the origin, source window and request ID. The bridge remains within the ChatGPT site's trust context.
 
-Chaque requête du pont expire au bout de 45 secondes et le parcours est borné à 500 pages. L’API du site est interne et peut changer : les formats inconnus produisent une erreur explicite. Recharger les onglets ChatGPT après l’installation ou le rechargement de l’extension est nécessaire pour activer le pont.
+Each bridge request times out after 45 seconds, and retrieval is limited to 500 pages. The site's API is internal and may change; unknown formats produce an explicit error. Reload ChatGPT tabs after installing or reloading the extension to activate the bridge.
 
-## Vérification
+## Validation
 
 ```powershell
 node --test tests/export.test.cjs tests/export-bridge.test.cjs tests/export-ui.test.cjs
 ```
 
-Les fixtures sont synthétiques. Elles vérifient notamment la pagination et ses échecs, la préservation des pages et métadonnées, les filtres du transcript, les pièces jointes, les citations, le code et le TeX, le repli vers l’ancien format, les restrictions du pont, la non-transmission du jeton, l’annulation et la navigation.
+The fixtures are synthetic. They check pagination and its failure cases, preservation of pages and metadata, transcript filters, attachments, citations, code and TeX, fallback to the older format, bridge restrictions, token isolation, cancellation and navigation.
 
-Les tests automatisés n’établissent pas à eux seuls la compatibilité avec une session ChatGPT authentifiée active. Les résultats de validation de cette version sont décrits dans [VALIDATION.md](VALIDATION.md).
+Automated tests alone do not establish compatibility with an active authenticated ChatGPT session. Validation results for this version are documented in [VALIDATION.md](VALIDATION.md).

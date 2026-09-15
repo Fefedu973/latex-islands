@@ -21,7 +21,7 @@ export const RUNTIME_FILES = [
 ];
 const SOURCE_FILES = [
   'package.json', 'package-lock.json', 'package-extension.ps1', '.gitignore', '.gitattributes',
-  'README.md', 'CONTRIBUTING.md', 'PRIVACY.md', 'SECURITY.md', 'LISEZ-MOI.md', 'EXPORT.md',
+  'README.md', 'CONTRIBUTING.md', 'PRIVACY.md', 'SECURITY.md', 'USER-GUIDE.md', 'EXPORT.md',
   'VALIDATION.md', 'tests/performance-results.md', 'icons/brand.svg',
   'vendor/tikzjax/patch-runtime.py',
   'vendor/tikzjax/upstream-source-v1.6.0.tar.gz',

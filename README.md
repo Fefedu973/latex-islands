@@ -34,7 +34,7 @@ Requires Chrome 116 or newer.
 
 For development, build the Firefox package, open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `dist/firefox/manifest.json`. Temporary installations are removed when Firefox closes. Requires Firefox 140 or newer.
 
-See the [French user guide](LISEZ-MOI.md), [export guide](EXPORT.md), and [validation status](VALIDATION.md).
+See the [user guide](USER-GUIDE.md), [export guide](EXPORT.md), and [validation status](VALIDATION.md).
 
 ## Develop and build
 
