@@ -14,17 +14,21 @@ Render TikZ diagrams locally in ChatGPT and export readable conversations as Mar
 
 ### Detailed description
 
-Make technical ChatGPT conversations easier to read and reuse.
+LaTeX Islands makes technical ChatGPT conversations easier to read and reuse.
 
-LaTeX Islands renders supported TikZ, Circuitikz, PGFPlots, tikz-cd, Chemfig and TikZ-3DPlot code blocks directly in ChatGPT replies. Zoom, drag, edit in a full-screen view and download PNG or SVG. A bundled WebAssembly TeX engine compiles diagrams locally, with no external compilation service. A loading indicator appears while a reply is being written, and rendering starts when a diagram block is ready.
+When a reply contains supported diagram code, the extension renders it inline. Zoom and drag to inspect the drawing, open the editor to adjust its source, or download it as PNG or SVG. The bundled TeX engine compiles locally on your device, with no external compilation service. It prepares while ChatGPT writes and renders the diagram when the code block is ready.
 
-The extension also exports the open conversation as Markdown, plain text or a complete JSON archive. Choose a dialogue, detailed context, or answers only; adjust individual options for user messages, attachment references, citations, timestamps and tool information. Preview the dialogue or file before copying or downloading. Code and LaTeX equations are preserved in exports; equations remain TeX source in the export preview. Attachment files are not embedded.
+Export the open conversation as Markdown, plain text or a complete JSON archive of the data retrieved. Choose which messages and supporting details to include, then preview, copy or download the result. Code and equations are preserved as source. Attachments remain references; their files are not included.
 
-Export is user-initiated. It reads the current conversation's pages from ChatGPT using your existing signed-in session, then prepares the file on your device. Authentication information and the current conversation identifier/cursors are sent only to ChatGPT for those requests. There is no analytics, developer backend, advertising, or upload of conversations to the maintainer.
+You control when an export starts. It retrieves the conversation from ChatGPT using your existing session and same-origin requests, then prepares the file locally. Conversation data is not sent to the developer, and there is no advertising or analytics.
 
-Supports light/dark/system appearance and the last observed ChatGPT theme, plus either adapted diagram colors or original LaTeX colors on white. This is a diagram renderer rather than a full TeX document editor. Missing packages and external files are not supported. ChatGPT's internal API may change and temporarily affect exports.
+Follow ChatGPT's theme or choose light, dark or system appearance. Display diagrams in theme-adapted colors or their original colors on white.
 
-Independent open-source project; not affiliated with or endorsed by OpenAI, Google or Mozilla.
+LaTeX Islands is an independent open-source project, not affiliated with or endorsed by OpenAI, Google or Mozilla.
+
+## Maintainer guidance — not part of the listing
+
+Copy only the name, short description and detailed description above into the corresponding public listing fields. Describe user-visible behavior in natural prose. Avoid keyword lists and package-name enumerations in store copy; keep technical support matrices and dependency details in the GitHub documentation.
 
 ## Chrome single-purpose statement
 
