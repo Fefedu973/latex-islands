@@ -1,4 +1,4 @@
-# Export a ChatGPT conversation — v1.4.1
+# Export a ChatGPT conversation — v1.4.2
 
 The **Export conversation** button in the header of a saved conversation opens a window with two panels: settings and preview. The export retrieves ChatGPT's JSON data instead of reconstructing the conversation from the text displayed on the page.
 

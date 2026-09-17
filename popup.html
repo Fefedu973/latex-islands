@@ -5,24 +5,25 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>LaTeX Islands</title>
   <link rel="stylesheet" href="ui.css">
+  <script src="native-controls.js" defer></script>
   <script src="popup.js" defer></script>
 </head>
 <body class="popup-page">
   <main class="popup">
     <header class="popup-header">
       <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m7 5-5 7 5 7m10-14 5 7-5 7M14 3l-4 18"/></svg></span><h1>LaTeX Islands</h1></div>
-      <span class="version">1.4.1</span>
+      <span class="version">1.4.2</span>
     </header>
     <p class="popup-subtitle">Diagrams, right inside ChatGPT.</p>
     <button id="open-demo" class="button primary full" type="button"><span>Open editor</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></button>
     <section class="settings" aria-label="Extension settings">
       <label class="setting"><span><strong>Enable in ChatGPT</strong><small>Show diagrams in replies.</small></span><input type="checkbox" id="enabled" checked role="switch"><span class="toggle" aria-hidden="true"></span></label>
       <label class="setting"><span><strong>Automatic rendering</strong><small>Compile as soon as the code is ready.</small></span><input type="checkbox" id="autoRender" checked role="switch"><span class="toggle" aria-hidden="true"></span></label>
-      <label class="setting select-setting" for="scale"><span><strong>Initial zoom</strong></span><select id="scale"><option value="0.75">75%</option><option value="1" selected>100%</option><option value="1.25">125%</option><option value="1.5">150%</option><option value="2">200%</option></select></label>
-      <label class="setting select-setting" for="uiTheme"><span><strong>Appearance</strong><small id="theme-help">Uses the last theme seen in ChatGPT.</small></span><select id="uiTheme" aria-describedby="theme-help"><option value="chatgpt">ChatGPT</option><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
-      <label class="setting color-setting" for="renderColors"><span><strong>Diagram colors</strong></span><select id="renderColors"><option value="chatgpt">Match theme</option><option value="native">LaTeX colors · white background</option></select></label>
+      <div class="setting select-setting"><span><strong id="scale-label">Initial zoom</strong></span><select id="scale" aria-labelledby="scale-label"><option value="0.75">75%</option><option value="1" selected>100%</option><option value="1.25">125%</option><option value="1.5">150%</option><option value="2">200%</option></select></div>
+      <div class="setting select-setting"><span><strong id="uiTheme-label">Appearance</strong><small id="theme-help">Uses the last theme seen in ChatGPT.</small></span><select id="uiTheme" aria-labelledby="uiTheme-label" aria-describedby="theme-help"><option value="chatgpt">ChatGPT</option><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+      <div class="setting color-setting"><span><strong id="renderColors-label">Diagram colors</strong></span><select id="renderColors" aria-labelledby="renderColors-label"><option value="chatgpt">Match theme</option><option value="native">LaTeX colors · white background</option></select></div>
     </section>
-    <footer class="popup-footer"><span id="save-status" role="status" aria-live="polite">Settings saved locally</span><span class="local-note"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>On this device</span></footer>
+    <footer class="popup-footer"><span id="save-status" role="status" aria-live="polite"></span></footer>
   </main>
 </body>
 </html>

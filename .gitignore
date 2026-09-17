@@ -9,6 +9,7 @@ tests/*-results.md
 !tests/performance-results.md
 *.har
 *.log
+*.pem
 .env
 .env.*
 !.env.example

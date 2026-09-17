@@ -118,13 +118,20 @@
     }
   }
   function post(state,data) {
-    if(state.ready && state.frame?.contentWindow) state.frame.contentWindow.postMessage({channel:CHANNEL,id:state.id,...data},EXTENSION_ORIGIN);
+    if(!state.ready || !state.port || !liveFrame(state)) return false;
+    // The port belongs to the verified extension document, unlike WindowProxy,
+    // which can temporarily point at an inherited about:blank during navigation.
+    state.port.postMessage({channel:CHANNEL,id:state.id,...data});
+    return true;
+  }
+  function liveFrame(state) {
+    return ids.get(state.id)===state && state.element.isConnected && state.container?.isConnected && state.frame?.isConnected && state.frame.parentElement===state.container;
   }
   function send(state,force=false) {
     const source=state.complete && state.draftSource!=null?state.draftSource:state.source;
     const type=state.complete?'render':'prepare', key=type+'\0'+source+'\0'+settings.autoRender+'\0'+settings.scale;
     if(!state.ready || (!force && state.sentKey===key)) return;
-    post(state,{type,source,kind:'tikz',streaming:!state.complete,autoRender:settings.autoRender,scale:settings.scale,renderColors:settings.renderColors,mode:editor?.state===state?'editor':'inline',...appearance(state.element)});
+    if(!post(state,{type,source,kind:'tikz',streaming:!state.complete,autoRender:settings.autoRender,scale:settings.scale,renderColors:settings.renderColors,mode:editor?.state===state?'editor':'inline',...appearance(state.element)})) return;
     state.sentKey=key;state.sentSource=state.complete?source:null;
     if(!state.complete && state.type!=='raw') state.element.classList.add('latex-islands-original-hidden');
   }
@@ -132,15 +139,81 @@
     const container=document.createElement('div');container.className='latex-islands-container';
     container.setAttribute('role','region');container.setAttribute('aria-label','TikZ diagram');
     const frame=document.createElement('iframe');frame.title='TikZ diagram — preview, code and download';
-    frame.src=chrome.runtime.getURL('island.html')+'#'+encodeURIComponent(state.id);
+    frame.src=chrome.runtime.getURL('island.html')+'?parentOrigin='+encodeURIComponent(location.origin)+'#'+encodeURIComponent(state.id);
     frame.setAttribute('scrolling','no');frame.setAttribute('allow','clipboard-write');frame.referrerPolicy='no-referrer';
-    frame.addEventListener('load',()=>{state.ready=true;send(state,true);});
     state.container=container;state.frame=frame;ids.set(state.id,state);
     container.append(frame);el.insertAdjacentElement('afterend',container);
   }
+  const editorBoundsProperties=['--li-editor-left','--li-editor-top','--li-editor-width','--li-editor-height'];
+  function conversationViewport(element) {
+    // ChatGPT's <main> is the moving message content, sometimes thousands of
+    // pixels above the screen. The scroll-root is the stationary conversation
+    // viewport and, like the native Mermaid editor, excludes the sidebar.
+    const annotated=element.closest('[data-scroll-root], [class~="group/scroll-root"]') || element.closest('[class~="@container/main"]');
+    if(annotated)return annotated;
+    const main=element.closest('main, [role="main"]');
+    for(let ancestor=main?.parentElement;ancestor && ancestor!==document.body;ancestor=ancestor.parentElement) {
+      const css=getComputedStyle(ancestor),rect=ancestor.getBoundingClientRect();
+      if(/^(auto|scroll)$/.test(css.overflowY) && rect.width>0 && rect.height>0)return ancestor;
+    }
+    return main;
+  }
+  function trackEditorBounds(active) {
+    let pending=0,region;
+    const request=window.requestAnimationFrame?.bind(window) || (callback=>setTimeout(callback,16));
+    const cancel=window.cancelAnimationFrame?.bind(window) || clearTimeout;
+    const resizeObserver=typeof ResizeObserver==='function'?new ResizeObserver(scheduleBounds):null;
+    function updateBounds() {
+      pending=0;
+      if(editor!==active)return;
+      if(!active.state.element.isConnected) {closeEditor();return;}
+      const next=conversationViewport(active.state.element);
+      if(next!==region) {
+        region=next;resizeObserver?.disconnect();
+        for(let ancestor=region || document.body;ancestor;ancestor=ancestor.parentElement)resizeObserver?.observe(ancestor);
+      }
+      const visual=window.visualViewport;
+      const viewport={left:visual?.offsetLeft || 0,top:visual?.offsetTop || 0,width:visual?.width || window.innerWidth,height:visual?.height || window.innerHeight};
+      const rect=region?.getBoundingClientRect();
+      let left=viewport.left,top=viewport.top,right=left+viewport.width,bottom=top+viewport.height;
+      if(rect?.width>0 && rect.height>0) {
+        const clipped={left:Math.max(left,rect.left),top:Math.max(top,rect.top),right:Math.min(right,rect.right),bottom:Math.min(bottom,rect.bottom)};
+        if(clipped.right>clipped.left && clipped.bottom>clipped.top) ({left,top,right,bottom}=clipped);
+      }
+      const values=[left,top,right-left,bottom-top].map(value=>value+'px');
+      for(const element of [active.state.container,active.dialog])editorBoundsProperties.forEach((property,index)=>{
+        if(element.style.getPropertyValue(property)!==values[index])element.style.setProperty(property,values[index]);
+      });
+    }
+    function scheduleBounds() {if(!pending && editor===active)pending=request(updateBounds);}
+    // ResizeObserver tracks the sidebar's width transition. Class/style changes
+    // and transitionend also cover layouts which move without resizing a panel.
+    const layoutObserver=new MutationObserver(mutations=>{
+      if(editor!==active)return;
+      if(!active.state.element.isConnected) {closeEditor();return;}
+      if(mutations.some(mutation=>{
+        const target=mutation.target.nodeType===Node.ELEMENT_NODE?mutation.target:mutation.target.parentElement;
+        return !ownNode(target) && !target.closest(assistantSelector) && !(mutation.type==='childList' && [...mutation.addedNodes,...mutation.removedNodes].every(ownNode));
+      }))scheduleBounds();
+    });
+    layoutObserver.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','hidden','aria-hidden','aria-expanded','data-state','data-collapsed']});
+    window.addEventListener('resize',scheduleBounds);
+    window.visualViewport?.addEventListener('resize',scheduleBounds);
+    window.visualViewport?.addEventListener('scroll',scheduleBounds);
+    document.addEventListener('transitionend',scheduleBounds,true);
+    updateBounds();
+    return ()=>{
+      if(pending)cancel(pending);resizeObserver?.disconnect();layoutObserver.disconnect();
+      window.removeEventListener('resize',scheduleBounds);
+      window.visualViewport?.removeEventListener('resize',scheduleBounds);
+      window.visualViewport?.removeEventListener('scroll',scheduleBounds);
+      document.removeEventListener('transitionend',scheduleBounds,true);
+      for(const property of editorBoundsProperties)active.state.container.style.removeProperty(property);
+    };
+  }
   function closeEditor() {
     if(!editor) return;
-    const {state,dialog,focus}=editor;editor=null;
+    const {state,dialog,focus,stopTracking}=editor;editor=null;stopTracking?.();
     try { if (state.container.hidePopover) state.container.hidePopover(); } catch { /* Removed by navigation. */ }
     state.container.removeAttribute('popover');
     state.container.setAttribute('role','region');state.container.removeAttribute('aria-modal');
@@ -161,9 +234,11 @@
     state.container.setAttribute('popover','manual');
     if (state.container.showPopover) state.container.showPopover();
     document.documentElement.classList.add('latex-islands-editor-open');
+    editor.stopTracking=trackEditorBounds(editor);
     sendView(state);state.frame.focus();
   }
   function removeState(el,state) {
+    state.ready=false;state.port?.close();state.port=null;
     if(editor?.state===state) closeEditor();
     el.classList.remove('latex-islands-original-hidden');state.container?.remove();ids.delete(state.id);states.delete(el);
   }
@@ -202,8 +277,11 @@
   window.addEventListener('message',event=>{
     if(event.origin!==EXTENSION_ORIGIN) return;
     const data=event.data;if(!data || data.channel!==CHANNEL || typeof data.id!=='string') return;
-    const state=ids.get(data.id);if(!state?.frame || event.source!==state.frame.contentWindow) return;
-    if(data.type==='ready') {state.ready=true;send(state);}
+    const state=ids.get(data.id);if(!state?.frame || !liveFrame(state) || event.source!==state.frame.contentWindow) return;
+    if(data.type==='ready') {
+      const port=event.ports?.[0];if(!port) return;
+      state.port?.close();state.port=port;state.ready=true;send(state,true);
+    }
     if(data.type==='resize' && Number.isFinite(data.height) && editor?.state!==state) state.frame.style.height=Math.max(80,Math.min(16000,Math.ceil(data.height)))+'px';
     if(data.type==='open-editor') openEditor(state);
     if(data.type==='close-editor' && editor?.state===state) closeEditor();

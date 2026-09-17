@@ -30,6 +30,8 @@ The conversation exporter requests the current conversation's JSON pages from Ch
 
 Requires Chrome 116 or newer.
 
+To update an unpacked installation, replace its files with the latest Chrome ZIP, click **Reload** on the extension's card at `chrome://extensions`, then reload your ChatGPT tabs. The version number on the extension card identifies the installed package.
+
 ### Firefox desktop
 
 For development, build the Firefox package, open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `dist/firefox/manifest.json`. Temporary installations are removed when Firefox closes. Requires Firefox 140 or newer.
@@ -56,6 +58,8 @@ npm run build
 The build produces `dist/chrome/`, `dist/firefox/`, browser-specific ZIPs and a corresponding source ZIP. Extension source files are shipped directly; there is no remote compilation service or runtime dependency installation.
 
 For Firefox validation, run `npm run lint:firefox` after building. See [CONTRIBUTING.md](CONTRIBUTING.md) and [reviewer build notes](docs/reviewer-build.md) for package contents and the bundled TeX runtime's provenance and reproduction limits.
+
+Pushing a matching version tag publishes a GitHub release after CI validation. See [releasing](docs/releasing.md) for the workflow and future Chrome Web Store/Firefox publishing setup.
 
 ## Privacy
 

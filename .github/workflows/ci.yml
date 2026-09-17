@@ -1,4 +1,4 @@
-name: Validate and package
+name: Validate, package and release
 
 on:
   push:
@@ -23,6 +23,9 @@ jobs:
       - name: Compile real TeX fixtures offline
         run: npm run test:engine
         timeout-minutes: 3
+      - name: Verify first diagram paint with delayed fonts
+        run: npm run test:fonts
+        timeout-minutes: 1
       - run: npm run build
       - name: Verify reproducible archives
         run: |
@@ -43,3 +46,58 @@ jobs:
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    name: Publish GitHub release
+    needs: validate
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify release tag and notes
+        id: release
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, accessSync, appendFileSync } from 'node:fs';
+          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
+            throw new Error('package.json must contain a valid release version.');
+          }
+          if (process.env.RELEASE_TAG !== `v${version}`) {
+            throw new Error(`Tag ${process.env.RELEASE_TAG} does not match package version ${version}.`);
+          }
+          accessSync(`docs/release-${version}.md`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          NODE
+      - uses: actions/download-artifact@v4
+        with:
+          name: latex-islands-packages
+          path: release-assets
+      - name: Verify validated package checksums
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS
+      - name: Create and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            "release-assets/latex-islands-chrome-$RELEASE_VERSION.zip" \
+            "release-assets/latex-islands-firefox-$RELEASE_VERSION.zip" \
+            "release-assets/latex-islands-source-$RELEASE_VERSION.zip" \
+            release-assets/SHA256SUMS \
+            --verify-tag --draft \
+            --title "LaTeX Islands $RELEASE_VERSION" \
+            --notes-file "docs/release-$RELEASE_VERSION.md"
+          gh release edit "$RELEASE_TAG" --draft=false

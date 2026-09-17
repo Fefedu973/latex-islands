@@ -11,7 +11,7 @@ English-language assets for release **1.4.1**. Product screenshots use the bundl
 
 Run `node tests/preview-server.cjs` and use a browser test profile:
 
-1. Open `/demo.html`, select **Dark** and **TikZ · converging lens**, and wait for **Diagram ready**. Capture the content area at a 1280 × 800 viewport.
+1. Open `/demo.html`, select **Dark** and **TikZ · converging lens**, and wait for the diagram to finish rendering. Capture the content area at a 1280 × 800 viewport.
 2. Open `/tests/export-preview.html` and use the production export button to open the conversation preview. Capture the dialog at a 1280 × 800 viewport.
 3. Open `/docs/store-assets/promo.html` and capture its `main` element at exactly 440 × 280 pixels.
 

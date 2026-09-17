@@ -17,11 +17,13 @@ function harness({streaming=false,saved={},source=SOURCE}={}){
   <pre id="diagram"><code class="language-tikz"></code></pre><pre id="ordinary"><code class="language-python">print('ordinary code')</code></pre>
   </div></section></main><div id="composer" contenteditable="true"><pre></pre></div></body></html>`,{url:'https://chatgpt.com/c/test',runScripts:'outside-only'});
   const css=dom.window.document.createElement('style');css.textContent=fs.readFileSync(path.join(ROOT,'content.css'),'utf8');dom.window.document.head.append(css);
-  const w=dom.window,timers=new Map(),changes=[],storageWrites=[];let now=100000,nextTimer=0;
+  const w=dom.window,timers=new Map(),changes=[],storageWrites=[],resizeObservers=[];let now=100000,nextTimer=0;
   const get=id=>w.document.getElementById(id);
   get('diagram').querySelector('code').textContent=source;get('user').querySelector('code').textContent=SOURCE;get('composer').querySelector('pre').textContent=SOURCE;
   if(streaming)get('assistant').setAttribute('data-is-streaming','true');
   w.Date.now=()=>now;w.setTimeout=(fn,delay=0)=>{const id=++nextTimer;timers.set(id,{fn,due:now+delay});return id;};w.clearTimeout=id=>timers.delete(id);
+  w.requestAnimationFrame=callback=>w.setTimeout(()=>callback(now),16);w.cancelAnimationFrame=w.clearTimeout;
+  w.ResizeObserver=class {constructor(callback){this.callback=callback;this.targets=new Set();resizeObservers.push(this);}observe(element){this.targets.add(element);}disconnect(){this.targets.clear();}};
   w.chrome={runtime:{getURL:file=>EXT+'/'+file},storage:{local:{get:(defaults,callback)=>callback({...defaults,...saved}),set:(value,callback)=>{storageWrites.push(value);callback?.();}},onChanged:{addListener:fn=>changes.push(fn)}}};
   const before={native:get('native').outerHTML,user:get('user').outerHTML,composer:get('composer').outerHTML,ordinary:get('ordinary').outerHTML};
   w.eval(fs.readFileSync(path.join(ROOT,'core.js'),'utf8'));w.eval(fs.readFileSync(path.join(ROOT,'content.js'),'utf8'));
@@ -31,19 +33,59 @@ function harness({streaming=false,saved={},source=SOURCE}={}){
     now=end;await tick();
   }
   function settings(next,area='local'){const event={};for(const [key,value]of Object.entries(next))event[key]={newValue:value};for(const cb of changes)cb(event,area);}
-  function connect(frame){const sent=[];frame.contentWindow.postMessage=(data,origin)=>sent.push({data,origin});frame.dispatchEvent(new w.Event('load'));return sent;}
-  function message(frame,data={},origin=EXT,source=frame.contentWindow){w.dispatchEvent(new w.MessageEvent('message',{origin,source,data:{channel:'latex-islands',id:decodeURIComponent(new URL(frame.src).hash.slice(1)),...data}}));}
-  return {w,get,storageWrites,hidden:id=>w.getComputedStyle(get(id)).display==='none',before,advance,settings,connect,message,frames:()=>[...w.document.querySelectorAll('.latex-islands-container iframe')],close:()=>w.close()};
+  function connect(frame){const sent=[];const port={postMessage:data=>sent.push({data,origin:EXT}),close(){this.closed=true;}};sent.port=port;message(frame,{type:'ready'},EXT,frame.contentWindow,[port]);return sent;}
+  function message(frame,data={},origin=EXT,source=frame.contentWindow,ports=[]){w.dispatchEvent(new w.MessageEvent('message',{origin,source,ports,data:{channel:'latex-islands',id:decodeURIComponent(new URL(frame.src).hash.slice(1)),...data}}));}
+  const resize=element=>{for(const observer of resizeObservers)if(observer.targets.has(element))observer.callback([{target:element}]);};
+  return {w,get,storageWrites,resizeObservers,resize,hidden:id=>w.getComputedStyle(get(id)).display==='none',before,advance,settings,connect,message,frames:()=>[...w.document.querySelectorAll('.latex-islands-container iframe')],close:()=>w.close()};
 }
 
 test('one assistant TikZ island is added while native math, user, composer and ordinary code stay intact',async t=>{
   const h=harness();t.after(h.close);await h.advance(2100);assert.equal(h.frames().length,1);
-  const frame=h.frames()[0];assert.match(frame.src,/^chrome-extension:\/\/test-id\/island\.html#/);
+  const frame=h.frames()[0];assert.match(frame.src,/^chrome-extension:\/\/test-id\/island\.html\?/);
+  assert.equal(new URL(frame.src).searchParams.get('parentOrigin'),'https://chatgpt.com');
   const sent=h.connect(frame);assert.equal(sent.length,1);assert.equal(sent[0].origin,EXT);assert.equal(sent[0].data.source,SOURCE);
   for(const key of ['native','user','composer','ordinary'])assert.equal(h.get(key).outerHTML,h.before[key]);
   await h.advance(3000);assert.equal(h.frames().length,1);assert.equal(sent.length,1);
   // Accidental reinjection of the script must also remain idempotent.
   h.w.eval(fs.readFileSync(path.join(ROOT,'content.js'),'utf8'));await h.advance(2000);assert.equal(h.frames().length,1);
+});
+
+test('intermediate iframe load never sends to its WindowProxy; only a verified document port starts rendering',async t=>{
+  const h=harness();t.after(h.close);await h.advance(60);
+  const frame=h.frames()[0],sent=[];
+  frame.contentWindow.postMessage=()=>assert.fail('Never post to an iframe window that may inherit the ChatGPT origin');
+  const port={postMessage:data=>sent.push(data),close(){}};
+  frame.dispatchEvent(new h.w.Event('load'));h.settings({scale:1.5});await h.advance(60);
+  h.message(frame,{type:'ready'},'https://chatgpt.com',frame.contentWindow,[port]);
+  h.message(frame,{type:'ready'},EXT,h.w,[port]);
+  h.message(frame,{type:'ready'},EXT,frame.contentWindow);
+  assert.equal(sent.length,0);
+  h.message(frame,{type:'ready'},EXT,frame.contentWindow,[port]);
+  assert.equal(sent.length,1);assert.equal(sent[0].type,'render');assert.equal(sent[0].scale,1.5);
+});
+
+test('a reloaded extension document replaces its port and receives unchanged source again',async t=>{
+  const h=harness();t.after(h.close);await h.advance(60);
+  const frame=h.frames()[0],first=h.connect(frame);
+  frame.dispatchEvent(new h.w.Event('load'));
+  const second=h.connect(frame);
+  assert.equal(first.port.closed,true);assert.equal(second.length,1);assert.equal(second[0].data.source,SOURCE);
+  h.settings({renderColors:'native'});
+  assert.equal(first.length,1);assert.equal(second.at(-1).data.renderColors,'native');
+});
+
+test('removing a source or iframe stops messages before the next cleanup scan',async t=>{
+  for(const remove of ['source','frame']){
+    const h=harness();t.after(h.close);await h.advance(60);
+    const frame=h.frames()[0],sent=h.connect(frame);
+    h.message(frame,{type:'open-editor'});
+    const count=sent.length;
+    (remove==='source'?h.get('diagram'):frame).remove();
+    h.settings({scale:1.5,renderColors:'native'});
+    h.message(frame,{type:'ready'},EXT,frame.contentWindow,[{postMessage:()=>assert.fail('Detached frame accepted'),close(){}}]);
+    assert.equal(sent.length,count);
+    h.settings({enabled:false});assert.equal(sent.port.closed,true);assert.equal(sent.length,count);
+  }
 });
 
 test('color preference updates existing island views without resending source or losing editor drafts',async t=>{
@@ -280,6 +322,67 @@ test('editor promotes the existing iframe without reload and restores it on clos
   h.message(frame,{type:'close-editor'});assert.equal(closed,1);assert.equal(frame.parentElement,parent);assert.equal(parent.hasAttribute('popover'),false);assert.equal(sent.at(-1).data.mode,'inline');
   assert.equal(sent.filter(s=>s.data.type==='render').length,1);
   h.message(frame,{type:'open-editor'});h.settings({enabled:false});assert.equal(h.w.document.querySelector('.latex-islands-editor'),null);assert.equal(h.w.document.documentElement.classList.contains('latex-islands-editor-open'),false);
+});
+
+function rectangle(left,top,width,height){return {left,top,width,height,right:left+width,bottom:top+height};}
+function editorBounds(element){return ['left','top','width','height'].map(key=>element.style.getPropertyValue('--li-editor-'+key));}
+function setViewport(h,width,height){Object.defineProperty(h.w,'innerWidth',{value:width,configurable:true});Object.defineProperty(h.w,'innerHeight',{value:height,configurable:true});}
+
+test('editor uses the stationary conversation viewport and leaves expanded sidebar and right panel uncovered',async t=>{
+  const h=harness();t.after(h.close);setViewport(h,1718,1296);
+  const main=h.w.document.querySelector('main'),scrollRoot=h.w.document.createElement('div');scrollRoot.setAttribute('data-scroll-root','true');
+  main.before(scrollRoot);scrollRoot.append(main);
+  scrollRoot.getBoundingClientRect=()=>rectangle(260,0,1138,1296);
+  main.getBoundingClientRect=()=>rectangle(275,-12255,1108,1244);
+  await h.advance(100);const frame=h.frames()[0],sent=h.connect(frame),parent=frame.parentElement,window=frame.contentWindow;
+  h.message(frame,{type:'open-editor'});
+  assert.deepEqual(editorBounds(parent),['260px','0px','1138px','1296px']);
+  assert.deepEqual(editorBounds(h.w.document.querySelector('.latex-islands-editor')),editorBounds(parent));
+  assert.equal(frame.contentWindow,window);assert.equal(sent.at(-1).data.mode,'editor');
+  const css=fs.readFileSync(path.join(ROOT,'content.css'),'utf8');
+  assert.match(css,/\.latex-islands-is-editing::backdrop\s*\{[^}]*background:transparent[^}]*pointer-events:none/,'top-layer backdrop must not hide or intercept the sidebar');
+  h.message(frame,{type:'close-editor'});assert.deepEqual(editorBounds(parent),['','','','']);
+});
+
+test('editor follows sidebar collapse, expansion and browser resizing without replacing its iframe or source',async t=>{
+  const h=harness();t.after(h.close);setViewport(h,1440,900);
+  const main=h.w.document.querySelector('main'),scrollRoot=h.w.document.createElement('div');scrollRoot.className='group/scroll-root';
+  main.before(scrollRoot);scrollRoot.append(main);let bounds=rectangle(260,0,1180,900);scrollRoot.getBoundingClientRect=()=>bounds;
+  await h.advance(100);const frame=h.frames()[0],sent=h.connect(frame),parent=frame.parentElement,window=frame.contentWindow;
+  h.message(frame,{type:'open-editor'});h.message(frame,{type:'source-change',source:'editor draft'});
+  bounds=rectangle(0,0,1440,900);h.resize(scrollRoot);await h.advance(16);
+  assert.deepEqual(editorBounds(parent),['0px','0px','1440px','900px']);
+  bounds=rectangle(260,0,1180,900);scrollRoot.classList.add('sidebar-expanded');await h.advance(16);
+  assert.deepEqual(editorBounds(parent),['260px','0px','1180px','900px']);
+  setViewport(h,1200,740);bounds=rectangle(260,0,940,740);h.w.dispatchEvent(new h.w.Event('resize'));await h.advance(16);
+  assert.deepEqual(editorBounds(parent),['260px','0px','940px','740px']);
+  assert.equal(frame.contentWindow,window);assert.equal(h.frames()[0],frame);assert.equal(sent.filter(item=>item.data.type==='render').length,1);
+  h.w.document.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape'}));
+  assert.equal(h.w.document.querySelector('.latex-islands-editor'),null);assert.equal(sent.at(-1).data.mode,'inline');
+  assert.ok(h.resizeObservers.every(observer=>observer.targets.size===0));
+  bounds=rectangle(0,0,1200,740);h.w.dispatchEvent(new h.w.Event('resize'));await h.advance(16);
+  assert.deepEqual(editorBounds(parent),['','','','']);assert.equal(h.w.document.documentElement.classList.contains('latex-islands-editor-open'),false);
+});
+
+test('editor supports the unannotated scroll viewport and mobile layout fallback',async t=>{
+  const h=harness();t.after(h.close);setViewport(h,390,844);
+  const main=h.w.document.querySelector('main'),scroller=h.w.document.createElement('div');scroller.style.overflowY='auto';
+  main.before(scroller);scroller.append(main);scroller.getBoundingClientRect=()=>rectangle(0,0,390,844);
+  main.getBoundingClientRect=()=>rectangle(15,-800,360,2000);
+  await h.advance(100);const frame=h.frames()[0];h.connect(frame);h.message(frame,{type:'open-editor'});
+  assert.deepEqual(editorBounds(frame.parentElement),['0px','0px','390px','844px']);
+  h.message(frame,{type:'close-editor'});scroller.style.overflowY='visible';main.getBoundingClientRect=()=>rectangle(0,0,0,0);
+  h.message(frame,{type:'open-editor'});assert.deepEqual(editorBounds(frame.parentElement),['0px','0px','390px','844px']);
+  h.message(frame,{type:'close-editor'});
+});
+
+test('editor closes and releases its layout observers immediately when navigation removes the conversation',async t=>{
+  const h=harness();t.after(h.close);await h.advance(100);
+  const frame=h.frames()[0];h.connect(frame);h.message(frame,{type:'open-editor'});
+  h.get('assistant').remove();await h.advance(16);
+  assert.equal(h.w.document.querySelector('.latex-islands-editor'),null);
+  assert.equal(h.w.document.documentElement.classList.contains('latex-islands-editor-open'),false);
+  assert.ok(h.resizeObservers.every(observer=>observer.targets.size===0));
 });
 
 test('editor drafts survive settings changes without altering the conversation source, then reset on new streamed source',async t=>{

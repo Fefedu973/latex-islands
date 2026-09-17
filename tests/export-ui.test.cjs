@@ -14,7 +14,7 @@ function harness(respond,pathname='/c/'+ID,saved={}){
   w.chrome={storage:{local:{get:async defaults=>({...defaults,...saved}),set:async value=>stored.push(value)}}};
   function reply(request,data,overrides={}){w.dispatchEvent(new w.MessageEvent('message',{source:w,origin:w.location.origin,data:{channel:CHANNEL,type:'response',requestId:request.requestId,...data},...overrides}));}
   w.postMessage=(data,origin)=>{sent.push({data,origin});if(data.type==='request'&&respond)queueMicrotask(async()=>{const result=await respond(data,sent.filter(item=>item.data.type==='request').length);if(result)reply(data,result);});};
-  for(const file of ['export-core.js','export-preview-renderer.js','conversation-export.js'])w.eval(fs.readFileSync(path.join(ROOT,file),'utf8'));
+  for(const file of ['export-core.js','export-preview-renderer.js','native-controls.js','conversation-export.js'])w.eval(fs.readFileSync(path.join(ROOT,file),'utf8'));
   const get=selector=>w.document.querySelector(selector);
   function format(value){get('#li-export-format').value=value;get('#li-export-format').dispatchEvent(new w.Event('change',{bubbles:true}));}
   function change(selector,value){const input=get(selector);if(input.type==='checkbox')input.checked=value;else input.value=value;input.dispatchEvent(new w.Event('change',{bubbles:true}));}
@@ -48,6 +48,26 @@ test('Markdown defaults to a transcript, previews safely, and reuses its snapsho
   h.get('.li-export-save').click();await h.settle();assert.equal(h.downloads[0].name,'Transcript.md');assert.equal(await h.text(h.blobs[0]),h.copied[0]);assert.equal(h.sent.filter(x=>x.data.type==='request').length,1);
 });
 
+test('export actions show only their own spinner through pagination and finish without status text',async t=>{
+  for(const [selector,label] of [['.li-export-inspect','Preview'],['.li-export-copy','Copy'],['.li-export-save','Download']]){
+    const h=harness();t.after(h.close);h.get('.li-export-toggle').click();
+    const active=h.get(selector),status=h.get('.li-export-status');status.textContent='Previous error';
+    active.click();
+    assert.equal(status.textContent,'');assert.equal(active.getAttribute('aria-label'),label);
+    assert.equal(active.getAttribute('aria-busy'),'true');assert.equal(active.querySelector('.li-export-button-spinner').hidden,false);
+    assert.equal(h.w.document.querySelectorAll('.li-export-actions button[aria-busy="true"]').length,1);
+    assert.equal(h.get('.li-export-cancel').hidden,false);
+    const first=h.sent.find(x=>x.data.type==='request').data;
+    h.reply(first,{ok:true,payload:apiPage([message('a','assistant','Answer')],true)});await h.settle();
+    assert.equal(active.getAttribute('aria-busy'),'true');assert.equal(status.textContent,'');
+    const second=h.sent.filter(x=>x.data.type==='request').at(-1).data;
+    h.reply(second,{ok:true,payload:apiPage([message('q','user','Question')])});await h.settle();
+    assert.equal(status.textContent,'');assert.equal(status.dataset.state,'success');
+    assert.equal(active.getAttribute('aria-busy'),'false');assert.equal(active.querySelector('.li-export-button-spinner').hidden,true);
+    assert.equal(active.disabled,false);assert.equal(h.get('.li-export-cancel').hidden,true);
+  }
+});
+
 test('answers-only text export and saved preferences honor the chosen options without saving the conversation',async t=>{
   const h=harness(async()=>({ok:true,payload:apiPage([message('q','user','Question unique'),message('a','assistant','Réponse finale',{channel:'final'})],false,{title:'Sans question'})}));t.after(h.close);
   h.format('txt');h.change('#li-export-preset','answers');h.change('#li-export-timestamps',true);h.get('.li-export-save').click();await h.settle();
@@ -64,6 +84,7 @@ test('changing options updates the preview without another request and changed m
 test('a failed later page gives an error without a partial archive',async t=>{
   const h=harness(async(request,count)=>count===1?{ok:true,payload:apiPage([],true)}:{ok:false,error:'HTTP 429 synthetic refusal',status:429});t.after(h.close);
   h.get('.li-export-save').click();await h.settle();assert.equal(h.downloads.length,0);assert.equal(h.get('.li-export-status').dataset.state,'error');assert.match(h.get('.li-export-status').textContent,/429/);assert.equal(h.get('.li-export-save').disabled,false);
+  assert.equal(h.get('.li-export-save').getAttribute('aria-busy'),'false');assert.equal(h.get('.li-export-save .li-export-button-spinner').hidden,true);
 });
 
 test('responses from another origin or window cannot satisfy an export request',async t=>{
@@ -76,6 +97,7 @@ test('cancel and navigation discard in-flight exports without downloading',async
   for(const mode of ['cancel','navigate']){const h=harness();t.after(h.close);h.get('.li-export-save').click();const request=h.sent.find(item=>item.data.type==='request').data;
     if(mode==='cancel')h.get('.li-export-cancel').click();else{h.w.history.pushState({},'','/c/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');h.reply(request,{ok:true,payload:apiPage()});}
     await h.settle();assert.equal(h.downloads.length,0);assert.equal(h.get('.li-export-status').dataset.state,'error');assert.match(h.get('.li-export-status').textContent,/cancelled/);
+    assert.equal(h.get('.li-export-save').getAttribute('aria-busy'),'false');assert.equal(h.get('.li-export-save .li-export-button-spinner').hidden,true);
   }
 });
 
@@ -110,4 +132,50 @@ test('closing the modal cancels an in-flight operation and restores focus',async
   const icon=close.querySelector('svg');assert.equal(icon.getAttribute('viewBox'),'0 0 24 24');assert.equal(icon.getAttribute('aria-hidden'),'true');
   icon.querySelector('path').dispatchEvent(new h.w.MouseEvent('click',{bubbles:true}));h.reply(request,{ok:true,payload:apiPage()});await h.settle();
   assert.equal(h.downloads.length,0);assert.equal(h.get('.li-export-panel').hidden,true);assert.equal(h.w.document.activeElement,h.get('.li-export-toggle'));assert.ok(h.sent.some(x=>x.data.type==='cancel'));
+});
+
+test('custom format listbox supports arrows, typeahead, selection and Escape without dismissing the dialog',async t=>{
+  const h=harness();t.after(h.close);h.get('.li-export-toggle').click();
+  const trigger=h.get('#li-export-format-trigger'),menu=h.get('#li-export-format-menu');
+  const key=value=>trigger.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:value,bubbles:true,cancelable:true}));
+  assert.equal(trigger.getAttribute('role'),'combobox');assert.equal(trigger.getAttribute('aria-haspopup'),'listbox');
+  assert.equal(h.get('#li-export-format').hidden,true);assert.equal(h.w.document.activeElement,trigger);
+  key('ArrowDown');assert.equal(menu.hidden,false);assert.equal(trigger.getAttribute('aria-expanded'),'true');
+  assert.equal(h.get('#li-export-format-option-0').getAttribute('aria-selected'),'true');
+  key('End');assert.equal(trigger.getAttribute('aria-activedescendant'),'li-export-format-option-2');
+  key('Escape');assert.equal(menu.hidden,true);assert.equal(h.get('.li-export-panel').hidden,false);assert.equal(h.get('#li-export-format').value,'md');
+  key('p');assert.equal(trigger.getAttribute('aria-activedescendant'),'li-export-format-option-1');key('Enter');
+  assert.equal(h.get('#li-export-format').value,'txt');assert.equal(trigger.querySelector('.li-export-select-value').textContent,'Plain text (.txt)');
+  assert.equal(h.stored.at(-1).exportPreferences.format,'txt');assert.equal(menu.hidden,true);assert.equal(h.w.document.activeElement,trigger);
+  key('Home');key('ArrowDown');key('ArrowDown');key(' ');
+  assert.equal(h.get('#li-export-format').value,'json');assert.equal(h.get('.li-export-transcript').hidden,true);assert.equal(h.sent.length,0);
+});
+
+test('custom selects restore preferences, keep only one listbox open and disable during fetch',async t=>{
+  const h=harness(null,'/c/'+ID,{exportPreferences:{format:'txt',includeUser:false}});t.after(h.close);await h.settle();h.get('.li-export-toggle').click();
+  const format=h.get('#li-export-format-trigger'),preset=h.get('#li-export-preset-trigger');
+  assert.equal(format.querySelector('.li-export-select-value').textContent,'Plain text (.txt)');assert.equal(preset.querySelector('.li-export-select-value').textContent,'Answers only');
+  format.click();preset.click();assert.equal(h.get('#li-export-format-menu').hidden,true);assert.equal(h.get('#li-export-preset-menu').hidden,false);
+  h.get('#li-export-preset-option-1').click();assert.equal(h.get('#li-export-preset').value,'detailed');assert.equal(h.get('#li-export-includeUser').checked,true);assert.equal(h.get('#li-export-includeTools').checked,true);
+  format.click();h.get('.li-export-save').dispatchEvent(new h.w.MouseEvent('pointerdown',{bubbles:true}));assert.equal(h.get('#li-export-format-menu').hidden,true);
+  h.get('.li-export-save').click();assert.equal(format.disabled,true);assert.equal(preset.disabled,true);
+  h.get('.li-export-cancel').click();await h.settle();assert.equal(format.disabled,false);assert.equal(preset.disabled,false);
+});
+
+test('switches retain checkbox keyboard semantics, labels and immediate persisted preset updates',async t=>{
+  const h=harness();t.after(h.close);h.get('.li-export-toggle').click();
+  const input=h.get('#li-export-includeUser');assert.equal(input.type,'checkbox');assert.equal(input.getAttribute('role'),'switch');assert.match(input.labels[0].textContent,/Include my messages/);
+  input.click();assert.equal(input.checked,false);assert.equal(h.get('#li-export-preset').value,'answers');
+  assert.equal(h.get('#li-export-preset-trigger .li-export-select-value').textContent,'Answers only');assert.equal(h.stored.at(-1).exportPreferences.includeUser,false);
+  h.get('#li-export-includeTools').click();assert.equal(h.get('#li-export-preset-trigger .li-export-select-value').textContent,'Custom');
+  assert.equal(h.sent.length,0);
+});
+
+test('header tooltip replaces native title and closes when the export dialog opens',async t=>{
+  const h=harness();t.after(h.close);const toggle=h.get('.li-export-toggle'),tooltip=h.get('.li-export-tooltip');
+  assert.equal(toggle.hasAttribute('title'),false);assert.equal(toggle.getAttribute('aria-label'),'Export conversation');assert.equal(toggle.getAttribute('aria-describedby'),tooltip.id);assert.equal(tooltip.getAttribute('role'),'tooltip');
+  toggle.dispatchEvent(new h.w.Event('pointerenter'));await new Promise(resolve=>setTimeout(resolve,330));assert.equal(tooltip.hidden,false);
+  h.w.document.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(tooltip.hidden,true);
+  toggle.dispatchEvent(new h.w.Event('pointerleave'));assert.equal(tooltip.hidden,true);
+  toggle.focus();toggle.click();await new Promise(resolve=>setTimeout(resolve,330));assert.equal(tooltip.hidden,true);assert.equal(h.get('.li-export-panel').hidden,false);
 });

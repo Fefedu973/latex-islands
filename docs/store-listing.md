@@ -1,4 +1,4 @@
-# Store listing — 1.4.1
+# Store listing — 1.4.2
 
 Repository: https://github.com/Fefedu973/latex-islands. Privacy policy: https://github.com/Fefedu973/latex-islands/blob/main/PRIVACY.md.
 

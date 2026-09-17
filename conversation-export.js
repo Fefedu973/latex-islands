@@ -12,21 +12,42 @@
   const root=document.createElement('div');root.className='li-export';root.dataset.latexIslandsExport='true';
   function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text)node.textContent=text;return node;}
   function button(label,className){const node=element('button',className,label);node.type='button';return node;}
-  const toggle=button('','li-export-toggle');toggle.title='Export conversation';toggle.setAttribute('aria-label',toggle.title);toggle.setAttribute('aria-expanded','false');toggle.setAttribute('aria-controls','li-export-panel');
+  const toggle=button('','li-export-toggle');toggle.setAttribute('aria-label','Export conversation');toggle.setAttribute('aria-expanded','false');toggle.setAttribute('aria-controls','li-export-panel');
   toggle.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 15v5h14v-5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const tooltip=element('div','li-export-tooltip','Export conversation');tooltip.id='li-export-tooltip';tooltip.hidden=true;tooltip.setAttribute('role','tooltip');tooltip.setAttribute('popover','manual');toggle.setAttribute('aria-describedby',tooltip.id);
+  let tooltipTimer=0;
+  function hideTooltip(){clearTimeout(tooltipTimer);tooltipTimer=0;try{tooltip.hidePopover?.();}catch{}tooltip.hidden=true;}
+  function showTooltip(){
+    hideTooltip();if(toggle.getAttribute('aria-expanded')==='true')return;
+    tooltipTimer=setTimeout(()=>{tooltipTimer=0;if(!toggle.isConnected||toggle.getAttribute('aria-expanded')==='true')return;
+      tooltip.hidden=false;tooltip.showPopover?.();const rect=toggle.getBoundingClientRect();
+      tooltip.style.top=Math.min(rect.bottom+8,window.innerHeight-tooltip.offsetHeight-8)+'px';
+      tooltip.style.left=Math.max(8,Math.min(rect.left+rect.width/2-tooltip.offsetWidth/2,window.innerWidth-tooltip.offsetWidth-8))+'px';
+    },300);
+  }
+  toggle.addEventListener('pointerenter',showTooltip);toggle.addEventListener('pointerleave',hideTooltip);toggle.addEventListener('focus',showTooltip);toggle.addEventListener('blur',hideTooltip);
   const panel=element('dialog','li-export-panel');panel.id='li-export-panel';panel.hidden=true;panel.setAttribute('aria-label','Export conversation');
   const heading=element('div','li-export-heading');const title=element('strong','','Export conversation');title.id='li-export-title';panel.setAttribute('aria-labelledby',title.id);panel.setAttribute('aria-modal','true');
-  const close=button('','li-export-close');close.innerHTML='<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round"/></svg>';close.setAttribute('aria-label','Close export options');heading.append(title,close);
-  const detail=element('p','li-export-detail','A transcript ready to read and share.');
+  const close=button('','li-export-close');close.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round"/></svg>';close.setAttribute('aria-label','Close export options');heading.append(title,close);
   const controls=element('div','li-export-controls');
-  function selectField(label,id,values){const wrapper=element('label','li-export-field');const caption=element('span','',label);const select=element('select');select.id=id;for(const [value,text]of values){const option=element('option','',text);option.value=value;select.append(option);}wrapper.append(caption,select);return {wrapper,select};}
+  const dropdowns=new Map();
+  function selectField(label,id,values){
+    const wrapper=element('div','li-export-field'),caption=element('span','',label),select=element('select');
+    caption.id=id+'-label';select.id=id;
+    for(const [value,text]of values){const option=element('option','',text);option.value=value;select.append(option);}
+    wrapper.append(caption,select);
+    dropdowns.set(select,globalThis.LatexIslandsNativeControls.enhanceSelect(select,{prefix:'li-export',labelledBy:caption.id}));
+    return {wrapper,select};
+  }
   const {wrapper:formatField,select:format}=selectField('Format','li-export-format',[['md','Markdown (.md)'],['txt','Plain text (.txt)'],['json','Complete archive (.json)']]);
   const transcriptControls=element('fieldset','li-export-transcript');
   const {wrapper:presetField,select:preset}=selectField('Content','li-export-preset',[['dialogue','Conversation'],['detailed','Detailed context'],['answers','Answers only'],['custom','Custom']]);
-  const extras=element('details','li-export-options');extras.open=true;extras.append(element('summary','','Customize transcript'));
+  const extras=element('details','li-export-options');extras.open=true;
+  const extrasSummary=element('summary');extrasSummary.append(element('span','','Customize transcript'));
+  const extrasChevron=element('span','li-export-options-chevron');extrasChevron.setAttribute('aria-hidden','true');extrasChevron.innerHTML='<svg viewBox="0 0 16 16" fill="none"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';extrasSummary.append(extrasChevron);extras.append(extrasSummary);
   const checks={};
   for(const [key,label]of [['includeUser','Include my messages'],['includeAttachments','Include attachment references'],['includeSources','Include sources and citations'],['timestamps','Show dates and times'],['includeProgress','Include progress updates'],['includeTools','Include tool calls and results']]){
-    const row=element('label','li-export-option');const input=element('input');input.type='checkbox';input.id='li-export-'+key;checks[key]=input;row.append(input,element('span','',label));extras.append(row);
+    const row=element('label','li-export-option');const input=element('input','li-export-switch');input.type='checkbox';input.id='li-export-'+key;input.setAttribute('role','switch');checks[key]=input;row.append(element('span','',label),input);extras.append(row);
   }
   transcriptControls.append(presetField,extras);
   const archiveNote=element('p','li-export-archive-note','All messages, metadata and pages received from ChatGPT, unfiltered.');archiveNote.hidden=true;
@@ -46,19 +67,24 @@
   previewPane.append(emptyPreview,previewBox);
   const actions=element('div','li-export-actions');
   const inspect=button('Preview','li-export-inspect'),copy=button('Copy','li-export-copy'),save=button('Download','li-export-save'),cancel=button('Cancel','li-export-cancel');cancel.hidden=true;
-  const sessionNote=element('p','li-export-detail','Reads from ChatGPT using your session. Exports locally.');
-  const settingsPane=element('div','li-export-settings');settingsPane.append(detail,controls,attachmentNote,sessionNote);
+  const actionButtons={preview:inspect,copy,download:save};
+  for(const node of Object.values(actionButtons)){
+    const label=node.textContent;
+    node.setAttribute('aria-label',label);node.setAttribute('aria-busy','false');
+    const spinner=element('span','li-export-button-spinner');spinner.setAttribute('aria-hidden','true');spinner.hidden=true;
+    node.replaceChildren(element('span','li-export-action-label',label),spinner);
+  }
+  const settingsPane=element('div','li-export-settings');settingsPane.append(controls,attachmentNote);
   const layout=element('div','li-export-layout');layout.append(settingsPane,previewPane);
-  const footer=element('div','li-export-footer');actions.append(inspect,copy,save,cancel);footer.append(status,actions);panel.append(heading,layout,footer);root.append(toggle,panel);
+  const footer=element('div','li-export-footer');actions.append(inspect,copy,cancel,save);footer.append(status,actions);panel.append(heading,layout,footer);root.append(toggle,tooltip,panel);
 
   function options(){return Object.fromEntries(Object.entries(checks).map(([key,input])=>[key,input.checked]));}
   function guessedPreset(value){if(!value.includeUser)return value.includeProgress||value.includeTools?'custom':'answers';if(value.includeProgress&&value.includeTools)return 'detailed';if(!value.includeProgress&&!value.includeTools)return 'dialogue';return 'custom';}
   function applyPreferences(){
-    format.value=preferences.format;for(const [key,input]of Object.entries(checks))input.checked=preferences[key];preset.value=guessedPreset(preferences);updateFormat();
+    format.value=preferences.format;for(const [key,input]of Object.entries(checks))input.checked=preferences[key];preset.value=guessedPreset(preferences);for(const control of dropdowns.values())control.sync();updateFormat();
   }
   function updateFormat(){
     const isJSON=format.value==='json';transcriptControls.hidden=isJSON;archiveNote.hidden=!isJSON;dialogueMode.disabled=isJSON;
-    detail.textContent=isJSON?'An archive preserving the conversation data.':'A transcript ready to read and share.';
     if(previewRequested&&snapshot)updatePreview();
   }
   function remember(){
@@ -73,7 +99,7 @@
     if(preset.value==='detailed')Object.assign(preferences,{includeUser:true,includeProgress:true,includeTools:true});
     for(const key of ['includeUser','includeProgress','includeTools'])checks[key].checked=preferences[key];remember();
   });
-  for(const input of Object.values(checks))input.addEventListener('change',()=>{remember();preset.value=guessedPreset(preferences);});
+  for(const input of Object.values(checks))input.addEventListener('change',()=>{remember();preset.value=guessedPreset(preferences);dropdowns.get(preset).sync();});
   applyPreferences();
   try{Promise.resolve(extensionAPI?.storage?.local?.get({exportPreferences:defaults})).then(saved=>{
     if(preferencesTouched)return;const next=saved?.exportPreferences;if(!next)return;
@@ -82,15 +108,20 @@
   }).catch(()=>{});}catch{}
 
   function show(open){
+    hideTooltip();globalThis.LatexIslandsNativeControls.closeAll();
     if(!open){if(running)cancelExport();try{panel.close?.();}catch{}snapshot=null;snapshotRevision=-1;previewRequested=false;previewBox.hidden=true;emptyPreview.hidden=false;status.textContent='';}
     panel.hidden=!open;toggle.setAttribute('aria-expanded',String(open));
-    if(open){lastFocus=document.activeElement;panel.showModal?.();format.focus();}
+    if(open){lastFocus=document.activeElement;panel.showModal?.();dropdowns.get(format).trigger.focus();}
     else if(lastFocus?.isConnected)lastFocus.focus();
   }
   toggle.addEventListener('click',()=>show(panel.hidden));close.addEventListener('click',()=>show(false));
   panel.addEventListener('cancel',event=>{event.preventDefault();show(false);});
   document.addEventListener('click',event=>{if(!panel.hidden&&!running&&!root.contains(event.target))show(false);});
+  window.addEventListener('resize',hideTooltip);
+  document.addEventListener('scroll',hideTooltip,{capture:true,passive:true});
   document.addEventListener('keydown',event=>{
+    if(event.defaultPrevented)return;
+    if(event.key==='Escape'&&!tooltip.hidden)hideTooltip();
     if(event.key==='Escape'&&!panel.hidden){show(false);event.preventDefault();event.stopPropagation();}
     if(event.key==='Tab'&&!panel.hidden){const items=[...panel.querySelectorAll('button:not(:disabled),select:not(:disabled),input:not(:disabled),summary,[tabindex="0"],a[href]')].filter(el=>!el.closest('[hidden]')&&(!el.closest('details')||el.tagName==='SUMMARY'||el.closest('details').open));
       if(event.shiftKey&&document.activeElement===items[0]){event.preventDefault();items.at(-1)?.focus();}else if(!event.shiftKey&&document.activeElement===items.at(-1)){event.preventDefault();items[0]?.focus();}}
@@ -142,33 +173,37 @@
   }
   dialogueMode.addEventListener('click',()=>{previewMode='dialogue';updatePreview();});fileMode.addEventListener('click',()=>{previewMode='file';updatePreview();});
   more.addEventListener('click',()=>{visibleEntries+=20;visibleCharacters+=50000;updatePreview();});
-  function setBusy(value){
+  function setBusy(value,action){
     running=value;for(const node of [inspect,copy,save,format,preset,...Object.values(checks)])node.disabled=value;cancel.hidden=!value;
+    for(const node of Object.values(actionButtons)){
+      const active=value&&node===actionButtons[action];
+      node.setAttribute('aria-busy',String(active));node.querySelector('.li-export-button-spinner').hidden=!active;
+    }
+    for(const control of dropdowns.values())control.sync();
     panel.setAttribute('aria-busy',String(value));
   }
   function download(text,type,name){const url=URL.createObjectURL(new Blob([text],{type})),anchor=document.createElement('a');anchor.href=url;anchor.download=name;document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
   async function run(action){
     if(running)return;const id=core.conversationId(location.pathname);if(!id){status.textContent='Open a saved conversation to export it.';return;}
     const actionFocus=document.activeElement;
-    const selectedFormat=format.value,selectedOptions=options();setBusy(true);canceled=false;status.dataset.state='loading';
+    const selectedFormat=format.value,selectedOptions=options();setBusy(true,action);canceled=false;status.textContent='';status.dataset.state='loading';
     try{
       if(!snapshot||snapshotRevision!==revision){
-        status.textContent='Fetching the conversation…';const startedRevision=revision;
-        snapshot=await core.collectConversation({id,fetchJSON,onProgress(progress){
+        const startedRevision=revision;
+        snapshot=await core.collectConversation({id,fetchJSON,onProgress(){
           if(core.conversationId(location.pathname)!==id){cancelExport();throw new Error('Conversation changed. Export cancelled.');}
-          status.textContent=progress.messages+' messages fetched…';
         }});snapshotRevision=startedRevision;
       }
       if(canceled||core.conversationId(location.pathname)!==id)throw new Error('Export cancelled.');
       const text=output(snapshot,selectedFormat,selectedOptions);
       if(previewRequested)updatePreview();
-      if(action==='preview'){previewRequested=true;updatePreview();status.textContent='Preview ready. Adjust the options before copying or downloading.';}
+      if(action==='preview'){previewRequested=true;updatePreview();}
       else if(action==='copy'){
-        try{await navigator.clipboard.writeText(text);status.textContent='Conversation copied.';}
+        try{await navigator.clipboard.writeText(text);}
         catch{previewRequested=true;updatePreview();throw new Error('Copy unavailable. Download the complete file.');}
       }else{
         const mime={json:'application/json',md:'text/markdown',txt:'text/plain'}[selectedFormat];
-        download(text,mime+';charset=utf-8',core.fileName(snapshot.title,selectedFormat));status.textContent='Conversation downloaded.';
+        download(text,mime+';charset=utf-8',core.fileName(snapshot.title,selectedFormat));
       }
       status.dataset.state='success';
     }catch(error){status.dataset.state='error';status.textContent=error.message||'Export failed.';}

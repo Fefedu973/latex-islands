@@ -6,7 +6,8 @@
   const status = document.getElementById('save-status');
   const themeSelect = document.getElementById('uiTheme');
   const systemTheme = matchMedia('(prefers-color-scheme: dark)');
-  let feedbackTimer, chatgptTheme = null;
+  const controls = new Map([...document.querySelectorAll('select')].map(select => [select, LatexIslandsNativeControls.enhanceSelect(select)]));
+  let chatgptTheme = null;
   function applyTheme(value) {
     themeSelect.value = ['chatgpt', 'system', 'light', 'dark'].includes(value) ? value : 'chatgpt';
     const followed = themeSelect.value === 'chatgpt' && ['light', 'dark'].includes(chatgptTheme?.theme);
@@ -19,6 +20,7 @@
       if (typeof color === 'string' && /^(#[\da-f]{3,8}|rgba?\([\d\s.,%/]+\))$/i.test(color)) root.style.setProperty(property, color);
     }
     document.getElementById('theme-help').textContent = themeSelect.value !== 'chatgpt' ? 'Popup and editor.' : followed ? 'Last ChatGPT theme: ' + (chatgptTheme.theme === 'dark' ? 'dark.' : 'light.') : 'System theme until ChatGPT is opened.';
+    controls.get(themeSelect).sync();
   }
   systemTheme.addEventListener('change', () => applyTheme(themeSelect.value));
   extensionAPI?.storage?.onChanged?.addListener((changes, area) => {
@@ -26,6 +28,9 @@
     if (changes.chatgptTheme) chatgptTheme = changes.chatgptTheme.newValue;
     if (changes.uiTheme || changes.chatgptTheme) applyTheme(changes.uiTheme ? changes.uiTheme.newValue : themeSelect.value);
     if (changes.renderColors) document.getElementById('renderColors').value = changes.renderColors.newValue === 'native' ? 'native' : 'chatgpt';
+    for (const key of ['enabled', 'autoRender']) if (changes[key]) document.getElementById(key).checked = changes[key].newValue !== false;
+    if (changes.scale) document.getElementById('scale').value = String([0.75,1,1.25,1.5,2].includes(Number(changes.scale.newValue)) ? Number(changes.scale.newValue) : 1);
+    for (const control of controls.values()) control.sync();
   });
   async function load() {
     try {
@@ -36,6 +41,7 @@
       chatgptTheme = settings.chatgptTheme;
       applyTheme(settings.uiTheme);
       document.getElementById('renderColors').value = settings.renderColors === 'native' ? 'native' : 'chatgpt';
+      for (const control of controls.values()) control.sync();
     } catch { status.textContent = 'Could not load settings.'; }
   }
   for (const key of Object.keys(defaults)) document.getElementById(key).addEventListener('change', async event => {
@@ -43,9 +49,7 @@
     if (key === 'uiTheme') applyTheme(value);
     try {
       await extensionAPI.storage.local.set({[key]: value});
-      clearTimeout(feedbackTimer);
-      status.textContent = 'Setting saved';
-      feedbackTimer = setTimeout(() => { status.textContent = 'Settings saved locally'; }, 2200);
+      status.textContent = '';
     } catch { status.textContent = 'Could not save. Please try again.'; }
   });
   document.getElementById('open-demo').addEventListener('click', () => {

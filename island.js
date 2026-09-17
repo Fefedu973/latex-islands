@@ -4,12 +4,12 @@ const extensionAPI=globalThis.browser||globalThis.chrome;
 const $=id=>document.getElementById(id);
 const island=document.querySelector('.island'),viewport=$('viewport');
 let current=null,parentOrigin=null,version=0,svgNode=null,previewCompiler=null,busy=false,warmed=false;
-let editor=false,zoomValue=1,fitScale=1,panX=0,panY=0,naturalWidth=500,naturalHeight=260,drag=null;
+let viewMode='inline',editor=false,zoomValue=1,fitScale=1,panX=0,panY=0,naturalWidth=500,naturalHeight=260,drag=null;
 const ownOrigin=location.protocol+'//'+location.host;
 const allowedOrigins=new Set(['https://chatgpt.com','https://chat.openai.com',ownOrigin]);
 function send(type,more={}) {if(current&&parentOrigin) parent.postMessage({channel:'latex-islands',type,id:current.id,...more},parentOrigin);}
 function resize() {
-  if(editor)return;
+  if(viewMode!=='inline')return;
   const menuBottom=$('diagram-menu').hidden?0:$('diagram-menu').getBoundingClientRect().bottom+8;
   send('resize',{height:Math.min(2400,Math.ceil(Math.max(document.body.getBoundingClientRect().height,menuBottom))+2)});
 }
@@ -51,18 +51,31 @@ function setTheme(message) {
   }
 }
 function setSourceVisible(visible){
+  if(viewMode==='preview'||viewMode==='fullscreen')visible=false;
   $('source-details').hidden=!visible;$('source-toggle').setAttribute('aria-expanded',String(visible));
   $('source-toggle').querySelector('span').textContent=visible?'Hide code':'Show code';
   fit();resize();
 }
 function setView(mode){
-  if(mode!=='inline'&&mode!=='editor')return;
-  if(editor===(mode==='editor'))return;
-  editor=mode==='editor';island.classList.toggle('editor',editor);setSourceVisible(editor);closeMenu(false);
-  panX=panY=0;fit();resize();if(editor)$('close-editor').focus();
+  if(!['inline','editor','preview','fullscreen'].includes(mode)||viewMode===mode)return;
+  viewMode=mode;editor=mode==='editor'||mode==='fullscreen';
+  island.dataset.mode=mode;island.classList.toggle('editor',editor);
+  $('source-toggle').hidden=mode==='fullscreen';
+  $('open-editor').textContent=mode==='preview'?'Open full screen':'Open editor';
+  $('close-editor').setAttribute('aria-label',mode==='fullscreen'?'Close full screen':'Close editor');
+  $('close-editor').title=mode==='fullscreen'?'Close full screen':'Close editor';
+  if(mode!=='inline')viewport.style.removeProperty('height');
+  setSourceVisible(mode==='editor');closeMenu(false);
+  // Keep the user's pan and zoom when the host expands the existing iframe.
+  fit();resize();if(editor)$('close-editor').focus();
+}
+function revealSource(){
+  if(viewMode==='preview'||viewMode==='fullscreen'){send('show-source');return;}
+  setSourceVisible(true);$('source').focus();
 }
 function setState(state,text){
-  island.dataset.state=state;$('status').textContent=text;$('placeholder').hidden=state==='ready';
+  island.dataset.state=state;$('status').textContent=text;$('placeholder').hidden=state==='ready'||state==='error';
+  document.querySelector('.floating-tools').hidden=state==='error';
   $('spinner').hidden=!['streaming','loading'].includes(state);
   $('render-manual').hidden=state!=='idle';
   $('compile').disabled=busy||current?.streaming===true;
@@ -71,10 +84,25 @@ function setState(state,text){
 }
 function setAvailable(available){
   for(const id of ['download','download-png','png-header','zoom-in','zoom-out','reset-zoom'])$(id).disabled=!available;
+  document.querySelector('.zoom-controls').hidden=!available;
   viewport.classList.toggle('has-diagram',available);
 }
+function clearError(){
+  $('error-panel').hidden=true;$('error').hidden=true;$('error-actions').hidden=true;
+  $('error-details').hidden=true;$('error-details').open=false;$('error-log').textContent='';
+}
+function showError(message){
+  clearOutput();closeMenu(false);
+  const text=String(message||'Please try again.');
+  const detailed=text.length>240||text.includes('\n');
+  const firstLine=text.split(/\r?\n/).find(line=>line.trim())||'Rendering failed.';
+  $('error').textContent=detailed?(firstLine.length>240?firstLine.slice(0,237)+'…':firstLine):text;
+  $('error-log').textContent=detailed?text:'';$('error-details').hidden=!detailed;
+  $('error-panel').hidden=false;$('error').hidden=false;$('error-actions').hidden=false;
+  setState('error','');
+}
 function clearOutput(){
-  svgNode=null;$('output').replaceChildren();setAvailable(false);$('error').hidden=true;$('error-actions').hidden=true;$('warning').hidden=true;
+  svgNode=null;$('output').replaceChildren();setAvailable(false);clearError();$('warning').hidden=true;
 }
 const lengthPx=value=>{
   const m=String(value||'').match(/^([\d.]+)(pt|px|cm|mm|in)?$/);
@@ -94,13 +122,20 @@ function applyTransform(){
 function fit(){
   if(!svgNode)return;
   const width=viewport.getBoundingClientRect().width||window.innerWidth||720;
-  if(!editor)viewport.style.height=Math.max(180,Math.min(640,naturalHeight*Math.min(2,(width-32)/naturalWidth)+64))+'px';
+  if(viewMode==='inline')viewport.style.height=Math.max(180,Math.min(640,naturalHeight*Math.min(2,(width-32)/naturalWidth)+64))+'px';
   const height=viewport.getBoundingClientRect().height||parseFloat(viewport.style.height)||500;
-  fitScale=Math.min(editor?3:2,Math.max(1,width-32)/naturalWidth,Math.max(1,height-64)/naturalHeight);
+  fitScale=Math.min(viewMode==='inline'?2:3,Math.max(1,width-32)/naturalWidth,Math.max(1,height-64)/naturalHeight);
   applyTransform();
 }
-function zoom(multiplier){
-  if(!svgNode)return;zoomValue=Math.max(.25,Math.min(5,zoomValue*multiplier));applyTransform();
+function zoom(multiplier,clientX,clientY){
+  if(!svgNode)return;
+  const next=Math.max(.25,Math.min(5,zoomValue*multiplier)),ratio=next/zoomValue;
+  if(Number.isFinite(clientX)&&Number.isFinite(clientY)){
+    const bounds=viewport.getBoundingClientRect();
+    const x=clientX-bounds.left-bounds.width/2,y=clientY-bounds.top-bounds.height/2;
+    panX=x-ratio*(x-panX);panY=y-ratio*(y-panY);
+  }
+  zoomValue=next;applyTransform();
   $('announcement').textContent='Zoom '+Math.round(zoomValue*100)+' %';
 }
 function resetZoom(){zoomValue=1;panX=panY=0;fit();}
@@ -113,9 +148,27 @@ async function warmup(){
     else {previewCompiler ||=new TikZCompiler();await previewCompiler.load();}
   }catch{warmed=false;} // The eventual render exposes actionable compilation errors.
 }
+function svgFontFamilies(node){
+  const families=new Set();
+  for(const el of [node,...node.querySelectorAll('[font-family],[style]')]){
+    const family=el.style.fontFamily||el.getAttribute('font-family');
+    for(const name of (family||'').split(',')){const clean=name.trim().replace(/["']/g,'');if(/^[A-Za-z0-9-]+$/.test(clean))families.add(clean);}
+  }
+  return families;
+}
+async function loadSVGFonts(node){
+  // TeX uses private-use glyphs: fallback fonts show squares or blank labels.
+  // Load the used faces before inserting the SVG, including on compiler cache hits.
+  await Promise.all([...svgFontFamilies(node)].map(async family=>{
+    try{
+      const faces=await document.fonts.load('16px "'+family+'"',node.textContent||' ');
+      if(!faces.length)throw new Error('Missing font face');
+    }catch{throw new Error('Could not load diagram font "'+family+'". Reload the page and try again.');}
+  }));
+}
 async function render(){
   if(!current||busy||current.streaming)return;
-  const mine=version,source=current.source;busy=true;$('error').hidden=true;$('error-actions').hidden=true;$('warning').hidden=true;
+  const mine=version,source=current.source;busy=true;clearError();$('warning').hidden=true;
   setState('loading','Rendering diagram…');
   try{
     let result;
@@ -123,28 +176,30 @@ async function render(){
     else {previewCompiler ||=new TikZCompiler();result=await previewCompiler.compile(source);}
     if(mine!==version)return;
     if(!result?.ok)throw new Error(result?.error||'Compiler unavailable. Reload the page after installation.');
-    svgNode=cleanSVG(result.svg);$('output').replaceChildren(svgNode);
+    const rendered=cleanSVG(result.svg);
+    await loadSVGFonts(rendered);
+    if(mine!==version)return;
+    svgNode=rendered;$('output').replaceChildren(svgNode);
     const size=dimensions(svgNode);naturalWidth=size.width;naturalHeight=size.height;
     $('output').style.width=naturalWidth+'px';$('output').style.height=naturalHeight+'px';
-    panX=panY=0;fit();setAvailable(true);setState('ready',result.cached?'Diagram ready · cached':'Diagram ready');
+    panX=panY=0;fit();setAvailable(true);setState('ready','');
     if(result.warnings?.length){$('warning').textContent=result.warnings.join('\n');$('warning').hidden=false;}
     send('result',{ok:true,source});
   }catch(e){
-    if(mine===version){$('error').textContent=e.message;$('error').hidden=false;$('error-actions').hidden=false;setState('error','Could not render the diagram');send('result',{ok:false,error:e.message,source});}
+    if(mine===version){showError(e.message);send('result',{ok:false,error:e.message,source});}
   }finally{
     busy=false;$('compile').disabled=current?.streaming===true;$('retry').disabled=current?.streaming===true;resize();
     if(mine!==version&&current.autoRender!==false&&!current.streaming)render();
   }
 }
-window.addEventListener('message',e=>{
-  const m=e.data;
-  if(e.source!==parent||!allowedOrigins.has(e.origin)||m?.channel!=='latex-islands'||typeof m.id!=='string')return;
+function receive(m,origin){
+  if(m?.channel!=='latex-islands'||typeof m.id!=='string')return;
   if(m.type==='view'){
     if(!current||m.id!==current.id)return;
-    parentOrigin=e.origin;setTheme(m);setView(m.mode);fit();resize();return;
+    parentOrigin=origin;setTheme(m);setView(m.mode);fit();resize();return;
   }
   if(!['render','prepare'].includes(m.type)||typeof m.source!=='string'||m.source.length>60000)return;
-  parentOrigin=e.origin;setTheme(m);
+  parentOrigin=origin;setTheme(m);
   const streaming=m.type==='prepare'||m.streaming===true;
   const same=current?.source===m.source&&current.id===m.id;
   const previous=current;
@@ -154,9 +209,12 @@ window.addEventListener('message',e=>{
   if(!same||m.scale!==previous?.scale)zoomValue=[.75,1,1.25,1.5,2].includes(Number(m.scale))?Number(m.scale):1;
   if(m.mode)setView(m.mode);
   if(streaming){setState('streaming','Writing diagram…');warmup();}
-  else if(!svgNode&&!busy){setState('idle','Diagram ready to render');if(m.autoRender!==false)render();}
+  else if(!svgNode&&!busy){setState('idle','');if(m.autoRender!==false)render();}
   else if(svgNode)fit();
   resize();
+}
+window.addEventListener('message',e=>{
+  if(e.source===parent&&allowedOrigins.has(e.origin))receive(e.data,e.origin);
 });
 function compileEdits(){
   if(!current||busy||current.streaming)return;
@@ -172,12 +230,12 @@ $('source').addEventListener('keydown',event=>{
   if(event.key==='Tab'){event.preventDefault();const input=event.currentTarget;input.setRangeText('  ',input.selectionStart,input.selectionEnd,'end');}
 });
 $('source-toggle').addEventListener('click',()=>setSourceVisible($('source-details').hidden));
-$('error-source').addEventListener('click',()=>{setSourceVisible(true);$('source').focus();});
+$('error-source').addEventListener('click',revealSource);
 $('zoom-in').addEventListener('click',()=>zoom(1.25));
 $('zoom-out').addEventListener('click',()=>zoom(.8));
 $('reset-zoom').addEventListener('click',resetZoom);
 viewport.addEventListener('dblclick',resetZoom);
-viewport.addEventListener('wheel',event=>{if(svgNode&&(event.ctrlKey||event.metaKey)){event.preventDefault();zoom(event.deltaY<0?1.1:1/1.1);}},{passive:false});
+viewport.addEventListener('wheel',event=>{if(svgNode&&event.deltaY!==0&&(viewMode!=='inline'||event.ctrlKey||event.metaKey)){event.preventDefault();zoom(event.deltaY<0?1.1:1/1.1,event.clientX,event.clientY);}},{passive:false});
 viewport.addEventListener('keydown',event=>{
   if(!svgNode)return;
   if(['+','=','-','0','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key))event.preventDefault();
@@ -223,9 +281,24 @@ document.addEventListener('keydown',event=>{
 });
 $('open-editor').addEventListener('click',()=>send('open-editor',{source:current?.source||''}));
 $('close-editor').addEventListener('click',()=>send('close-editor'));
+const copyHeaderIcon=$('copy-header').querySelector('svg'),originalCopyIcon=[...copyHeaderIcon.childNodes].map(node=>node.cloneNode(true));
+let copyFeedbackTimer;
+function resetCopyFeedback(){
+  clearTimeout(copyFeedbackTimer);copyHeaderIcon.replaceChildren(...originalCopyIcon.map(node=>node.cloneNode(true)));
+  $('copy-header').setAttribute('aria-label','Copy code');$('copy-header').title='Copy code';
+  $('copy-source').textContent='Copy code';$('announcement').textContent='';
+}
 async function copySource(){
-  try{await navigator.clipboard.writeText($('source').value);$('announcement').textContent='Code copied';}
-  catch{setSourceVisible(true);$('source').focus();$('source').select();$('announcement').textContent='Select the code, then copy it with Ctrl or ⌘ + C.';}
+  try{
+    await navigator.clipboard.writeText($('source').value);
+    clearTimeout(copyFeedbackTimer);
+    copyHeaderIcon.innerHTML='<path d="m5 12 4 4L19 6"/>';
+    $('copy-header').setAttribute('aria-label','Copied');$('copy-header').title='Copied';
+    $('copy-source').innerHTML='Copy code <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
+    $('announcement').textContent='Code copied';
+    copyFeedbackTimer=setTimeout(resetCopyFeedback,1800);
+  }
+  catch{resetCopyFeedback();revealSource();if(viewMode==='inline'||viewMode==='editor')$('source').select();$('announcement').textContent='Select the code, then copy it with Ctrl or ⌘ + C.';}
 }
 $('copy-source').addEventListener('click',copySource);$('copy-header').addEventListener('click',copySource);
 const fontCache=new Map();
@@ -243,12 +316,7 @@ async function exportSVG(){
   // Pan/zoom belongs to the HTML wrapper; retain the SVG's own visual styles.
   clone.removeAttribute('data-width');
   if(!clone.hasAttribute('viewBox'))clone.setAttribute('viewBox','0 0 '+size.width+' '+size.height);
-  const families=new Set();
-  for(const el of [clone,...clone.querySelectorAll('[font-family],[style]')]){
-    const family=el.getAttribute('font-family')||el.style.fontFamily;
-    for(const name of (family||'').split(',')){const clean=name.trim().replace(/["']/g,'');if(/^[A-Za-z0-9-]+$/.test(clean))families.add(clean);}
-  }
-  const css=(await Promise.all([...families].map(fontData))).join('');
+  const css=(await Promise.all([...svgFontFamilies(clone)].map(fontData))).join('');
   if(css){const style=document.createElementNS('http://www.w3.org/2000/svg','style');style.textContent=css;clone.prepend(style);}
   return {blob:new Blob([new XMLSerializer().serializeToString(clone)],{type:'image/svg+xml;charset=utf-8'}),...size};
 }
@@ -282,3 +350,18 @@ async function download(kind){
 $('download').addEventListener('click',()=>download('svg'));
 $('download-png').addEventListener('click',()=>download('png'));
 $('png-header').addEventListener('click',()=>download('png'));
+
+// Only the loaded extension document can offer this channel. It stays bound to
+// this document if the iframe reloads; no message is sent to an about:blank window.
+const requestedParentOrigin=new URL(location.href).searchParams.get('parentOrigin');
+let parentChannel=null;
+function connectToParent(){
+  if(parent===window || !allowedOrigins.has(requestedParentOrigin) || location.hash.length<2)return;
+  const id=decodeURIComponent(location.hash.slice(1)),channel=new MessageChannel();
+  parentChannel?.port1.close();parentChannel=channel;
+  channel.port1.onmessage=event=>{if(event.data?.id===id)receive(event.data,requestedParentOrigin);};
+  parent.postMessage({channel:'latex-islands',type:'ready',id},requestedParentOrigin,[channel.port2]);
+}
+connectToParent();
+window.addEventListener('pagehide',()=>{parentChannel?.port1.close();parentChannel=null;});
+window.addEventListener('pageshow',event=>{if(event.persisted)connectToParent();});

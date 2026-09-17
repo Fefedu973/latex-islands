@@ -12,7 +12,7 @@ export const RUNTIME_FILES = [
   'background.js', 'compiler.js', 'content.css', 'content.js',
   'conversation-bridge.js', 'conversation-export.js', 'core.js',
   'demo.html', 'demo.js', 'examples.js', 'export-core.js', 'export-preview-renderer.js',
-  'island.css', 'island.html', 'island.js', 'offscreen.html', 'offscreen.js',
+  'island.css', 'island.html', 'island.js', 'native-controls.js', 'offscreen.html', 'offscreen.js',
   'popup.html', 'popup.js', 'ui.css',
   'vendor/tikzjax/core.dump.gz', 'vendor/tikzjax/tex.wasm.gz',
   'vendor/tikzjax/run-tex.js', 'vendor/tikzjax/fonts.css',

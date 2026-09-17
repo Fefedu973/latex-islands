@@ -1,4 +1,4 @@
-# Reviewer build and runtime provenance — 1.4.1
+# Reviewer build and runtime provenance — 1.4.2
 
 ## Extension packages
 
@@ -14,7 +14,7 @@ npm run lint:firefox
 
 `npm ci` installs development/test/packaging dependencies from the locked npm dependency set. These tools are not installed or downloaded by the running extension.
 
-Build outputs are `dist/chrome/`, `dist/firefox/`, `dist/latex-islands-chrome-1.4.1.zip`, `dist/latex-islands-firefox-1.4.1.zip`, and `dist/latex-islands-source-1.4.1.zip`. Browser ZIPs have `manifest.json` at their root. The source ZIP includes first-party code, scripts, tests, lockfiles, notices, readable worker modifications and the upstream archives listed below. The build does not recompile the upstream TeX toolchain.
+Build outputs are `dist/chrome/`, `dist/firefox/`, `dist/latex-islands-chrome-1.4.2.zip`, `dist/latex-islands-firefox-1.4.2.zip`, and `dist/latex-islands-source-1.4.2.zip`. Browser ZIPs have `manifest.json` at their root. The source ZIP includes first-party code, scripts, tests, lockfiles, notices, readable worker modifications and the upstream archives listed below. The build does not recompile the upstream TeX toolchain.
 
 ## Bundled upstream inputs
 

@@ -25,6 +25,7 @@
   }
   const custom = document.createElement('option');
   custom.value = 'custom'; custom.textContent = 'My diagram'; examples.append(custom);
+  const controls = new Map([...document.querySelectorAll('select')].map(select => [select, LatexIslandsNativeControls.enhanceSelect(select)]));
 
   function countLines() {
     const lines = source.value.split('\n').length;
@@ -37,8 +38,8 @@
     try {
       if (extensionAPI?.storage?.local) {
         await extensionAPI.storage.local.set({demoSource: source.value, demoExample: examples.value});
-        if (revision === saveRevision) {dirty = false; sourceStatus.textContent = 'Saved locally';}
-      } else sourceStatus.textContent = 'Kept for this session';
+        if (revision === saveRevision) {dirty = false; sourceStatus.textContent = '';}
+      } else sourceStatus.textContent = '';
     } catch { sourceStatus.textContent = 'Could not save'; }
   }
   function saveSource() {
@@ -60,15 +61,17 @@
       if (typeof color === 'string' && /^(#[\da-f]{3,8}|rgba?\([\d\s.,%/]+\))$/i.test(color)) root.style.setProperty(property, color);
     }
     themeSelect.title = themeSelect.value !== 'chatgpt' ? 'Editor appearance' : followed ? 'Uses the last theme seen in ChatGPT' : 'System theme until a ChatGPT tab is opened';
+    controls.get(themeSelect).sync();
     updateView();
   }
   function applyRenderColors(value) {
     colorSelect.value = value === 'native' ? 'native' : 'chatgpt';
     document.documentElement.dataset.renderColors = colorSelect.value;
+    controls.get(colorSelect).sync();
     updateView();
   }
   function updateView() {
-    if (currentRender) {currentRender = {...currentRender, ...theme()}; sendView(editorState ? 'editor' : 'inline');}
+    if (currentRender) {currentRender = {...currentRender, ...theme()}; sendView(editorState ? 'fullscreen' : 'preview');}
   }
   function setSourceVisible(visible) {
     sourcePanel.hidden = !visible;
@@ -83,7 +86,7 @@
     preview.setAttribute('aria-busy', String(value));
   }
   function sendRender() {
-    if (frame?.contentWindow && currentRender) frame.contentWindow.postMessage(currentRender, extensionOrigin);
+    if (frame?.contentWindow && currentRender) frame.contentWindow.postMessage({...currentRender,mode:editorState ? 'fullscreen' : 'preview'}, extensionOrigin);
   }
   function theme() {
     const css=getComputedStyle(document.documentElement),read=name=>css.getPropertyValue(name).trim();
@@ -99,16 +102,16 @@
     preview.removeAttribute('popover');preview.removeAttribute('role');preview.removeAttribute('aria-modal');preview.removeAttribute('aria-label');
     preview.classList.remove('editor-expanded');
     preview.style.cssText=saved.previewStyle;frame.style.cssText=saved.frameStyle;document.body.style.overflow=saved.overflow;
-    sendView('inline');saved.focus?.focus();
+    sendView('preview');saved.focus?.focus();
   }
   function openEditor() {
     if (editorState || !frame) return;
     editorState={previewStyle:preview.style.cssText,frameStyle:frame.style.cssText,overflow:document.body.style.overflow,focus:document.activeElement};
-    preview.setAttribute('role','dialog');preview.setAttribute('aria-modal','true');preview.setAttribute('aria-label','TikZ diagram editor');
+    preview.setAttribute('role','dialog');preview.setAttribute('aria-modal','true');preview.setAttribute('aria-label','Full-screen TikZ diagram');
     preview.classList.add('editor-expanded');
     frame.style.cssText='width:100%;height:100%;display:block;border:0';document.body.style.overflow='hidden';
     if (typeof preview.showPopover==='function') {preview.setAttribute('popover','manual');preview.showPopover();}
-    sendView('editor');frame.focus();
+    sendView('fullscreen');frame.focus();
   }
   function render() {
     if (running) return;
@@ -134,21 +137,23 @@
     if (!message || message.channel !== 'latex-islands') return;
     if (message.type === 'ready') { sendRender(); return; }
     if (message.id !== currentRender?.id) return;
-    if (message.type === 'resize' && Number.isFinite(message.height) && !editorState) frame.style.height = Math.max(160,Math.min(2400,message.height))+'px';
+    // The standalone preview owns its available height. Inline ChatGPT islands
+    // still report natural height to content.js; that must not shrink this panel.
     if (message.type === 'open-editor') {openEditor();return;}
     if (message.type === 'close-editor') {closeEditor();return;}
+    if (message.type === 'show-source') {closeEditor();setSourceVisible(true);source.focus();return;}
     if (message.type === 'source-change' && typeof message.source==='string' && message.source.length<=60000) {
-      source.value=message.source;currentRender={...currentRender,source:message.source};examples.value='custom';saveSource();
+      source.value=message.source;currentRender={...currentRender,source:message.source};examples.value='custom';controls.get(examples).sync();saveSource();
       setRunning(true);renderStatus.textContent='Compiling locally…';return;
     }
     if (message.type === 'result') {
       setRunning(false);
-      renderStatus.textContent = source.value !== currentRender.source ? 'Uncompiled changes' : message.ok === false || message.error ? 'Compilation error' : 'Diagram ready';
+      renderStatus.textContent = source.value !== currentRender.source ? 'Uncompiled changes' : message.ok === false || message.error ? 'Compilation error' : '';
     }
   });
-  source.addEventListener('input', () => { examples.value = 'custom'; saveSource(); if (!running) renderStatus.textContent = 'Uncompiled changes'; });
+  source.addEventListener('input', () => { examples.value = 'custom'; controls.get(examples).sync(); saveSource(); if (!running) renderStatus.textContent = 'Uncompiled changes'; });
   source.addEventListener('keydown', event => {
-    if (event.key === 'Tab' && !event.shiftKey) { event.preventDefault(); const start=source.selectionStart,end=source.selectionEnd; source.setRangeText('  ',start,end,'end'); examples.value='custom';saveSource(); if (!running) renderStatus.textContent = 'Uncompiled changes'; }
+    if (event.key === 'Tab' && !event.shiftKey) { event.preventDefault(); const start=source.selectionStart,end=source.selectionEnd; source.setRangeText('  ',start,end,'end'); examples.value='custom';controls.get(examples).sync();saveSource(); if (!running) renderStatus.textContent = 'Uncompiled changes'; }
   });
   examples.addEventListener('change', () => {
     const example = globalThis.LatexIslandsExamples.find(item => item.id === examples.value);
@@ -161,9 +166,27 @@
   renderButton.addEventListener('click', render);
   expandPreview.addEventListener('click', openEditor);
   toggleSource.addEventListener('click', () => setSourceVisible(sourcePanel.hidden));
-  document.getElementById('copy-source').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(source.value); sourceStatus.textContent = 'Code copied'; }
-    catch { sourceStatus.textContent = 'Could not copy'; }
+  const copyButton = document.getElementById('copy-source');
+  const copyIcon = copyButton.querySelector('svg');
+  const originalCopyIcon = [...copyIcon.childNodes].map(node => node.cloneNode(true));
+  let copyFeedbackTimer;
+  function resetCopyFeedback() {
+    clearTimeout(copyFeedbackTimer);
+    copyIcon.replaceChildren(...originalCopyIcon.map(node => node.cloneNode(true)));
+    copyButton.setAttribute('aria-label', 'Copy code');
+    copyButton.title = 'Copy code';
+  }
+  copyButton.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(source.value);
+      clearTimeout(copyFeedbackTimer);
+      if (sourceStatus.textContent === 'Could not copy') sourceStatus.textContent = '';
+      copyIcon.innerHTML = '<path d="m5 12 4 4L19 6"/>';
+      copyButton.setAttribute('aria-label', 'Copied');
+      copyButton.title = 'Copied';
+      copyFeedbackTimer = setTimeout(resetCopyFeedback, 1800);
+    }
+    catch { resetCopyFeedback(); sourceStatus.textContent = 'Could not copy'; }
   });
   themeSelect.addEventListener('change', async () => {
     applyTheme(themeSelect.value);
@@ -193,6 +216,7 @@
     applyRenderColors(saved.renderColors);
     source.value = typeof saved.demoSource==='string' ? saved.demoSource : first.source;
     examples.value = [...examples.options].some(option=>option.value===saved.demoExample) ? saved.demoExample : first.id;
+    controls.get(examples).sync();
     scale = [.75,1,1.25,1.5,2].includes(Number(saved.scale)) ? Number(saved.scale) : 1;
     countLines();
     render();

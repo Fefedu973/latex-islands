@@ -6,13 +6,16 @@ const path=require('node:path');
 const {JSDOM}=require(process.env.JSDOM_MODULE || 'jsdom');
 const ROOT=path.resolve(__dirname,'..');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
-function harness({firefox=false}={}){
-  const dom=new JSDOM(fs.readFileSync(path.join(ROOT,'island.html'),'utf8'),{url:'chrome-extension://test-id/island.html',runScripts:'outside-only'});
+function harness({firefox=false,fontLoad=async()=>[{}],url='chrome-extension://test-id/island.html'}={}){
+  const dom=new JSDOM(fs.readFileSync(path.join(ROOT,'island.html'),'utf8'),{url,runScripts:'outside-only'});
   const w=dom.window,calls=[],sent=[],requests=[],exports=[],canvasCalls=[];let bodyHeight=120;
   const css=w.document.createElement('style');css.textContent=fs.readFileSync(path.join(ROOT,'island.css'),'utf8');w.document.head.append(css);
-  const parent={postMessage:(data,origin)=>sent.push({data,origin})};
+  const channels=[];
+  w.MessageChannel=class{constructor(){this.port1={close(){this.closed=true;}};this.port2={};channels.push(this);}};
+  const parent={postMessage:(data,origin,ports)=>sent.push({data,origin,ports})};
   Object.defineProperty(w,'parent',{value:parent});
   w.ResizeObserver=class{constructor(callback){this.callback=callback;}observe(){}disconnect(){}};
+  Object.defineProperty(w.document,'fonts',{value:{load:fontLoad}});
   w.chrome={runtime:{id:'test-id',sendMessage:message=>new Promise((resolve,reject)=>calls.push({message,resolve,reject}))}};
   if(firefox){w.browser=w.chrome;w.chrome={runtime:{sendMessage(){throw Error('Use Firefox Promise API');}}};}
   w.document.body.getBoundingClientRect=()=>({height:bodyHeight});
@@ -27,9 +30,78 @@ function harness({firefox=false}={}){
   function send(data={},origin='https://chatgpt.com',source=parent){
     w.dispatchEvent(new w.MessageEvent('message',{data:{channel:'latex-islands',type:'render',id:'test',source:'diagram',...data},origin,source}));
   }
-  return {w,dom,parent,calls,sent,requests,exports,canvasCalls,el,send,setHeight:n=>bodyHeight=n,close:()=>w.close()};
+  return {w,dom,parent,channels,calls,sent,requests,exports,canvasCalls,el,send,setHeight:n=>bodyHeight=n,close:()=>w.close()};
 }
 const svg=text=>`<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><text font-family="cmr10">${text}</text></svg>`;
+
+test('loaded island offers a document-bound port only to an allowed parent and accepts its matching diagram',async t=>{
+  const h=harness({url:'chrome-extension://test-id/island.html?parentOrigin=https%3A%2F%2Fchatgpt.com#diagram-id'});t.after(h.close);
+  assert.equal(h.sent.length,1);assert.equal(h.sent[0].data.type,'ready');assert.equal(h.sent[0].data.id,'diagram-id');
+  assert.equal(h.sent[0].origin,'https://chatgpt.com');assert.equal(h.sent[0].ports[0],h.channels[0].port2);
+  const receive=data=>h.channels[0].port1.onmessage({data:{channel:'latex-islands',type:'render',id:'diagram-id',source:'port source',...data}});
+  receive({id:'another-diagram'});assert.equal(h.calls.length,0);
+  receive({});assert.equal(h.calls.length,1);assert.equal(h.calls[0].message.source,'port source');
+  h.calls[0].resolve({ok:true,svg:svg('port diagram')});await tick();assert.equal(h.el('output').textContent,'port diagram');
+  h.w.dispatchEvent(new h.w.Event('pagehide'));assert.equal(h.channels[0].port1.closed,true);
+  h.w.dispatchEvent(new h.w.PageTransitionEvent('pageshow',{persisted:true}));
+  assert.equal(h.channels.length,2);assert.equal(h.sent.at(-1).data.type,'ready');
+  h.channels[1].port1.onmessage({data:{channel:'latex-islands',type:'view',id:'diagram-id',mode:'editor'}});
+  assert.equal(h.w.document.querySelector('.island').dataset.mode,'editor');
+  assert.equal(h.calls.length,1,'back/forward cache restores the channel without recompiling');
+});
+
+test('island never offers a ready port to an arbitrary parent origin',t=>{
+  for(const origin of ['https://attacker.example','*','null']){
+    const h=harness({url:'chrome-extension://test-id/island.html?parentOrigin='+encodeURIComponent(origin)+'#diagram-id'});t.after(h.close);
+    assert.equal(h.sent.length,0);assert.equal(h.channels.length,0);
+  }
+});
+
+test('cached SVG stays behind the loader until all used TeX fonts finish loading',async t=>{
+  const fonts=[];
+  const h=harness({fontLoad:(font,text)=>new Promise(resolve=>fonts.push({font,text,resolve}))});t.after(h.close);
+  h.send({theme:'dark'});
+  h.calls[0].resolve({ok:true,cached:true,svg:'<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><g font-family="cmr10"><text>\uF031\uF032</text></g><text style="font-family:&quot;cmmi10&quot;">\uF052</text><text font-family="cmr10">\uF03D</text></svg>'});await tick();
+  assert.deepEqual(fonts.map(f=>f.font),['16px "cmr10"','16px "cmmi10"']);
+  assert.ok(fonts.every(f=>f.text.includes('\uF052')),'load requests cover the actual private-use glyphs');
+  assert.equal(h.el('output').children.length,0);assert.equal(h.el('placeholder').hidden,false);
+  assert.equal(h.el('spinner').hidden,false);assert.equal(h.el('viewport').getAttribute('aria-busy'),'true');
+  assert.equal(h.el('download').disabled,true);assert.equal(h.el('zoom-in').disabled,true);
+  assert.equal(h.sent.some(s=>s.data.type==='result'),false);
+  fonts[0].resolve([{}]);await tick();assert.equal(h.el('output').children.length,0);
+  fonts[1].resolve([{}]);await tick();
+  assert.equal(h.el('output').children.length,1);assert.equal(h.el('placeholder').hidden,true);
+  assert.equal(h.el('download').disabled,false);assert.equal(h.el('viewport').getAttribute('aria-busy'),'false');
+  assert.ok(h.sent.some(s=>s.data.type==='result'&&s.data.ok));
+});
+
+test('source replaced while fonts load never displays or reports the stale diagram',async t=>{
+  let finishFont;
+  const h=harness({fontLoad:()=>new Promise(resolve=>{finishFont=resolve;})});t.after(h.close);
+  h.send({source:'old'});h.calls[0].resolve({ok:true,svg:svg('old')});await tick();
+  h.send({source:'new'});finishFont([{}]);await tick();
+  assert.equal(h.el('output').children.length,0);assert.equal(h.sent.some(s=>s.data.type==='result'),false);
+  assert.equal(h.calls.length,2);assert.equal(h.calls[1].message.source,'new');
+  h.calls[1].resolve({ok:true,svg:svg('new')});await tick();finishFont([{}]);await tick();
+  assert.equal(h.el('output').textContent,'new');
+  assert.deepEqual(h.sent.filter(s=>s.data.type==='result').map(s=>s.data.source),['new']);
+});
+
+test('missing or failed fonts produce an actionable error instead of an incomplete diagram',async t=>{
+  for(const fontLoad of [async()=>[],async()=>{throw new Error('network error');}]){
+    const h=harness({fontLoad});t.after(h.close);h.send();h.calls[0].resolve({ok:true,svg:svg('label')});await tick();
+    assert.equal(h.el('output').children.length,0);assert.equal(h.el('download').disabled,true);
+    assert.equal(h.el('error').hidden,false);assert.match(h.el('error').textContent,/Could not load diagram font "cmr10".*Reload/);
+    assert.equal(h.el('spinner').hidden,true);assert.equal(h.el('compile').disabled,false);
+    assert.ok(h.sent.some(s=>s.data.type==='result'&&s.data.ok===false));
+  }
+});
+
+test('diagrams without font references do not request any fonts',async t=>{
+  const h=harness({fontLoad:()=>{throw new Error('Unexpected font request');}});t.after(h.close);
+  h.send();h.calls[0].resolve({ok:true,svg:'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><path d="M0 0L20 20"/></svg>'});await tick();
+  assert.ok(h.el('output').querySelector('path'));assert.equal(h.el('placeholder').hidden,true);
+});
 
 test('island ignores foreign/non-parent/malformed requests without compiling',t=>{
   const h=harness();t.after(h.close);
@@ -107,7 +179,34 @@ test('RPC errors and malformed SVG remain visible errors and allow retry',async 
   h.el('compile').click();h.calls[1].resolve({ok:true,svg:'<svg><broken></svg>'});await tick();
   assert.match(h.el('error').textContent,/SVG.*invalid/);assert.equal(h.el('output').children.length,0);
   h.el('compile').click();h.calls[2].resolve({ok:true,svg:svg('recovered'),cached:true});await tick();
-  assert.equal(h.el('error').hidden,true);assert.equal(h.el('output').textContent,'recovered');assert.match(h.el('status').textContent,/cache/);
+  assert.equal(h.el('error').hidden,true);assert.equal(h.el('output').textContent,'recovered');assert.equal(h.el('status').textContent,'');
+});
+
+test('error panel keeps message and recovery together in every view and restores controls after retry',async t=>{
+  for(const mode of ['inline','editor','preview','fullscreen']){
+    const h=harness();t.after(h.close);h.send({mode});h.calls[0].resolve({ok:true,svg:'<svg><broken></svg>'});await tick();
+    assert.equal(h.el('error-panel').parentElement,h.el('viewport'));
+    assert.equal(h.el('error-panel').hidden,false);assert.equal(h.el('placeholder').hidden,true);
+    assert.equal(h.el('error-details').hidden,true);assert.equal(h.el('error-actions').closest('#error-panel'),h.el('error-panel'));
+    assert.equal(h.w.document.querySelector('.floating-tools').hidden,true);assert.equal(h.w.document.querySelector('.zoom-controls').hidden,true);
+    assert.equal(h.el('source-details').hidden,mode!=='editor');assert.equal(h.el('source').value,'diagram');
+    h.el('retry').click();assert.equal(h.el('error-panel').hidden,true);assert.equal(h.el('placeholder').hidden,false);assert.equal(h.el('spinner').hidden,false);
+    assert.equal(h.calls[1].message.source,'diagram');h.calls[1].resolve({ok:true,svg:svg('recovered')});await tick();
+    assert.equal(h.el('error-panel').hidden,true);assert.equal(h.el('output').textContent,'recovered');
+    assert.equal(h.w.document.querySelector('.floating-tools').hidden,false);assert.equal(h.w.document.querySelector('.zoom-controls').hidden,false);
+    assert.equal(h.el('download').disabled,false);
+  }
+});
+
+test('long error details retain exact escaped logs and reset when retrying or replacing source',async t=>{
+  const h=harness();t.after(h.close);h.send({mode:'editor'});
+  const log='Undefined control sequence.\n'+Array(50).fill('line 17: <img src=x> \\unknowncommand').join('\n');
+  h.calls[0].resolve({ok:false,error:log});await tick();
+  assert.equal(h.el('error').textContent,'Undefined control sequence.');assert.equal(h.el('error-details').hidden,false);assert.equal(h.el('error-details').open,false);
+  assert.equal(h.el('error-log').textContent,log);assert.equal(h.el('error-log').querySelector('img'),null);
+  h.el('error-details').open=true;h.el('retry').click();assert.equal(h.el('error-details').open,false);assert.equal(h.el('error-log').textContent,'');
+  h.calls[1].resolve({ok:false,error:'Still invalid.'});await tick();assert.equal(h.el('error-details').hidden,true);assert.equal(h.el('error').textContent,'Still invalid.');
+  h.send({mode:'editor',type:'prepare',source:'new diagram'});assert.equal(h.el('error-panel').hidden,true);assert.equal(h.el('source').value,'new diagram');
 });
 
 test('SVG download embeds the used local font and preserves diagram labels',async t=>{
@@ -171,6 +270,76 @@ test('editor uses the same SVG, preserves unsaved edits across view messages and
   h.send({type:'view',mode:'inline'});assert.equal(h.el('source-details').hidden,true);assert.equal(h.el('output').textContent,'edited');assert.equal(h.calls.length,2);
 });
 
+test('standalone preview and full screen fill the host without source controls or duplicate compilation',async t=>{
+  const h=harness();t.after(h.close);h.send({mode:'preview'});
+  h.calls[0].resolve({ok:true,svg:svg('full-height diagram')});await tick();
+  const node=h.el('output').firstElementChild,island=h.w.document.querySelector('.island');
+  assert.equal(island.dataset.mode,'preview');assert.equal(island.classList.contains('editor'),false);
+  assert.equal(h.el('viewport').style.height,'');assert.equal(h.el('source-details').hidden,true);
+  assert.equal(h.el('open-editor').textContent,'Open full screen');assert.equal(h.sent.some(item=>item.data.type==='resize'),false);
+  h.el('viewport').dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'ArrowRight'}));h.el('zoom-in').click();
+  const transform=h.el('output').style.transform;
+  h.send({type:'view',mode:'fullscreen'});
+  assert.equal(island.dataset.mode,'fullscreen');assert.equal(island.classList.contains('editor'),true);
+  assert.equal(h.el('source-toggle').hidden,true);assert.equal(h.el('source-details').hidden,true);
+  assert.equal(h.el('close-editor').getAttribute('aria-label'),'Close full screen');
+  h.el('source-toggle').click();assert.equal(h.el('source-details').hidden,true);
+  assert.equal(h.el('output').firstElementChild,node);assert.equal(h.el('output').style.transform,transform);
+  h.w.document.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(h.sent.at(-1).data.type,'close-editor');
+  h.send({type:'view',mode:'preview'});assert.equal(island.classList.contains('editor'),false);assert.equal(h.el('output').style.transform,transform);
+  h.send({type:'view',mode:'editor'});assert.equal(h.el('source-toggle').hidden,false);assert.equal(h.el('source-details').hidden,false,'ChatGPT editor still opens code');
+  assert.equal(h.calls.length,1);
+});
+
+test('standalone error source action returns to the host editor instead of revealing code in the preview',async t=>{
+  const h=harness();t.after(h.close);h.send({mode:'preview'});h.calls[0].reject(new Error('Invalid diagram'));await tick();
+  assert.equal(h.el('error').hidden,false);assert.equal(h.el('error-actions').hidden,false);
+  h.el('error-source').click();assert.equal(h.sent.at(-1).data.type,'show-source');assert.equal(h.el('source-details').hidden,true);
+  h.send({type:'view',mode:'fullscreen'});h.el('error-source').click();
+  assert.equal(h.sent.at(-1).data.type,'show-source');assert.equal(h.el('source-details').hidden,true);
+});
+
+test('plain wheel zooms standalone and modal diagrams while inline ChatGPT keeps conversation scrolling',async t=>{
+  const h=harness();t.after(h.close);h.send();h.calls[0].resolve({ok:true,svg:svg('wheel')});await tick();
+  const wheel=(options={})=>{const event=new h.w.WheelEvent('wheel',{deltaY:-100,cancelable:true,...options});h.el('viewport').dispatchEvent(event);return event;};
+  let before=h.el('output').style.transform;
+  assert.equal(wheel().defaultPrevented,false);assert.equal(h.el('output').style.transform,before);
+  assert.equal(wheel({ctrlKey:true}).defaultPrevented,true);assert.notEqual(h.el('output').style.transform,before);
+  for(const mode of ['preview','fullscreen','editor']){
+    h.send({type:'view',mode});before=h.el('output').style.transform;
+    assert.equal(wheel().defaultPrevented,true,mode+' handles wheel');assert.notEqual(h.el('output').style.transform,before);
+    before=h.el('output').style.transform;assert.equal(wheel({deltaY:0,deltaX:30}).defaultPrevented,false);assert.equal(h.el('output').style.transform,before);
+  }
+  h.send({type:'view',mode:'inline'});before=h.el('output').style.transform;
+  assert.equal(wheel().defaultPrevented,false);assert.equal(h.el('output').style.transform,before);assert.equal(h.calls.length,1);
+});
+
+test('wheel keeps the diagram point under the pointer fixed after pan and at both zoom limits',async t=>{
+  const h=harness();t.after(h.close);h.send();h.calls[0].resolve({ok:true,svg:svg('anchor')});await tick();
+  const viewport=h.el('viewport'),bounds={left:31,top:47,width:800,height:600};
+  viewport.getBoundingClientRect=()=>bounds;
+  const state=()=>{
+    const [,x,y,scale]=h.el('output').style.transform.match(/translate\(([-\d.e+]+)px, ([-\d.e+]+)px\) scale\(([-\d.e+]+)\)/);
+    return {x:Number(x),y:Number(y),scale:Number(scale)};
+  };
+  const point={x:-200,y:-120};
+  const anchor=()=>{const s=state();return {x:(point.x-s.x)/s.scale,y:(point.y-s.y)/s.scale};};
+  for(const mode of ['inline','preview','fullscreen','editor']){
+    h.send({type:'view',mode});viewport.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'0'}));
+    viewport.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'ArrowRight'}));viewport.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'ArrowDown'}));
+    const initial=anchor();
+    for(const deltaY of [...Array(50).fill(-100),...Array(80).fill(100)]){
+      const event=new h.w.WheelEvent('wheel',{deltaY,cancelable:true,ctrlKey:mode==='inline',clientX:bounds.left+bounds.width/2+point.x,clientY:bounds.top+bounds.height/2+point.y});
+      viewport.dispatchEvent(event);assert.equal(event.defaultPrevented,true);
+      const current=anchor();assert.ok(Math.abs(current.x-initial.x)<1e-9&&Math.abs(current.y-initial.y)<1e-9,mode+' retains pointer anchor');
+    }
+    const atMinimum=state();
+    viewport.dispatchEvent(new h.w.WheelEvent('wheel',{deltaY:100,cancelable:true,ctrlKey:mode==='inline',clientX:700,clientY:500}));
+    assert.deepEqual(state(),atMinimum,'clamped zoom does not move the diagram');
+  }
+  assert.equal(h.calls.length,1);
+});
+
 test('zoom, keyboard movement and pointer drag operate on a stable viewport',async t=>{
   const h=harness();t.after(h.close);h.send();h.calls[0].resolve({ok:true,svg:svg('diagram')});await tick();
   const viewport=h.el('viewport'),height=viewport.style.height;
@@ -198,17 +367,17 @@ test('native diagram colors switch live without changing dark toolbar theme, SVG
   const h=harness();t.after(h.close);h.send({theme:'dark',colors:{background:'#161616',text:'#ececec',surface:'#292929'}});
   h.calls[0].resolve({ok:true,svg:'<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><path fill="#e60000" d="M0 0h10v10z"/></svg>'});await tick();
   const root=h.w.document.documentElement,node=h.el('output').firstElementChild;
-  assert.equal(root.dataset.renderColors,'chatgpt');assert.equal(h.w.getComputedStyle(h.el('output')).filter,'invert(1) hue-rotate(180deg)');
+  assert.equal(root.dataset.renderColors,'chatgpt');assert.equal(h.w.getComputedStyle(node).filter,'invert(1) hue-rotate(180deg)');
   h.send({type:'view',mode:'editor'});h.el('source').value='unsaved local source';h.el('zoom-in').click();
   const transform=h.el('output').style.transform;
   h.send({type:'view',mode:'editor',renderColors:'native'});
   assert.equal(root.dataset.theme,'dark');assert.equal(root.dataset.renderColors,'native');
   assert.equal(root.style.getPropertyValue('--surface'),'#292929');assert.equal(root.style.getPropertyValue('--text'),'#ececec');
-  assert.equal(h.w.getComputedStyle(h.el('viewport')).backgroundColor,'rgb(255, 255, 255)');assert.equal(h.w.getComputedStyle(h.el('output')).filter,'none');
+  assert.equal(h.w.getComputedStyle(h.el('viewport')).backgroundColor,'rgb(255, 255, 255)');assert.equal(h.w.getComputedStyle(node).filter,'none');
   assert.equal(h.el('output').firstElementChild,node);assert.equal(node.querySelector('path').getAttribute('fill'),'#e60000');
   assert.equal(h.el('output').style.transform,transform);assert.equal(h.el('source').value,'unsaved local source');assert.equal(h.calls.length,1);
   h.send({type:'view',mode:'editor',renderColors:'chatgpt'});
-  assert.equal(h.w.getComputedStyle(h.el('output')).filter,'invert(1) hue-rotate(180deg)');assert.equal(h.calls.length,1);
+  assert.equal(h.w.getComputedStyle(node).filter,'invert(1) hue-rotate(180deg)');assert.equal(h.calls.length,1);
 });
 
 test('native PNG uses white background without inversion and SVG export retains original colors',async t=>{

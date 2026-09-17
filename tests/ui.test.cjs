@@ -19,6 +19,7 @@ function harness(page, saved={}, dark=false, firefox=false) {
   w.chrome={runtime:{getURL:file=>EXT+'/'+file},tabs:{create:options=>opened.push(options)},storage:{local:{get:async defaults=>({...defaults,...saved}),set:async value=>{writes.push(JSON.parse(JSON.stringify(value)));}},onChanged:{addListener:fn=>changes.push(fn)}}};
   if(firefox){w.browser=w.chrome;w.chrome={storage:{local:{get(){throw Error('Use Firefox Promise API');},set(){throw Error('Use Firefox Promise API');}}}};}
   Object.defineProperty(w.navigator,'clipboard',{value:{writeText:async text=>copied.push(text)}});
+  w.eval(fs.readFileSync(path.join(ROOT,'native-controls.js'),'utf8'));
   if(page==='demo')w.eval(fs.readFileSync(path.join(ROOT,'examples.js'),'utf8'));
   w.eval(fs.readFileSync(path.join(ROOT,page+'.js'),'utf8'));
   const el=id=>w.document.getElementById(id);
@@ -67,9 +68,10 @@ test('popup reports failed saves without claiming success',async t=>{
 test('editor restores custom source and saved scale before first render',async t=>{
   const h=harness('demo',{demoSource:CUSTOM,demoExample:'custom',scale:1.25,uiTheme:'dark'});t.after(h.close);await tick();
   const {frame,sent}=h.connect();assert.equal(frame.title,'TikZ diagram preview');assert.equal(sent[0].origin,EXT);
+  assert.equal(sent[0].data.mode,'preview');
   assert.equal(sent[0].data.source,CUSTOM);assert.equal(sent[0].data.scale,1.25);assert.equal(sent[0].data.theme,'dark');
   assert.equal(h.el('example').value,'custom');assert.equal(h.el('source-count').textContent,'3 lines');assert.equal(h.el('render').disabled,true);
-  h.message(frame,{type:'result',ok:true});assert.equal(h.el('render').disabled,false);assert.equal(h.el('render-status').textContent,'Diagram ready');
+  h.message(frame,{type:'result',ok:true});assert.equal(h.el('render').disabled,false);assert.equal(h.el('render-status').textContent,'');
 });
 
 test('editor theme changes update the island view without recompiling or losing source',async t=>{
@@ -84,13 +86,24 @@ test('source toggle and copy preserve the exact editor text',async t=>{
   h.el('toggle-source').click();assert.equal(h.el('source-panel').hidden,true);assert.equal(h.el('toggle-source').getAttribute('aria-expanded'),'false');
   assert.equal(h.el('workspace').classList.contains('source-hidden'),true);h.el('toggle-source').click();assert.equal(h.el('source-panel').hidden,false);
   h.el('copy-source').click();await tick();assert.deepEqual(h.copied,[CUSTOM]);assert.equal(h.el('source').value,CUSTOM);
+  assert.equal(h.el('copy-source').getAttribute('aria-label'),'Copied');
+  assert.equal(h.el('source-status').textContent,'');
+  assert.equal(h.el('copy-source').querySelector('svg path').getAttribute('d'),'m5 12 4 4L19 6');
+  await h.flush();assert.equal(h.el('copy-source').getAttribute('aria-label'),'Copy code');
+  assert.ok(h.el('copy-source').querySelector('svg rect'));
+  h.w.navigator.clipboard.writeText=async()=>{throw Error('Clipboard denied');};
+  h.el('copy-source').click();await tick();assert.equal(h.el('source-status').textContent,'Could not copy');
+  assert.equal(h.el('copy-source').getAttribute('aria-label'),'Copy code');
+  h.w.navigator.clipboard.writeText=async()=>{};
+  h.el('copy-source').click();await tick();assert.equal(h.el('source-status').textContent,'');
+  assert.equal(h.el('copy-source').getAttribute('aria-label'),'Copied');
 });
 
 test('source edits debounce and flush on pagehide before the delay expires',async t=>{
   const h=harness('demo');t.after(h.close);await tick();h.el('source').value=CUSTOM;
   h.el('source').dispatchEvent(new h.w.Event('input'));assert.equal(h.writes.length,0);
   h.w.dispatchEvent(new h.w.Event('pagehide'));await tick();assert.deepEqual(h.writes,[{demoSource:CUSTOM,demoExample:'custom'}]);
-  assert.equal(h.el('source-status').textContent,'Saved locally');await h.flush();assert.equal(h.writes.length,1);
+  assert.equal(h.el('source-status').textContent,'');await h.flush();assert.equal(h.writes.length,1);
 });
 
 test('edits during compilation leave a dirty preview indication, then Ctrl+Enter renders current source',async t=>{
@@ -100,18 +113,18 @@ test('edits during compilation leave a dirty preview indication, then Ctrl+Enter
   h.w.document.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,cancelable:true}));
   assert.equal(sent.at(-1).data.source,CUSTOM);assert.equal(sent.at(-1).data.id,'demo-2');
   h.message(frame,{type:'result',ok:false});assert.equal(h.el('render').disabled,true,'stale result must not finish a newer render');
-  h.message(frame,{id:'demo-2',type:'result',ok:true});assert.equal(h.el('render-status').textContent,'Diagram ready');
+  h.message(frame,{id:'demo-2',type:'result',ok:true});assert.equal(h.el('render-status').textContent,'');
 });
 
 test('fullscreen dialog restores focus and synchronizes iframe edits; foreign messages are ignored',async t=>{
   const h=harness('demo');t.after(h.close);await tick();const {frame,sent}=h.connect();
   h.message(frame,{type:'open-editor'},'https://attacker.example');assert.equal(h.el('preview').hasAttribute('role'),false);
   h.el('expand-preview').focus();h.el('expand-preview').click();assert.equal(h.el('preview').getAttribute('role'),'dialog');
-  assert.equal(sent.at(-1).data.mode,'editor');assert.equal(h.el('preview').classList.contains('editor-expanded'),true);
+  assert.equal(sent.at(-1).data.mode,'fullscreen');assert.equal(h.el('preview').classList.contains('editor-expanded'),true);
   h.message(frame,{type:'source-change',source:CUSTOM});await h.flush();assert.equal(h.el('source').value,CUSTOM);assert.equal(h.writes.at(-1).demoSource,CUSTOM);
   h.w.document.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape',cancelable:true}));
   assert.equal(h.el('preview').hasAttribute('role'),false);assert.equal(h.el('preview').classList.contains('editor-expanded'),false);
-  assert.equal(sent.at(-1).data.mode,'inline');assert.equal(h.w.document.activeElement,h.el('expand-preview'));
+  assert.equal(sent.at(-1).data.mode,'preview');assert.equal(h.w.document.activeElement,h.el('expand-preview'));
 });
 
 test('ChatGPT is the default popup appearance and uses the observed palette',async t=>{
@@ -125,6 +138,23 @@ test('ChatGPT is the default popup appearance and uses the observed palette',asy
   h.change('uiTheme','light');await tick();assert.equal(h.w.document.documentElement.dataset.theme,'light');
   assert.equal(h.w.document.documentElement.style.getPropertyValue('--surface'),'');
   h.storage({chatgptTheme:observed});assert.equal(h.w.document.documentElement.dataset.theme,'light');
+});
+
+test('standalone preview keeps host-owned height and full screen keeps the same frame without a code editor',async t=>{
+  const h=harness('demo',{demoSource:CUSTOM});t.after(h.close);await tick();const {frame,sent}=h.connect(),window=frame.contentWindow;
+  assert.equal(sent[0].data.mode,'preview');
+  h.message(frame,{type:'resize',height:180});assert.equal(frame.style.height,'','inline natural height cannot shrink the standalone preview');
+  h.el('toggle-source').click();assert.equal(h.el('source-panel').hidden,true);
+  h.el('expand-preview').click();assert.equal(sent.at(-1).data.mode,'fullscreen');
+  assert.equal(h.el('preview').getAttribute('aria-label'),'Full-screen TikZ diagram');
+  h.storage({uiTheme:'dark'});assert.equal(sent.at(-1).data.mode,'fullscreen');
+  h.message(frame,{type:'close-editor'});assert.equal(sent.at(-1).data.mode,'preview');
+  assert.equal(h.el('source-panel').hidden,true,'full screen preserves the host source visibility');
+  assert.equal(frame.contentWindow,window);assert.equal(sent.filter(item=>item.data.type==='render').length,1);
+  h.message(frame,{type:'resize',height:240});assert.equal(frame.style.height,'');
+  h.el('expand-preview').click();h.message(frame,{type:'show-source'});
+  assert.equal(h.el('preview').classList.contains('editor-expanded'),false);assert.equal(h.el('source-panel').hidden,false);
+  assert.equal(h.w.document.activeElement,h.el('source'));assert.equal(sent.at(-1).data.mode,'preview');
 });
 
 test('ChatGPT appearance falls back to system until a palette is observed and follows cache changes',async t=>{
@@ -161,8 +191,76 @@ test('native color mode keeps dark UI, persists and updates an open fullscreen v
   assert.equal(sent[0].data.renderColors,'native');assert.equal(sent[0].data.theme,'dark');
   assert.equal(h.w.document.documentElement.dataset.renderColors,'native');assert.equal(h.w.document.documentElement.dataset.theme,'dark');
   h.el('expand-preview').click();h.change('renderColors','chatgpt');await tick();
-  assert.equal(sent.at(-1).data.type,'view');assert.equal(sent.at(-1).data.mode,'editor');assert.equal(sent.at(-1).data.renderColors,'chatgpt');
+  assert.equal(sent.at(-1).data.type,'view');assert.equal(sent.at(-1).data.mode,'fullscreen');assert.equal(sent.at(-1).data.renderColors,'chatgpt');
   assert.deepEqual(h.writes.at(-1),{renderColors:'chatgpt'});
   h.storage({renderColors:'native'});assert.equal(h.el('renderColors').value,'native');assert.equal(sent.at(-1).data.renderColors,'native');
   assert.equal(sent.at(-1).data.theme,'dark');assert.equal(sent.filter(({data})=>data.type==='render').length,1);
+});
+
+test('popup custom selects retain native values, accessible labels and one save per selection',async t=>{
+  const h=harness('popup',{uiTheme:'dark',scale:1.5});t.after(h.close);await tick();
+  const trigger=h.el('uiTheme-trigger'),menu=h.el('uiTheme-menu');
+  assert.equal(h.el('uiTheme').hidden,true);assert.equal(h.el('uiTheme').getAttribute('aria-hidden'),'true');
+  assert.equal(trigger.getAttribute('role'),'combobox');assert.equal(trigger.getAttribute('aria-labelledby'),'uiTheme-label');
+  assert.equal(trigger.getAttribute('aria-describedby'),'theme-help');assert.equal(trigger.textContent,'Dark');
+  assert.equal(h.el('scale-trigger').textContent,'150%');
+  trigger.click();assert.equal(menu.hidden,false);assert.equal(trigger.getAttribute('aria-expanded'),'true');
+  assert.equal(menu.querySelector('[aria-selected="true"]').dataset.value,'dark');
+  menu.querySelector('[data-value="light"]').click();await tick();
+  assert.deepEqual(h.writes,[{uiTheme:'light'}]);assert.equal(h.el('uiTheme').value,'light');assert.equal(trigger.textContent,'Light');
+  assert.equal(menu.hidden,true);assert.equal(h.w.document.activeElement,trigger);
+});
+
+test('select keyboard navigation commits with Enter and Escape cancels before outer handlers',async t=>{
+  const h=harness('popup',{uiTheme:'light'});t.after(h.close);await tick();
+  const trigger=h.el('uiTheme-trigger'),menu=h.el('uiTheme-menu');let outerEscapes=0;
+  h.w.document.addEventListener('keydown',event=>{if(event.key==='Escape')outerEscapes++;});
+  const key=value=>trigger.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:value,bubbles:true,cancelable:true}));
+  key('ArrowDown');key('ArrowDown');assert.equal(trigger.getAttribute('aria-activedescendant'),'uiTheme-option-3');
+  key('Escape');assert.equal(menu.hidden,true);assert.equal(h.el('uiTheme').value,'light');assert.equal(outerEscapes,0);assert.equal(h.writes.length,0);
+  key('d');assert.equal(trigger.getAttribute('aria-activedescendant'),'uiTheme-option-3');key('Enter');await tick();
+  assert.deepEqual(h.writes,[{uiTheme:'dark'}]);assert.equal(trigger.textContent,'Dark');assert.equal(menu.hidden,true);
+});
+
+test('only one settings listbox opens and outside clicks, Tab and disabling close it',async t=>{
+  const h=harness('popup');t.after(h.close);await tick();
+  h.el('scale-trigger').click();h.el('uiTheme-trigger').click();
+  assert.equal(h.el('scale-menu').hidden,true);assert.equal(h.el('uiTheme-menu').hidden,false);
+  h.el('open-demo').dispatchEvent(new h.w.Event('pointerdown',{bubbles:true}));assert.equal(h.el('uiTheme-menu').hidden,true);
+  h.el('scale-trigger').click();h.el('scale-trigger').dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Tab',bubbles:true}));
+  assert.equal(h.el('scale-menu').hidden,true);
+  h.el('scale-trigger').click();h.el('scale').disabled=true;await tick();
+  assert.equal(h.el('scale-menu').hidden,true);assert.equal(h.el('scale-trigger').disabled,true);assert.equal(h.writes.length,0);
+});
+
+test('storage updates synchronize visible select values and switch states without saving again',async t=>{
+  const h=harness('popup');t.after(h.close);await tick();
+  h.storage({uiTheme:'dark',renderColors:'native',scale:2,enabled:false,autoRender:false});
+  assert.equal(h.el('uiTheme-trigger').textContent,'Dark');assert.equal(h.el('scale-trigger').textContent,'200%');
+  assert.equal(h.el('renderColors-trigger').textContent,'LaTeX colors · white background');
+  assert.equal(h.el('enabled').checked,false);assert.equal(h.el('autoRender').checked,false);assert.equal(h.writes.length,0);
+  h.el('enabled').click();await tick();assert.equal(h.el('enabled').getAttribute('role'),'switch');assert.deepEqual(h.writes,[{enabled:true}]);
+});
+
+test('editor example control reflects restored code, user typing and keyboard selection',async t=>{
+  const h=harness('demo',{demoSource:CUSTOM,demoExample:'custom'});t.after(h.close);await tick();
+  const {frame,sent}=h.connect();h.message(frame,{type:'result',ok:true});
+  const trigger=h.el('example-trigger');assert.equal(trigger.textContent,'My diagram');
+  assert.ok(trigger.getAttribute('aria-labelledby'));assert.equal(h.w.document.querySelector('label[for="example-trigger"]').textContent,'Choose a diagram example');
+  trigger.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Home',bubbles:true,cancelable:true}));
+  trigger.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+  assert.equal(h.el('example').value,h.w.LatexIslandsExamples[0].id);assert.equal(trigger.textContent,h.w.LatexIslandsExamples[0].title);
+  assert.equal(sent.at(-1).data.source,h.w.LatexIslandsExamples[0].source);
+  h.el('source').value=CUSTOM;h.el('source').dispatchEvent(new h.w.Event('input'));
+  assert.equal(trigger.textContent,'My diagram');await h.flush();assert.equal(h.writes.at(-1).demoExample,'custom');
+});
+
+test('enhanced selects update changed options and skip disabled choices',async t=>{
+  const h=harness('popup',{uiTheme:'chatgpt'});t.after(h.close);await tick();
+  h.el('uiTheme').options[1].disabled=true;await tick();
+  const trigger=h.el('uiTheme-trigger');trigger.click();
+  trigger.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true}));
+  assert.equal(trigger.getAttribute('aria-activedescendant'),'uiTheme-option-2');
+  trigger.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));await tick();
+  assert.deepEqual(h.writes,[{uiTheme:'light'}]);assert.equal(h.el('uiTheme-option-1').getAttribute('aria-disabled'),'true');
 });
