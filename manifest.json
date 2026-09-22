@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LaTeX Islands — TikZ & Export for ChatGPT",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "homepage_url": "https://github.com/Fefedu973/latex-islands",
   "minimum_chrome_version": "116",
   "description": "Render TikZ diagrams locally in ChatGPT and export conversations as Markdown, text or JSON with a configurable preview.",

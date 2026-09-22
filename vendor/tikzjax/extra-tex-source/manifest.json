@@ -1,0 +1,254 @@
+{
+  "schemaVersion": 1,
+  "acquired": "2026-09-20",
+  "archives": [
+    {
+      "name": "siunitx",
+      "version": "3.6.2",
+      "file": "siunitx-3.6.2.tds.zip",
+      "url": "https://mirrors.ctan.org/install/macros/latex/contrib/siunitx.tds.zip",
+      "revision": "13267cf0e0b303ac81a001aa894d6cfd8594ce6c",
+      "repository": "https://github.com/josephwright/siunitx",
+      "license": "LPPL-1.3c-or-later",
+      "sha256": "bba8de10e66490b88974495a1330515e475e7e3a48ed3287ab128985fe42b058",
+      "outputs": [
+        {
+          "entry": "tex/latex/siunitx/siunitx.sty",
+          "file": "siunitx.sty.gz",
+          "sha256": "87f19721244d60d776562b4bb74389a39f8436fc72eb2d1c7e404107645c86a6",
+          "gzipSha256": "ba0d8e05958858e57b9dacee74f4edb75ba5cdddddf695ac2b051bb8f582a6a0"
+        }
+      ],
+      "sourceChecks": [
+        {
+          "entry": "source/latex/siunitx/siunitx.dtx",
+          "sha256": "51d4f38549897c874b1decbbf9e77173f4e6ec4c2dd990750ed4642bdcc100cf"
+        }
+      ]
+    },
+    {
+      "name": "mathtools/mhsetup",
+      "version": "1.31 / 1.4",
+      "file": "mathtools-1.31.tds.zip",
+      "url": "https://mirrors.ctan.org/install/macros/latex/contrib/mathtools.tds.zip",
+      "repository": "https://github.com/latex3/mathtools",
+      "license": "LPPL-1.3c-or-later",
+      "sha256": "7d74ed7f3abe7db3a6fc1f9e14704658f845203a5917942a8260021fb1240a61",
+      "outputs": [
+        {
+          "entry": "tex/latex/mathtools/mhsetup.sty",
+          "file": "mhsetup.sty.gz",
+          "sha256": "c3ae1e23f43029fbfc271e3b1440a692e1cd924d1810430b99e4f2aa5b9ccf09",
+          "gzipSha256": "2b4753d32ef01e322bad8b9ba58464924171e698b800efa093e020b8827523e6"
+        }
+      ],
+      "revision": "f1ac125db25e6ddc455854e695a164794eefaa49",
+      "sourceChecks": [
+        {
+          "entry": "source/latex/mathtools/mhsetup.dtx",
+          "sha256": "95a7e5a1cd79b0a36eeb48d520ee8ce6fb752e288fce710b74d819e99fdae913"
+        }
+      ]
+    },
+    {
+      "name": "translations",
+      "version": "1.12",
+      "file": "translations-1.12.zip",
+      "url": "https://mirrors.ctan.org/macros/latex/contrib/translations.zip",
+      "revision": "ab3c4b55cfcff64e865de66d7701d808e9743422",
+      "repository": "https://github.com/cgnieder/translations",
+      "license": "LPPL-1.3c-or-later",
+      "sha256": "6a2626d9eb7e0046ae4d26b9e56977eadb7faf4230dcadc1ccc2c85c1fccf606",
+      "outputs": [
+        {
+          "entry": "translations/translations.sty",
+          "file": "translations.sty.gz",
+          "sha256": "a19cfaa9a53ed715098609223708c9a34f9ed9b8ed726740c907d58c7015d5a0",
+          "gzipSha256": "c05ad14691810a1d7200acc9ac777bc944ec9d71a80d7778065508000840888b"
+        },
+        {
+          "entry": "translations/dicts/translations-basic-dictionary-brazil.trsl",
+          "file": "translations-basic-dictionary-brazil.trsl.gz",
+          "sha256": "3cc879e68ba2c745c69c4e5c40caa9ccaf9ed920469fd7960ed229e023bf6b97",
+          "gzipSha256": "30e165f29eb8fc38cb75a415e44587cff29540aaee1fa3fbb6e8495495b20cbd"
+        },
+        {
+          "entry": "translations/dicts/translations-basic-dictionary-catalan.trsl",
+          "file": "translations-basic-dictionary-catalan.trsl.gz",
+          "sha256": "b69a05286d356920f56f703d5dc1f27043a437ca52ce78ab3e2f21038e5e8998",
+          "gzipSha256": "dc8cbf63e840d7a2a4ecf5d0059aad7fef8a9a80b339bc1e980e1d064cfa0b46"
+        },
+        {
+          "entry": "translations/dicts/translations-basic-dictionary-dutch.trsl",
+          "file": "translations-basic-dictionary-dutch.trsl.gz",
+          "sha256": "f5d206236420c0a1c8274ed083a39fa419ed8859839032a4f424979ca813a3b2",
+          "gzipSha256": "c36ad9b8c0bdee41ddb91feeb1856a4c1e8af68cce38b0de5ad8ca6ce98568de"
+        },
+        {
+          "entry": "translations/dicts/translations-basic-dictionary-english.trsl",
+          "file": "translations-basic-dictionary-english.trsl.gz",
+          "sha256": "26be1ea694482f1090ce60202899ddd0f971ff13e7d29616a6b2f103605d68f4",
+          "gzipSha256": "b5060898fc7e62b9638258d3e186888b013a549d54afa4b2e5db31a83f13ea46"
+        },
+        {
+          "entry": "translations/dicts/translations-basic-dictionary-french.trsl",
+          "file": "translations-basic-dictionary-french.trsl.gz",
+          "sha256": "2d645db278b2333647d80b89d6096a323d2f2438f0e9f9463b6940fceb04e671",
+          "gzipSha256": "f172f4a9388da775f96a8a6f6b6feb53bf1bbe88c296ac7f8e4fd42c2abc167a"
+        },
+        {
+          "entry": "translations/dicts/translations-basic-dictionary-german.trsl",
+          "file": "translations-basic-dictionary-german.trsl.gz",
+          "sha256": "1845a9bde7ffdd67d5b151f246e50ae1b8efb7aaad8a7d302d28d80280c59e39",
+          "gzipSha256": "26a964441f9d44030d8b29258fb0c59788fe2eb614922c8cead938055fe4ad87"
+        },
+        {
+          "entry": "translations/dicts/translations-basic-dictionary-polish.trsl",
+          "file": "translations-basic-dictionary-polish.trsl.gz",
+          "sha256": "3c54e63aa3e9850f597ae6a79e76dfa442418a0eb634a83371ea513a06561fcc",
+          "gzipSha256": "d82c278e37b81c748eea024518f69459bcba451e43d8e0e77a1ad876aaa6e4e1"
+        },
+        {
+          "entry": "translations/dicts/translations-basic-dictionary-spanish.trsl",
+          "file": "translations-basic-dictionary-spanish.trsl.gz",
+          "sha256": "39d5b05206f5067b72aeb93974659995c4a43b43d639e61d693c21a8a6eecbdc",
+          "gzipSha256": "db29622b953ce381a7efff96d38c3de38cfe3db11a121dd1dd3a15ae86556c35"
+        }
+      ],
+      "sourceChecks": [
+        {
+          "entry": "translations/translations.sty",
+          "sha256": "a19cfaa9a53ed715098609223708c9a34f9ed9b8ed726740c907d58c7015d5a0"
+        }
+      ]
+    },
+    {
+      "name": "AMSFonts",
+      "version": "3.04",
+      "file": "amsfonts-3.04.tds.zip",
+      "url": "https://mirrors.ctan.org/install/fonts/amsfonts.tds.zip",
+      "repository": "https://ctan.org/pkg/amsfonts",
+      "license": "LPPL-1.3c-or-later; OFL-1.1 for font software; ueuf.fd original copying notice",
+      "sha256": "dd763ca89b712d096e952ca43c3b60409bfca174f04c5743da68468d063fe7b6",
+      "outputs": [
+        {
+          "entry": "tex/latex/amsfonts/ueuf.fd",
+          "file": "ueuf.fd.gz",
+          "sha256": "97ae9b28e952c5f06675b3d55c1b08be62ccabe070b9bab99163a85628686091",
+          "gzipSha256": "22b97760e296984ec205e4a21c9717d4966510e9c17e1e4d8b2ad3dd84f5af74"
+        },
+        {
+          "entry": "fonts/tfm/public/amsfonts/euler/eufm5.tfm",
+          "file": "eufm5.tfm.gz",
+          "sha256": "a7293dbf5c5c9d6dcbe75405f1a628788e0bc23b0a00e7b289d21eae163f7285",
+          "gzipSha256": "fcf69a8eddf1a82cc384aeee5a996fcc0e9b67c2a8eda300abc1bf1d9802227d"
+        },
+        {
+          "entry": "fonts/tfm/public/amsfonts/euler/eufm7.tfm",
+          "file": "eufm7.tfm.gz",
+          "sha256": "23cdb6f111156554ea02f45f63c38a31e8e591d497b3810e7c71304f866dde74",
+          "gzipSha256": "bce1be7a39c403bd107fc3f2e253ab434bb560312776ff632707a18c1d571395"
+        },
+        {
+          "entry": "fonts/tfm/public/amsfonts/euler/eufm10.tfm",
+          "file": "eufm10.tfm.gz",
+          "sha256": "f0b7018ade501b4647c116a9ed1df10612cf8c173d0657ea17c5f1f6003fd1a1",
+          "gzipSha256": "fdf729fc483bf6f7561f8642942a381e9647c329d6bc3374b490d3cc769efb93"
+        },
+        {
+          "entry": "fonts/tfm/public/amsfonts/euler/eufb5.tfm",
+          "file": "eufb5.tfm.gz",
+          "sha256": "48d9d739ed6cf18be408b7f10d79055fc9e068b82d869f75dc10f1b64f3bee4e",
+          "gzipSha256": "abf9718675e15090cca7026b3f4acd82631e12316bc518f161d10894ffd1d4c8"
+        },
+        {
+          "entry": "fonts/tfm/public/amsfonts/euler/eufb7.tfm",
+          "file": "eufb7.tfm.gz",
+          "sha256": "92b5369b912a0111c7fc0aeb6c4d8004f59937b654310a42deadb13928b7a4ae",
+          "gzipSha256": "208a498715b817d2d0b9631415b7708a691d0f18ca7ec540b4ef2d9d42759946"
+        },
+        {
+          "entry": "fonts/tfm/public/amsfonts/euler/eufb10.tfm",
+          "file": "eufb10.tfm.gz",
+          "sha256": "34fee4a59276c8d02f1a0e84c4ca50ba7468a16c73ed24e56d723d5e42dc3d2a",
+          "gzipSha256": "7911183eba60ea69890680e8a8c2573e1cb6a1312a3842060596826cd1e7e739"
+        }
+      ]
+    },
+    {
+      "name": "PGFPlots",
+      "version": "1.18.2",
+      "file": "pgfplots-1.18.2-d8d5424.zip",
+      "url": "https://codeload.github.com/pgf-tikz/pgfplots/zip/d8d5424dafa7424df3fbf77022b8f662fffaa4fb",
+      "revision": "d8d5424dafa7424df3fbf77022b8f662fffaa4fb",
+      "repository": "https://github.com/pgf-tikz/pgfplots",
+      "license": "GPL-3.0-or-later",
+      "sha256": "3d654fea4e23fda7a60fe0128730f286f196b1106f0a3292906263e8c52e738b",
+      "outputs": [
+        {
+          "entry": "pgfplots-d8d5424dafa7424df3fbf77022b8f662fffaa4fb/tex/generic/pgfplots/libs/tikzlibrarypgfplots.dateplot.code.tex",
+          "file": "tikzlibrarypgfplots.dateplot.code.tex.gz",
+          "sha256": "4472ec5ddb792c7bd15ad866802c9132262374a4a715c016b4c02c67effe6062",
+          "gzipSha256": "227c463461aeec476c5ebb3284bd899e12533ae0e9667d4b95062f5c5323b4d8"
+        },
+        {
+          "entry": "pgfplots-d8d5424dafa7424df3fbf77022b8f662fffaa4fb/tex/generic/pgfplots/libs/tikzlibrarypgfplots.decorations.softclip.code.tex",
+          "file": "tikzlibrarypgfplots.decorations.softclip.code.tex.gz",
+          "sha256": "4d141d667fa77f766c592b62b6b8fddef8cf936be983b73c92340e94360c7a70",
+          "gzipSha256": "1ed0f27fe194543bc1b448eb66da9d0010f571df4da30e63a33c1e11788ff62e"
+        },
+        {
+          "entry": "pgfplots-d8d5424dafa7424df3fbf77022b8f662fffaa4fb/tex/generic/pgfplots/libs/tikzlibrarypgfplots.fillbetween.code.tex",
+          "file": "tikzlibrarypgfplots.fillbetween.code.tex.gz",
+          "sha256": "1f30469b33df72c0dc7fd2da567fd42fc08e679dfcbb0d5e3a82b710841d24ca",
+          "gzipSha256": "d6cf761de26f0564092ae0dc59f2e6ba0c451fa2c491fa327247932f2be27018"
+        },
+        {
+          "entry": "pgfplots-d8d5424dafa7424df3fbf77022b8f662fffaa4fb/tex/generic/pgfplots/libs/tikzlibrarypgfplots.groupplots.code.tex",
+          "file": "tikzlibrarypgfplots.groupplots.code.tex.gz",
+          "sha256": "27ad8052f7708da5f355f2754ceb274cc622da405aec7b93be7224d076bdfe42",
+          "gzipSha256": "5d1ca0e1db0bfc80a2d894fb4231f0fe6cf3a61ef680a283a9f4ebea7ba5b134"
+        },
+        {
+          "entry": "pgfplots-d8d5424dafa7424df3fbf77022b8f662fffaa4fb/tex/generic/pgfplots/libs/tikzlibrarypgfplots.polar.code.tex",
+          "file": "tikzlibrarypgfplots.polar.code.tex.gz",
+          "sha256": "06390707d5d56f23cbdf834571ee4829adcf0035901dc835f24151cbe18259e5",
+          "gzipSha256": "99391e04a2a8c8d04b4b594656deb1146149cd75675098e6c755918c2b5e1d1e"
+        },
+        {
+          "entry": "pgfplots-d8d5424dafa7424df3fbf77022b8f662fffaa4fb/tex/generic/pgfplots/libs/tikzlibrarypgfplots.statistics.code.tex",
+          "file": "tikzlibrarypgfplots.statistics.code.tex.gz",
+          "sha256": "a88571d88ec075b49f2bce5ef0d17d16c920eb5b52760052d0187ca8b09acf90",
+          "gzipSha256": "ca20c99563f651496d576bc8186b02e6929c7d23d57d9e6b83f68deb1f952b48"
+        },
+        {
+          "entry": "pgfplots-d8d5424dafa7424df3fbf77022b8f662fffaa4fb/tex/generic/pgfplots/pgfcontrib/pgflibraryfillbetween.code.tex",
+          "file": "pgflibraryfillbetween.code.tex.gz",
+          "sha256": "5f509db0338d04288db52164f3384e1dfa209e820b151d68568979385379baba",
+          "gzipSha256": "da6c07b61ec812122e6b9719fc0f436e6986d126498e03c369ff94fff26986be"
+        },
+        {
+          "entry": "pgfplots-d8d5424dafa7424df3fbf77022b8f662fffaa4fb/tex/generic/pgfplots/pgfcontrib/tikzlibrarydecorations.softclip.code.tex",
+          "file": "tikzlibrarydecorations.softclip.code.tex.gz",
+          "sha256": "4389b36cd729654e45f386f2d421e7451af1d7cb4c3e917bc968523ea8407316",
+          "gzipSha256": "51c0441cb0bf9f04fd29b6b392cb532fa9f13850cbdc67a6a078cb928da8d5a1"
+        },
+        {
+          "entry": "pgfplots-d8d5424dafa7424df3fbf77022b8f662fffaa4fb/tex/generic/pgfplots/pgfcontrib/tikzlibraryfillbetween.code.tex",
+          "file": "tikzlibraryfillbetween.code.tex.gz",
+          "sha256": "14de4093b72cd84659cdd31b064827be0c88085428ead999080b43bcfc1e2d20",
+          "gzipSha256": "6615e745bd8bfbe45cf179d6c440de732b194548a33a7e7b6d6d438038cad3c3"
+        }
+      ]
+    }
+  ],
+  "localSources": [
+    {
+      "source": "latex-islands-siunitx.sty",
+      "file": "latex-islands-siunitx.sty.gz",
+      "sha256": "ff78be633ed4cb6fd4e6578a023f4224a0ba6bf8d9bcb02b490650385ca01877",
+      "gzipSha256": "9ebe9444d86efeaad85e3596494ff512ae283ceeace5672d1989c6d00a18db49",
+      "license": "GPL-3.0-or-later"
+    }
+  ]
+}

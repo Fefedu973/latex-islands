@@ -1,0 +1,12 @@
+% SPDX-License-Identifier: GPL-3.0-or-later
+% First-party adapter for the bundled TikZJax font set.
+% The upstream siunitx package is distributed without modifications.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{latex-islands-siunitx}[2026/09/20 siunitx font compatibility]
+\RequirePackage{siunitx}
+% siunitx's default upright text micro sign requires the unavailable TS1
+% tcrm font. Use the bundled Computer Modern math mu instead: the micro
+% prefix keeps its value (10^-6), with a math-shaped rather than upright mu.
+% User declarations later in the diagram preamble take precedence.
+\DeclareSIPrefix\micro{\ensuremath{\mu}}{-6}
+\endinput

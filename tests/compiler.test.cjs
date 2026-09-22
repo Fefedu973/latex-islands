@@ -32,6 +32,20 @@ const snippets=[
 \usetikzlibrary{arrows.meta,positioning}
 \begin{document}\begin{tikzpicture}\node[draw] (a) {Source};\node[draw,right=of a] (b) {Signal};\draw[-{Stealth}] (a)--(b);\end{tikzpicture}\end{document}`],
  ['auto-circuitikz',String.raw`\begin{circuitikz}\draw (0,0) to[R,l=$R$] (2,0) to[C,l=$C$] (2,-2)--(0,-2)--(0,0);\end{circuitikz}`],
+ ['circuitikz-thevenin-text-label',String.raw`\begin{circuitikz}[american]
+\draw
+(0,0) node[ground]{}
+to[V,l=$E_{Th}$] (0,3)
+to[R,l=$R_{Th}$] (3,3)
+to[generic,l=$\text{charge}$] (3,0)
+-- (0,0);
+\end{circuitikz}`],
+ ['circuitikz-network-accented-text-label',String.raw`\begin{circuitikz}[american]
+\draw
+(0,0) node[left]{borne 1} to[short,o-] (1,0)
+to[generic,l=$\text{réseau compliqué}$] (4,0)
+to[short,-o] (5,0) node[right]{borne 2};
+\end{circuitikz}`],
  ['auto-tikzcd',String.raw`\begin{tikzcd} A\arrow[r,"f"]\arrow[d] & B\arrow[d]\\C\arrow[r] & D\end{tikzcd}`],
  ['auto-axis',String.raw`\begin{axis}[width=5cm,height=4cm]\addplot[blue,domain=0:2,samples=11] {x^2};\end{axis}`]
 ];
@@ -95,5 +109,27 @@ snippets.push(...LatexIslandsExamples.map(example=>['example-'+example.id,exampl
  const infinite=await compiler.compile(String.raw`\begin{tikzpicture}\loop\iftrue\repeat\end{tikzpicture}`);assert.equal(infinite.ok,false);assert.match(infinite.error,/30-second/);console.log('PASS actual infinite-TeX worker termination');
  compiler.rpc=originalRpc;
  const afterTimeout=await compiler.compile(String.raw`\begin{tikzpicture}\draw[violet] (0,0)--(1,1);\end{tikzpicture}`);assert.equal(afterTimeout.ok,true,afterTimeout.error);console.log('PASS fresh worker after timeout');
+ // Sequential representative fragments avoid filling the bounded worker queue and
+ // exercise package/library inference after the explicit-preamble smoke tests.
+ const robustnessFailures=[];
+ const fontCSS=fs.readFileSync(path.join(engineDir,'fonts.css'),'utf8');
+ for(const [name,source] of require('./robustness-fixtures.cjs')) {
+  try {
+   const result=await compiler.compile(source);
+   assert.equal(result.ok,true,`${name}: ${result.error}`);
+   assert.match(result.svg,/^<svg[\s>]/);
+   // A valid SVG with unavailable TeX fonts still displays missing glyphs.
+   const families=new Set([...result.svg.matchAll(/font-family=["']([^"']+)["']/g)].map(match=>match[1]));
+   for(const family of families) {
+    assert.ok(fs.existsSync(path.join(engineDir,'fonts',family+'.woff2')),`${name}: missing font ${family}`);
+    assert.ok(fontCSS.includes('font-family: '+family+';'),`${name}: missing font CSS for ${family}`);
+   }
+   fs.writeFileSync(path.join(__dirname,'engine-fixtures','robust-'+name+'.svg'),result.svg);
+   console.log('PASS robust-'+name,result.svg.length+' bytes',result.duration+'ms');
+  } catch(error) {
+   robustnessFailures.push(error.message);console.error('FAIL robust-'+name,error.message);
+  }
+ }
+ assert.equal(robustnessFailures.length,0,robustnessFailures.join('\n\n'));
  compiler.stop();
 })().catch(async error=>{await compiler.tail;compiler.stop();console.error(error);process.exitCode=1;});

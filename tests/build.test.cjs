@@ -22,6 +22,9 @@ async function fixture(t){
   for(const name of ['background-firefox.js','package-lock.json','package-extension.ps1','vendor/tikzjax/patch-runtime.py','vendor/tikzjax/upstream-source-v1.6.0.tar.gz','vendor/tikzjax/dvi2html-source-0.0.7-beta7.tar.gz','vendor/tikzjax/web2js-source-1.0.3.tar.gz','vendor/tikzjax/source/run-tex.js','scripts/build.mjs','tests/core.test.cjs'])await write(name);
   await write('VALIDATION.md','Public validation notes');await write('tests/performance-results.md','Historical public timings');
   await write('icons/brand.svg','<svg/>');await write('docs/store-assets/screenshot.png',Buffer.from([0,255,1]));await write('docs/store-assets/promo.html','<h1>Synthetic promo</h1>');
+  await write('vendor/tikzjax/source/latex-islands-cancel.sty','% source');
+  await write('vendor/tikzjax/extra-tex-source/pinned-source.zip',Buffer.from([0,255,1]));
+  await write('vendor/tikzjax/extra-tex-source/manifest.json','{}');
   await write('private-conversation.json','NEVER INCLUDE');await write('tests/session.har','NEVER INCLUDE');await write('node_modules/dependency/index.js','NEVER INCLUDE');await write('vendor/tikzjax/debug.map','NEVER INCLUDE');await write('vendor/tikzjax/tex_files/build-sources.tar.gz','NEVER INCLUDE');
   return {root,write};
 }
@@ -60,6 +63,9 @@ test('browser ZIPs have manifest at root, complete runtime assets and no test/pr
   const sources=await unzip(await fs.readFile(path.join(root,'dist/latex-islands-source-1.4.0.zip')));
   for(const name of ['vendor/tikzjax/upstream-source-v1.6.0.tar.gz','vendor/tikzjax/patch-runtime.py','vendor/tikzjax/source/run-tex.js','config/firefox.json','package-lock.json','scripts/build.mjs','tests/core.test.cjs','VALIDATION.md','tests/performance-results.md','icons/brand.svg','docs/store-assets/screenshot.png','docs/store-assets/promo.html'])assert.ok(sources.has(name),name);
   for(const name of ['icons/brand.svg','docs/store-assets/screenshot.png','docs/store-assets/promo.html'])assert.equal(chrome.has(name),false);
+  for(const name of ['vendor/tikzjax/source/latex-islands-cancel.sty','vendor/tikzjax/extra-tex-source/pinned-source.zip','vendor/tikzjax/extra-tex-source/manifest.json']){
+    assert.ok(sources.has(name),name);assert.equal(chrome.has(name),false);assert.equal(firefox.has(name),false);
+  }
   assert.equal(sources.has('private-conversation.json'),false);assert.equal(sources.has('tests/session.har'),false);
 });
 

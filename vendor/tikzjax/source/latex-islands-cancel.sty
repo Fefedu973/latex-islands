@@ -1,0 +1,48 @@
+% SPDX-License-Identifier: GPL-3.0-or-later
+% First-party adapter for cancel 2.2 and TikZJax's SVG backend.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{latex-islands-cancel}[2026/09/20 PGF paths for cancel]
+\RequirePackage{cancel}
+\RequirePackage{pgf}
+
+% Keep cancel's layout, math styles, colors and package options. Only its
+% picture primitives need replacing: the SVG converter has no line10 font.
+\def\LICancel@picture{%
+  \let\line\LICancel@line
+  \let\vector\LICancel@vector
+}
+\def\LICancel@line(#1,#2)#3{\LICancel@draw{#1}{#2}{#3}{}}
+\def\LICancel@vector(#1,#2)#3{\LICancel@draw{#1}{#2}{#3}{\pgfsetarrowsend{to}}}
+\def\LICancel@draw#1#2#3#4{%
+  \begingroup
+  \dimen@=#3\unitlength
+  \@tempdima=\dimen@
+  \multiply\@tempdima by #2\relax
+  \divide\@tempdima by #1\relax
+  \edef\LICancel@x{\the\dimen@}%
+  \edef\LICancel@y{\the\@tempdima}%
+  \begin{pgfpicture}
+    \pgfsetlinewidth{\@wholewidth}%
+    \pgfsetstrokecolor{.}%
+    #4%
+    \pgfpathmoveto{\pgfpointorigin}%
+    \pgfpathlineto{\pgfpoint{\LICancel@x}{\LICancel@y}}%
+    \pgfusepath{stroke}%
+  \end{pgfpicture}%
+  \endgroup
+}
+\let\LICancel@cancel\@cancel
+\long\def\@cancel#1#2#3{%
+  \begingroup
+  \let\OriginalPictureCmds\LICancel@picture
+  \LICancel@cancel{#1}{#2}{#3}%
+  \endgroup
+}
+\let\LICancel@cancelto\@cancelto
+\long\def\@cancelto#1#2#3#4{%
+  \begingroup
+  \let\OriginalPictureCmds\LICancel@picture
+  \LICancel@cancelto{#1}{#2}{#3}{#4}%
+  \endgroup
+}
+\endinput

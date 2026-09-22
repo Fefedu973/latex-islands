@@ -1,4 +1,4 @@
-# Validation — 1.4.2
+# Validation — 1.4.3
 
 This file describes reproducible checks and their scope. It does not claim Chrome Web Store or Mozilla approval. No private conversations, account exports, HAR captures or credentials are part of the public fixtures.
 
@@ -21,6 +21,19 @@ node tests/firefox-smoke.mjs
 The Firefox smoke test requires Firefox installed locally. Set `FIREFOX_BINARY` to its executable if it is not at the default location. It copies `dist/firefox` into a temporary directory, installs that copy into a new temporary profile, runs headless, then removes its own test directory. The test copy adds a localhost fixture origin and reporting instrumentation; the release package and personal browser profiles are not modified.
 
 The font regression test requires Chrome or Edge (`CHROME_BINARY` can override discovery). It opens an isolated headless profile, serves the production island with a synthetic cached compilation, and deliberately delays bundled WOFF2 responses. It verifies that the loading indicator remains until the required faces load, then compares diagram pixels before and after hover in dark, light and native color modes. Screenshots and a report remain in the temporary directory printed by the test; the browser profile is removed.
+
+## Release results — 2026-09-22 (1.4.3)
+
+- All 188 unit/integration tests passed, including dependency inference, custom macros, comments, preamble placement, conflicting `\\qty` meanings and useful compilation diagnostics.
+- The full offline engine suite passed: 9 base engine cases, 51 compiler snippets, 15 cancellation renders and 5 Euler renders. It covers AMS maths/symbols, Fraktur, mathtools, scientific units (including microfarads), chemistry, physics, custom columns, Unicode labels and five additional PGFPlots libraries. Cache, recoverable errors and real timeout recovery also passed.
+- The reported binary-number diagram fails with the released 1.4.2 normalizer because `decorations.pathreplacing` is absent. It compiles unchanged with 1.4.3. Both its braced decoration syntax and the valid `decoration=brace` shorthand have real-engine regression fixtures.
+- Targeted checks additionally cover a final preamble comment, body commands before a diagram, and comments inside custom macro declarations.
+- An additional real-engine fixture verifies SI quantities with comments before and between arguments, including optional rounding settings, bringing compiler coverage to 52 positive snippets.
+- All emitted font families in the scientific-fragment fixtures have a bundled WOFF2 and CSS declaration. Headless Chrome visual checks confirm cancellation strokes, Euler glyphs, bold and script sizes. The delayed-font first-paint regression passed in Chrome 153.0.8010.53 in dark, light and native modes, with zero changed pixels after hover.
+- Offline vendoring checks verified all 28 additional compressed assets against five pinned archives and one readable adapter. Applying the worker patch to the pristine npm artifact reproduced the checked-in worker byte for byte.
+- Firefox 156.0 on Windows passed the temporary-extension smoke test with real compilation, one shared worker, live colors, popup and synthetic conversation export. Firefox package lint reported zero errors, zero notices and the existing Android minimum-version warning; the extension targets desktop Firefox.
+
+See [renderer support](docs/renderer-support.md) for compatibility behavior and remaining boundaries. Store review is separate from these release checks.
 
 ## Release results — 2026-09-17 (1.4.2)
 

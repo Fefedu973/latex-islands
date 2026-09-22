@@ -1,5 +1,17 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 'use strict';
+function diagramDiagnostic(message) {
+  // Keep the TeX log available in details, with an actionable first line for the UI.
+  const missing = /(?:LaTeX Error: File [`']([^'`\n]+)['`] not found|I can't find file [`']([^'`\n]+)['`])/.exec(message);
+  if (missing) return `The diagram requires ${missing[1] || missing[2]}, which is not bundled with the renderer.\n\n${message}`;
+  const font = /Could not find font ([A-Za-z0-9_-]+)/.exec(message);
+  if (font) return `The SVG renderer does not support the font ${font[1]}. Use a supported TeX font.\n\n${message}`;
+  const command = /Undefined control sequence\.\s*<recently read>\s*(\\[A-Za-z@]+)/.exec(message);
+  if (command) return `Unknown LaTeX command ${command[1]}. Check its spelling, definition or required package.\n\n${message}`;
+  const texError = /^! (.+)/m.exec(message);
+  if (texError) return `${texError[1]}\n\n${message}`;
+  return message;
+}
 class TikZCompiler {
   constructor() {
     this.worker=null;this.loading=null;this.warming=null;this.pending=new Map();this.inflight=new Map();
@@ -83,11 +95,13 @@ class TikZCompiler {
     this.count++;clearTimeout(this.idle);this.idle=null;
     const queued=performance.now();
     const run=this.tail.then(async()=>{
-      const norm=LatexIslandsCore.normalizeTeX(source);
+      let norm;
+      try {norm=LatexIslandsCore.normalizeTeX(source);}
+      catch(error) {error.recoverable=true;throw error;}
       const start=performance.now();
       await this.load();
       const loaded=performance.now();
-      const svg=await this.rpc('texify',[norm.body,{texPackages:norm.texPackages || {},tikzLibraries:norm.tikzLibraries || '',addToPreamble:norm.addToPreamble || ''}]);
+      const svg=await this.rpc('texify',[norm.body,{texPackages:norm.texPackages || {},tikzLibraries:norm.tikzLibraries || '',addToPreamble:(norm.addToPreamble || '')+'\n'}]);
       if(typeof svg!=='string' || !svg.includes('<svg') || svg.length>5000000) throw new Error('The engine did not produce a valid SVG diagram.');
       const end=performance.now();
       const result={ok:true,svg,warnings:norm.warnings || [],duration:Math.round(end-start),
@@ -95,7 +109,7 @@ class TikZCompiler {
       this.remember(source,result);return result;
     }).catch(e=>{
       if(!e.recoverable)this.stop();
-      const message=String(e.message || e);
+      const message=diagramDiagnostic(String(e.message || e));
       return {ok:false,error:message.length>5000?message.slice(0,500)+'\n[… log shortened …]\n'+message.slice(-4300):message};
     }).finally(()=>{this.count--;this.inflight.delete(source);this.scheduleIdle();});
     this.inflight.set(source,run);this.tail=run.then(()=>{});return run;

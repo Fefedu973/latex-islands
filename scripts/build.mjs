@@ -8,7 +8,7 @@ import {createHash} from 'node:crypto';
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const RUNTIME_FILES = [
   'LICENSE', 'THIRD_PARTY_NOTICES.md', 'manifest.json',
-  'docs/runtime-dependency-licenses.md', 'docs/licenses/LPPL-1.3c.txt', 'docs/licenses/Apache-2.0.txt',
+  'docs/runtime-dependency-licenses.md', 'docs/extra-tex-packages.md', 'docs/cancel-compatibility.md', 'docs/euler-fonts.md', 'docs/licenses/OFL-1.1.txt', 'docs/licenses/LPPL-1.3c.txt', 'docs/licenses/Apache-2.0.txt',
   'background.js', 'compiler.js', 'content.css', 'content.js',
   'conversation-bridge.js', 'conversation-export.js', 'core.js',
   'demo.html', 'demo.js', 'examples.js', 'export-core.js', 'export-preview-renderer.js',
@@ -126,7 +126,8 @@ async function sourceEntries(root, runtime) {
   for (const name of SOURCE_FILES) {try {await fs.access(path.join(root,name));files.add(name);} catch(error) {if(error.code!=='ENOENT' || name.startsWith('vendor/') || name.startsWith('package'))throw error;}}
   for (const [directory,accept] of [
     ['scripts',/\.(?:[cm]?js|ps1)$/],['config',/\.json$/],['docs',/\.(?:md|txt)$/],['docs/store-assets',/\.(?:png|html)$/],
-    ['tests',/\.(?:[cm]?js|html)$/],['vendor/tikzjax/source',/\.js$/],['.github/workflows',/\.ya?ml$/]
+    ['tests',/\.(?:[cm]?js|html)$/],['vendor/tikzjax/source',/\.(?:js|sty|json|py)$/],
+    ['vendor/tikzjax/extra-tex-source',/\.(?:zip|tar\.gz|json|md|txt|sty)$/],['.github/workflows',/\.ya?ml$/]
   ]) for (const name of await listFiles(root,directory,name=>accept.test(name),true)) files.add(name);
   // Use the unmodified Chrome manifest with the Firefox override and build tooling alongside it.
   return Promise.all([...files].sort(compare).map(name=>readEntry(root,name)));

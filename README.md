@@ -7,6 +7,7 @@ LaTeX Islands turns supported LaTeX code blocks in ChatGPT replies into interact
 ## Features
 
 - TikZ, Circuitikz, PGFPlots, tikz-cd, Chemfig and TikZ-3DPlot support through a bundled WebAssembly TeX engine.
+- Automatic dependencies for common mathematical labels, scientific units and chemical formulae, with support for Unicode math characters. See [renderer support](docs/renderer-support.md).
 - An integrated preview with zoom, drag, fit, fullscreen editing and PNG/SVG downloads.
 - Early detection while ChatGPT streams a reply, with prewarming and cached compilations.
 - A standalone editor with examples and a monochrome interface. Follow ChatGPT's last observed theme, follow the system, or choose light/dark.
@@ -23,16 +24,20 @@ The conversation exporter requests the current conversation's JSON pages from Ch
 
 ### Chrome desktop
 
+Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/pnmeipidjjoknchljkpkpeodmlhlnnjj) for automatic updates after store approval. Requires Chrome 116 or newer.
+
+For development or to test a GitHub release before store approval:
+
 1. Download the Chrome ZIP from [Releases](https://github.com/Fefedu973/latex-islands/releases/latest).
 2. Extract the ZIP into a permanent folder.
 3. Open `chrome://extensions`, enable **Developer mode**, and select **Load unpacked**.
 4. Select the folder containing `manifest.json` directly, then reload your ChatGPT tabs.
 
-Requires Chrome 116 or newer.
-
 To update an unpacked installation, replace its files with the latest Chrome ZIP, click **Reload** on the extension's card at `chrome://extensions`, then reload your ChatGPT tabs. The version number on the extension card identifies the installed package.
 
 ### Firefox desktop
+
+Install from [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/latex-islands/) for signed releases and automatic updates after store approval.
 
 For development, build the Firefox package, open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `dist/firefox/manifest.json`. Temporary installations are removed when Firefox closes. Requires Firefox 140 or newer.
 

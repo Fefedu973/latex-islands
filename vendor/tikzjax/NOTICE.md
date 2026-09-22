@@ -24,6 +24,18 @@ Local changes by the Latex Islands contributors, 2026-09-15:
 - Removed Webpack's dormant `new Function` global-object fallback. MV3 provides
   `globalThis` and allows the bundled WebAssembly with `wasm-unsafe-eval`.
 
+Additional changes, 2026-09-20:
+
+- Added genuine Euler Fraktur metrics and verified BaKoMa glyph mappings to the
+  SVG converter's existing font tables; corrected its inclusive last TFM glyph.
+  `source/euler-fonts.json` and `source/generate-euler-fonts.py` provide the data
+  and its provenance. `patch-runtime.py` reproduces all worker modifications
+  from the original npm artifact. See `docs/euler-fonts.md` in the repository.
+- Added pinned scientific TeX dependencies and PGFPlots libraries from complete
+  archived sources. `scripts/vendor-tex-packages.mjs` reproduces these assets
+  offline. Two separate first-party adapters supply vector cancellation strokes
+  and a supported micro-prefix glyph; upstream packages remain unchanged.
+
 The engine receives only the selected diagram source. All execution and font
 loading use bundled files. No remote executable code or compilation service is
 used. Callers must sanitize generated SVG before rendering it and terminate the

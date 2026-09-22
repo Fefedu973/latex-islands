@@ -19,6 +19,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Verify pinned TeX dependencies offline
+        run: node scripts/vendor-tex-packages.mjs --check
       - run: npm test
       - name: Compile real TeX fixtures offline
         run: npm run test:engine

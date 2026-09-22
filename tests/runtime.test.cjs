@@ -187,6 +187,28 @@ test('ordinary TeX diagnostics retain the loaded engine and package cache',async
   assert.equal(h.compiler.cache.has('broken'),false);h.compiler.stop();
 });
 
+test('compilation diagnostics expose a useful summary while retaining the underlying log',async()=>{
+  const examples=[
+    ["TikZJax: TeX did not produce input.dvi.\n! LaTeX Error: File `unavailable.sty' not found.",/requires unavailable\.sty, which is not bundled/],
+    ['Could not find font unsupported10',/SVG renderer does not support the font unsupported10/],
+    ['TikZJax: TeX did not produce input.dvi.\n! Undefined control sequence.\n<recently read> \\unknownmacro\nl.3',/Unknown LaTeX command \\unknownmacro/]
+  ];
+  for(const [log,summary] of examples){
+    const h=compilerHarness({auto:false});const pending=h.compiler.compile('diagram');await tick();
+    const w=h.workers[0];w.result(w.messages[0].uid);await tick();w.fail(w.messages[1].uid,log);
+    const result=await pending;assert.equal(result.ok,false);assert.match(result.error.split('\n')[0],summary);
+    assert.ok(result.error.includes(log));h.compiler.stop();
+  }
+});
+
+test('unsupported fragment diagnostics preserve a prewarmed worker for the next diagram',async()=>{
+  const h=compilerHarness({normalize(source){if(source==='unsupported')throw new Error('Requires LuaTeX.');return {body:source};}});
+  await h.compiler.warmup();const worker=h.workers[0];
+  const result=await h.compiler.compile('unsupported');assert.equal(result.ok,false);assert.match(result.error,/Requires LuaTeX/);
+  assert.equal(worker.terminated,false);assert.equal(worker.messages.length,1);
+  assert.equal((await h.compiler.compile('valid')).ok,true);assert.equal(h.workers.length,1);h.compiler.stop();
+});
+
 test('cache eviction retains recently viewed diagrams and caps SVG memory',async()=>{
   const h=compilerHarness();for(let i=0;i<24;i++)await h.compiler.compile(`figure ${i}`);
   await h.compiler.compile('figure 0');await h.compiler.compile('figure 24');
