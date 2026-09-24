@@ -1,6 +1,6 @@
-# Export a ChatGPT conversation — v1.4.2
+# Export a ChatGPT conversation
 
-The **Export conversation** button in the header of a saved conversation opens a window with two panels: settings and preview. The export retrieves ChatGPT's JSON data instead of reconstructing the conversation from the text displayed on the page.
+The **Export conversation** button in the header of a saved conversation opens a window with two panels: settings and preview. Markdown, text and JSON exports retrieve ChatGPT's saved data. PDF captures the rendered conversation after scrolling the page to load earlier messages.
 
 ## Choose content and format
 
@@ -9,8 +9,33 @@ The **Export conversation** button in the header of a saved conversation opens a
 | **Markdown (.md)** | A readable transcript with user messages, ChatGPT replies, code and TeX, without repeating technical JSON under each message. |
 | **Plain text (.txt)** | The same message selection, with common Markdown formatting removed. Code and TeX expressions are preserved. |
 | **Complete archive (.json)** | Every JSON page received, its metadata and a combined message list. Transcript options do not filter this archive. |
+| **PDF (.pdf)** | A clean printable copy of selected messages from the rendered page, with equations, tables, code, images and LaTeX Islands diagrams. |
 
-For Markdown and plain text, the **Content** menu offers three presets: **Conversation**, **Detailed context** and **Answers only**. Under **Customize transcript**, you can choose each option separately:
+## Choose individual messages
+
+For PDF, Markdown and plain text, choose **Conversation**, **Answers only** or **Prompts only** under **Content**. Use **Choose messages** to load the message list, then check the messages you want to export. You can select a single message or any combination; the export keeps their conversation order. Search helps locate messages, and **All** and **None** make longer selections easier.
+
+The **Messages** view shows the selection. Switch back to **Preview** for PDF or **Conversation** for a transcript to review the result. **Reload** captures or retrieves the conversation again. Message selections stay in memory for the open export window; they are not saved as preferences.
+
+The complete JSON archive is always unfiltered. Message selection and transcript options apply only to the other formats.
+
+## Save a rich PDF
+
+Select **PDF (.pdf)**, choose the messages and click **Preview** to inspect the printable content in the export window. **Save PDF** opens the browser's print dialog; choose **Save as PDF** there. The **PDF** button below an assistant reply starts with that reply selected. Enable **Include prompt** to add its preceding user message.
+
+PDF uses ChatGPT's actual rendered content. The extension scrolls the conversation so ChatGPT can load and render earlier messages, captures each message as it becomes available, and restores the scroll position afterward. Captured messages remain available for selection even if ChatGPT removes them from the live page while scrolling. This can take longer for a large conversation and can be cancelled.
+
+The PDF exporter does not request the conversation API or reconstruct messages from JSON. Scrolling can trigger ChatGPT's own normal network requests. Content that the site cannot load cannot be recovered by this export. Hidden tool details and collapsed interactive content are not expanded automatically.
+
+The print copy removes navigation, composers and action buttons, uses a light background with page margins, wraps code, and preserves the page's rendered math and rich content. Browser print settings control paper size and optional browser headers and footers; the in-window preview shows the content, while the print dialog shows final pagination.
+
+Diagrams are exported as complete vector SVGs with embedded fonts, using their intrinsic proportions and fitting within the page. Preview pan and zoom do not affect their size or crop the drawing. Updated local diagram edits are included. Finish generating replies, render every diagram and apply pending editor changes before exporting; the extension reports unavailable diagrams instead of silently leaving them out.
+
+The browser loads the page's existing image resources as needed for the print copy. PDF does not download attachment files. Temporary capture and preview data remain in the tab and are cleared when the export window closes.
+
+## Transcript options
+
+Markdown and plain text also offer a **Detailed context** preset. Under **Customize transcript**, you can choose each option separately:
 
 - **Include my messages**;
 - **Include attachment references**;
@@ -26,8 +51,8 @@ Available structured sources become readable links. Citations with missing sourc
 ## Preview, copy and download
 
 1. Choose a format under **Format** and a preset under **Content**.
-2. Click **Preview** to retrieve the conversation.
-3. Adjust the options and check the result.
+2. Click **Preview** or **Choose messages** to retrieve the conversation.
+3. Adjust the message selection and options, then check the result.
 4. Use **Copy** or **Download**.
 
 The **Conversation** view presents messages for reading; the **File** view shows the generated content. JSON uses the file view. Common Markdown is formatted in the conversation view; **equations remain TeX source**, without mathematical rendering. The file view and downloads preserve TeX and source code.
@@ -46,11 +71,11 @@ The paginated format covers the current conversation exposed by the server. It c
 
 Messages in the paginated format keep the server's order. Parent and turn IDs may be incomplete or reused, so they are not used to arbitrarily reconstruct the conversation. The JSON archive is the reference for structure, unknown fields, media resources and the different message copies received.
 
-A reply that is still being generated may change after export. Local edits in the extension's TikZ editor do not change the messages saved by ChatGPT and are therefore not part of this export.
+A reply that is still being generated may change after a transcript export. Local edits in the extension's TikZ editor do not change the messages saved by ChatGPT and are therefore not part of Markdown, text or JSON exports. PDF includes the current successfully rendered diagram instead.
 
 ## How retrieval works
 
-Retrieval uses these internal endpoints:
+Markdown, text and JSON retrieval uses these internal endpoints. PDF does not use this bridge.
 
 1. `GET /backend-api/conversations/{id}?include_has_versions=true&num_turns=10`
 2. If `page_info.has_previous_page` is `true`, `GET /backend-api/conversations/{id}/messages?include_has_versions=true&num_turns=10&before={start_cursor}`, continuing back to the first page.
@@ -65,7 +90,8 @@ Each bridge request times out after 45 seconds, and retrieval is limited to 500 
 ## Validation
 
 ```powershell
-node --test tests/export.test.cjs tests/export-bridge.test.cjs tests/export-ui.test.cjs
+npm test
+npm run test:pdf
 ```
 
 The fixtures are synthetic. They check pagination and its failure cases, preservation of pages and metadata, transcript filters, attachments, citations, code and TeX, fallback to the older format, bridge restrictions, token isolation, cancellation and navigation.

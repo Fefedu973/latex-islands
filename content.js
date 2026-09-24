@@ -11,6 +11,8 @@
   const excludedSelector = 'textarea, input, [contenteditable="true"], [role="textbox"], #prompt-textarea, [data-testid="composer"]';
   const streamingSelector = '[data-is-streaming="true"], .result-streaming, .streaming-animation, [aria-busy="true"]';
   const states = new Map(), ids = new Map(), dirty = new Set();
+  const snapshots = new Map(), MAX_SNAPSHOT = 10 * 1024 * 1024;
+  let snapshotSequence = 0;
   const settings = {enabled:true, autoRender:true, scale:1, renderColors:'chatgpt'};
   let timer = 0, timerDue = Infinity, sequence = 0, fullScan = true, editor = null;
   let pageThemeKey = '', storedThemeKey = '', themeStorageReady = false;
@@ -23,7 +25,7 @@
   }
   function ownNode(node) {
     const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-    return Boolean(el?.closest('.latex-islands-container, .latex-islands-editor, .li-export'));
+    return Boolean(el?.closest('.latex-islands-container, .latex-islands-editor, .li-export, .li-export-reply, .li-pdf-root'));
   }
   function currentSource(el, type) {
     if (type === 'error') return [el.getAttribute('data-latex'), el.textContent, el.getAttribute('title')].find(v => v && core.detectKind(v)) || '';
@@ -125,8 +127,77 @@
     return true;
   }
   function liveFrame(state) {
-    return ids.get(state.id)===state && state.element.isConnected && state.container?.isConnected && state.frame?.isConnected && state.frame.parentElement===state.container;
+    return ids.get(state.id)===state && state.element.isConnected && state.container?.isConnected && state.frame?.isConnected && state.frame.parentElement===state.container && state.frame.src===state.frameURL;
   }
+  function sourceForSnapshot(state) {
+    const source=currentSource(state.element,state.type);
+    return core.stripFence(state.type==='raw'?core.splitIslands(source).find(token=>token.type==='latex')?.value || '':source);
+  }
+  function snapshotCurrent(request) {
+    const {state,port,source,hostSource,href,generation}=request;
+    return location.href===href && liveFrame(state) && state.ready && state.port===port && state.generation===generation && state.complete &&
+      state.sentSource===source && (state.draftSource??state.source)===source && state.source===hostSource && sourceForSnapshot(state)===hostSource;
+  }
+  function cancelSnapshots(state,message) {
+    for(const request of snapshots.values())if(!state || request.state===state)request.finish(new Error(message));
+  }
+  function checkSnapshots() {
+    for(const request of snapshots.values())if(!snapshotCurrent(request))request.finish(new Error('The diagram or conversation changed. Try exporting the PDF again.'));
+  }
+  function receiveSnapshot(state,port,data) {
+    if(state.port!==port || data?.channel!==CHANNEL || data.id!==state.id)return;
+    if(data.type==='snapshot-unavailable') {
+      cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');
+      state.ready=false;state.port.close();state.port=null;return;
+    }
+    if(data.type!=='snapshot-result' || typeof data.requestId!=='string')return;
+    const request=snapshots.get(data.requestId);
+    if(!request || request.state!==state || request.port!==port)return;
+    if(!snapshotCurrent(request) || data.source!==request.source) {request.finish(new Error('The diagram changed. Wait for the latest render, then export again.'));return;}
+    if(data.ok!==true) {request.finish(new Error(typeof data.error==='string'?data.error.slice(0,500):'The diagram could not be exported. Render it and try again.'));return;}
+    if(typeof data.svg!=='string' || !data.svg || data.svg.length>MAX_SNAPSHOT || new Blob([data.svg]).size>MAX_SNAPSHOT ||
+      !Number.isFinite(data.width) || !Number.isFinite(data.height) || data.width<=0 || data.height<=0 || data.width>100000 || data.height>100000) {
+      request.finish(new Error('The diagram export has invalid dimensions or exceeds the 10 MB limit.'));return;
+    }
+    request.finish(null,{sourceElement:state.element,containerElement:state.container,svg:data.svg,width:data.width,height:data.height});
+  }
+  function snapshotState(state,signal) {
+    return new Promise((resolve,reject)=>{
+      const source=state.draftSource??state.source,requestId='snapshot-'+(++snapshotSequence);
+      const request={state,port:state.port,source,hostSource:state.source,href:location.href,generation:state.generation};
+      let timeout=0,finished=false;
+      const abort=()=>request.finish(new DOMException('PDF export was cancelled.','AbortError'));
+      request.finish=(error,value)=>{
+        if(finished)return;finished=true;clearTimeout(timeout);signal?.removeEventListener('abort',abort);snapshots.delete(requestId);
+        if(error) {
+          try {request.port?.postMessage({channel:CHANNEL,id:state.id,type:'snapshot-cancel',requestId});} catch { /* The document may have closed its channel. */ }
+          reject(error);
+        } else resolve(value);
+      };
+      if(signal?.aborted) {abort();return;}
+      if(!snapshotCurrent(request)) {request.finish(new Error('A diagram is still loading or streaming. Wait for it to render, then export again.'));return;}
+      snapshots.set(requestId,request);signal?.addEventListener('abort',abort,{once:true});
+      timeout=setTimeout(()=>request.finish(new Error('The diagram export timed out. Render the diagram again and retry the PDF export.')),10000);
+      try {if(!post(state,{type:'snapshot',requestId,source}))request.finish(new Error('The diagram is unavailable. Reload it and try exporting again.'));}
+      catch {request.finish(new Error('The diagram disconnected. Reload it and try exporting again.'));}
+    });
+  }
+  globalThis.LatexIslandsDiagramExport=Object.freeze({async snapshot(element,{signal}={}) {
+    if(signal?.aborted)throw new DOMException('PDF export was cancelled.','AbortError');
+    if(!element?.isConnected || typeof element.contains!=='function')throw new Error('The conversation is no longer available.');
+    // Include diagrams added since the last scheduled scan; do not silently print their source instead.
+    fullScan=true;scan();
+    const selected=[...states.values()].filter(state=>element.contains(state.element));
+    const checkpoints=selected.map(state=>({state,port:state.port,source:state.draftSource??state.source,hostSource:state.source,href:location.href,generation:state.generation}));
+    const controller=new AbortController(),abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true});
+    try {
+      const results=await Promise.all(selected.map(state=>snapshotState(state,controller.signal)));
+      if(signal?.aborted)throw new DOMException('PDF export was cancelled.','AbortError');
+      if(!element.isConnected || checkpoints.some(request=>!element.contains(request.state.element)||!snapshotCurrent(request)))throw new Error('The diagram or conversation changed. Try exporting the PDF again.');
+      return results;
+    }
+    finally {controller.abort();signal?.removeEventListener('abort',abort);}
+  }});
   function send(state,force=false) {
     const source=state.complete && state.draftSource!=null?state.draftSource:state.source;
     const type=state.complete?'render':'prepare', key=type+'\0'+source+'\0'+settings.autoRender+'\0'+settings.scale;
@@ -140,6 +211,8 @@
     container.setAttribute('role','region');container.setAttribute('aria-label','TikZ diagram');
     const frame=document.createElement('iframe');frame.title='TikZ diagram — preview, code and download';
     frame.src=chrome.runtime.getURL('island.html')+'?parentOrigin='+encodeURIComponent(location.origin)+'#'+encodeURIComponent(state.id);
+    state.frameURL=frame.src;state.generation=0;
+    frame.addEventListener('load',()=>{state.generation++;cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');});
     frame.setAttribute('scrolling','no');frame.setAttribute('allow','clipboard-write');frame.referrerPolicy='no-referrer';
     state.container=container;state.frame=frame;ids.set(state.id,state);
     container.append(frame);el.insertAdjacentElement('afterend',container);
@@ -238,6 +311,7 @@
     sendView(state);state.frame.focus();
   }
   function removeState(el,state) {
+    cancelSnapshots(state,'The diagram was removed. Try exporting the current conversation again.');
     state.ready=false;state.port?.close();state.port=null;
     if(editor?.state===state) closeEditor();
     el.classList.remove('latex-islands-original-hidden');state.container?.remove();ids.delete(state.id);states.delete(el);
@@ -280,7 +354,9 @@
     const state=ids.get(data.id);if(!state?.frame || !liveFrame(state) || event.source!==state.frame.contentWindow) return;
     if(data.type==='ready') {
       const port=event.ports?.[0];if(!port) return;
-      state.port?.close();state.port=port;state.ready=true;send(state,true);
+      cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');
+      state.port?.close();state.port=port;state.ready=true;state.generation++;
+      port.onmessage=message=>receiveSnapshot(state,port,message.data);port.start?.();send(state,true);
     }
     if(data.type==='resize' && Number.isFinite(data.height) && editor?.state!==state) state.frame.style.height=Math.max(80,Math.min(16000,Math.ceil(data.height)))+'px';
     if(data.type==='open-editor') openEditor(state);
@@ -296,6 +372,7 @@
   });
   document.addEventListener('keydown',event=>{if(event.key==='Escape' && editor) {event.preventDefault();closeEditor();}});
   const observer=new MutationObserver(mutations=>{
+    checkSnapshots();
     if(!settings.enabled) return;let changed=false;
     for(const mutation of mutations) {
       if(ownNode(mutation.target)) continue;
@@ -327,6 +404,8 @@
     }
     if(changed) schedule();
   });
+  window.addEventListener('pagehide',()=>cancelSnapshots(null,'The conversation closed. Try exporting the current conversation again.'));
+  window.addEventListener('popstate',checkSnapshots);
   observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeOldValue:true,attributeFilter:['data-is-streaming','aria-busy','class','data-theme','data-language']});
   // Theme tracking is independent of diagram detection, including when islands
   // are disabled. One observer batch and palette comparison avoid storage writes

@@ -1,4 +1,4 @@
-# Store listing — 1.4.2
+# Store listing — 1.5.0
 
 Repository: https://github.com/Fefedu973/latex-islands. Privacy policy: https://github.com/Fefedu973/latex-islands/blob/main/PRIVACY.md.
 
@@ -10,7 +10,7 @@ LaTeX Islands — TikZ & Export for ChatGPT
 
 ### Short description
 
-Render TikZ diagrams locally in ChatGPT and export readable conversations as Markdown, text or JSON.
+Render TikZ locally in ChatGPT. Export selected messages as rich PDF, Markdown, text or JSON.
 
 ### Detailed description
 
@@ -18,9 +18,11 @@ LaTeX Islands makes technical ChatGPT conversations easier to read and reuse.
 
 When a reply contains supported diagram code, the extension renders it inline. Zoom and drag to inspect the drawing, open the editor to adjust its source, or download it as PNG or SVG. The bundled TeX engine compiles locally on your device, with no external compilation service. It prepares while ChatGPT writes and renders the diagram when the code block is ready.
 
-Export the open conversation as Markdown, plain text or a complete JSON archive of the data retrieved. Choose which messages and supporting details to include, then preview, copy or download the result. Code and equations are preserved as source. Attachments remain references; their files are not included.
+Export the open conversation as PDF, Markdown, plain text or a complete JSON archive. Choose individual messages, answers only or prompts only, then preview the result. A button below each reply also lets you save that reply with its optional prompt.
 
-You control when an export starts. It retrieves the conversation from ChatGPT using your existing session and same-origin requests, then prepares the file locally. Conversation data is not sent to the developer, and there is no advertising or analytics.
+PDF captures the conversation's rendered equations, tables, code, images and diagrams. The extension scrolls the page to load earlier messages and prepares a clean copy for the browser's print dialog. Markdown and text preserve code and equations as source; the complete JSON archive keeps the retrieved data without filtering. Attachment files are not downloaded.
+
+You control when an export starts. Markdown, text and JSON retrieve the conversation from ChatGPT using your existing session and same-origin requests. PDF uses the rendered page; scrolling can trigger ChatGPT's normal loading requests. Export files are prepared locally. Conversation data is not sent to the developer, and there is no advertising or analytics.
 
 Follow ChatGPT's theme or choose light, dark or system appearance. Display diagrams in theme-adapted colors or their original colors on white.
 
@@ -58,8 +60,9 @@ For Chrome, accurately complete the current dashboard's data-handling questions 
 
 - Compile included examples from the popup's standalone editor without a ChatGPT account. Use the packaged engine; no TeX installation or compilation server is required.
 - ChatGPT integration and live conversation export require a signed-in ChatGPT account. No credentials are embedded in the extension or public source. Provide any store-requested test access only through the store's private reviewer channel.
-- The export dialog explains that it reads ChatGPT with the user's session and prepares a local export. All previous pages must load successfully before a download is produced.
-- HTML from conversations is not executed in the preview. Attachment images are not automatically downloaded. The isolated/page bridge restricts the origin, conversation, request path and parameters.
+- Markdown, text and JSON retrieval uses the user's ChatGPT session. All API pages must load successfully before a download is produced. Individual message selection never filters the complete JSON archive.
+- PDF scrolls only the conversation, captures rendered messages in memory and restores the scroll position. It supports arbitrary message selection, role filters and an in-window preview before browser printing. PDF does not use the API bridge or reconstruct messages from JSON.
+- Active content and navigation controls are removed from the PDF copy. Rendered images may load their existing resources for printing; attachment files are not downloaded. Markdown/text previews do not automatically load remote images. The isolated/page bridge restricts the origin, conversation, request path and parameters.
 - Attach the corresponding source ZIP and [reviewer build notes](reviewer-build.md). The local hardened worker differs from upstream: arbitrary URL input fallback is removed, asset paths are restricted, and an unused dynamic-function fallback is removed. Do not describe this as an unmodified vendor library.
 - Mozilla's [development policy](https://extensionworkshop.com/documentation/publish/add-on-policies/#development-practices) restricts modifications to third-party libraries. The hardened worker and compiled TeX artifacts therefore need explicit reviewer evaluation; supplied sources and a successful lint result do not guarantee acceptance. Full upstream TeX-core reproduction has not been established; see the source notes.
 

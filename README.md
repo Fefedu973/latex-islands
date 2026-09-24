@@ -12,9 +12,11 @@ LaTeX Islands turns supported LaTeX code blocks in ChatGPT replies into interact
 - Early detection while ChatGPT streams a reply, with prewarming and cached compilations.
 - A standalone editor with examples and a monochrome interface. Follow ChatGPT's last observed theme, follow the system, or choose light/dark.
 - Theme-adapted diagram colors or original LaTeX colors on a white background, including exports.
-- Conversation export as Markdown, plain text or a complete JSON archive, with presets, individual content options and a Dialogue/File preview.
+- Conversation export as Markdown, plain text or a complete JSON archive, with presets, individual content options and a Conversation/File preview.
+- Rich PDF export with rendered equations, tables, images and complete vector diagrams fitted to the page. The extension scrolls the conversation to load earlier messages before capturing them.
+- Select individual messages, export answers or prompts only, or save one reply with its optional preceding prompt. Check the result in the export preview before saving.
 
-The conversation exporter requests the current conversation's JSON pages from ChatGPT using your existing session. It preserves code and TeX in the transcript, removes technical clutter by default, and keeps the original API pages in JSON. Attachments are references, not embedded files. The export preview displays equations as TeX source.
+Markdown, text and JSON exports request the current conversation's JSON pages from ChatGPT using your existing session. Markdown and text preserve code and TeX, apply your message selection and remove technical clutter by default. Their preview displays equations as TeX source. The complete JSON archive retains the original API pages without filtering. PDF captures ChatGPT's rendered page, including messages loaded by automatic scrolling, without requesting the conversation API itself. Preview the selected content, then use the browser's print dialog to save it as PDF. Attachment files are not downloaded.
 
 ![Local editor with an optical diagram](docs/store-assets/editor-1280x800.png)
 

@@ -11,7 +11,7 @@ function harness({firefox=false,fontLoad=async()=>[{}],url='chrome-extension://t
   const w=dom.window,calls=[],sent=[],requests=[],exports=[],canvasCalls=[];let bodyHeight=120;
   const css=w.document.createElement('style');css.textContent=fs.readFileSync(path.join(ROOT,'island.css'),'utf8');w.document.head.append(css);
   const channels=[];
-  w.MessageChannel=class{constructor(){this.port1={close(){this.closed=true;}};this.port2={};channels.push(this);}};
+  w.MessageChannel=class{constructor(){this.messages=[];this.port1={postMessage:data=>this.messages.push(data),close(){this.closed=true;}};this.port2={};channels.push(this);}};
   const parent={postMessage:(data,origin,ports)=>sent.push({data,origin,ports})};
   Object.defineProperty(w,'parent',{value:parent});
   w.ResizeObserver=class{constructor(callback){this.callback=callback;}observe(){}disconnect(){}};
@@ -417,4 +417,72 @@ test('font-embedded SVG retains native pt dimensions and translated viewBox',asy
   const xml=await h.exports.at(-1).blob.text();
   assert.match(xml,/width="160pt"/);assert.match(xml,/height="80pt"/);assert.match(xml,/viewBox="-72 -72 160 80"/);
   assert.ok(Math.abs(parseFloat(h.el('output').style.width)-160*4/3)<.001);
+});
+
+function snapshotHarness(){
+  const h=harness({url:'chrome-extension://test-id/island.html?parentOrigin=https%3A%2F%2Fchatgpt.com#test'});
+  h.portSend=data=>h.channels[0].port1.onmessage({data:{channel:'latex-islands',id:'test',source:'diagram',...data}});
+  h.snapshot=(extra={})=>h.portSend({type:'snapshot',requestId:'snapshot-1',...extra});
+  h.responses=()=>h.channels[0].messages.filter(message=>message.type==='snapshot-result');
+  return h;
+}
+
+test('PDF snapshot keeps native vector colors and dimensions, embedded fonts, and no viewport pan or zoom',async t=>{
+  const h=snapshotHarness();t.after(h.close);h.portSend({type:'render',theme:'dark',scale:2});
+  h.calls[0].resolve({ok:true,svg:'<svg xmlns="http://www.w3.org/2000/svg" width="160pt" height="80pt" viewBox="-72 -72 160 80"><text font-family="cmr10" fill="#ef0000">label</text></svg>'});await tick();
+  h.el('zoom-in').click();h.el('viewport').dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'ArrowRight'}));
+  h.snapshot();await tick();const result=h.responses()[0];
+  assert.equal(result.ok,true);assert.equal(result.source,'diagram');assert.ok(Math.abs(result.width-160*4/3)<1e-9);assert.ok(Math.abs(result.height-80*4/3)<1e-9);
+  assert.match(result.svg,/width="160pt"/);assert.match(result.svg,/viewBox="-72 -72 160 80"/);assert.match(result.svg,/data:font\/woff2;base64,QUJD/);
+  assert.match(result.svg,/fill="#ef0000"/);assert.doesNotMatch(result.svg,/invert\(|translate\(-50%|scale\(/);
+  assert.equal(h.sent.some(message=>message.data.type==='snapshot-result'||message.data.svg),false,'SVG is never exposed through window.postMessage');
+});
+
+test('window messages cannot request PDF snapshots or cancel an authenticated request',async t=>{
+  const h=snapshotHarness();t.after(h.close);h.portSend({type:'render'});h.calls[0].resolve({ok:true,svg:svg('private')});await tick();
+  h.send({type:'snapshot',requestId:'snapshot-1'});await tick();assert.equal(h.responses().length,0);assert.equal(h.requests.length,0);
+  let finish;h.w.fetch=()=>new Promise(resolve=>{finish=resolve;});h.snapshot();
+  h.send({type:'snapshot-cancel',requestId:'snapshot-1'});
+  finish({ok:true,arrayBuffer:async()=>new Uint8Array([65]).buffer});await tick();assert.equal(h.responses()[0].ok,true);
+});
+
+test('PDF snapshots report streaming, rendering, missing output, mismatched source and unapplied edits',async t=>{
+  for(const state of ['streaming','rendering','missing','source','edits']){
+    const h=snapshotHarness();t.after(h.close);
+    if(state==='streaming')h.portSend({type:'prepare'});
+    else h.portSend({type:'render',autoRender:state!=='missing'});
+    if(state==='source'||state==='edits'){h.calls[0].resolve({ok:true,svg:svg('ready')});await tick();}
+    if(state==='edits')h.el('source').value='unapplied source';
+    h.snapshot(state==='source'?{source:'wrong source'}:{});await tick();
+    assert.equal(h.responses().length,1);assert.equal(h.responses()[0].ok,false);
+    assert.match(h.responses()[0].error,/streaming|rendering|has not rendered|Update the diagram/);
+  }
+});
+
+test('PDF snapshots fail font embedding explicitly and retry failed font fetches',async t=>{
+  const h=snapshotHarness();t.after(h.close);h.portSend({type:'render'});h.calls[0].resolve({ok:true,svg:svg('font')});await tick();
+  h.w.fetch=async()=>({ok:false});h.snapshot();await tick();
+  assert.equal(h.responses()[0].ok,false);assert.match(h.responses()[0].error,/embed diagram font "cmr10"/);
+  h.w.fetch=async()=>({ok:true,arrayBuffer:async()=>new Uint8Array([65]).buffer});
+  h.snapshot({requestId:'snapshot-2'});await tick();assert.equal(h.responses()[1].ok,true);
+});
+
+test('PDF snapshots discard cancellation and page navigation, and reject source changes during font embedding',async t=>{
+  for(const change of ['cancel','navigation','source']){
+    const h=snapshotHarness();t.after(h.close);h.portSend({type:'render'});h.calls[0].resolve({ok:true,svg:svg('old')});await tick();
+    let finish;h.w.fetch=()=>new Promise(resolve=>{finish=resolve;});h.snapshot();
+    if(change==='cancel')h.portSend({type:'snapshot-cancel',requestId:'snapshot-1'});
+    if(change==='navigation')h.w.dispatchEvent(new h.w.Event('pagehide'));
+    if(change==='source')h.portSend({type:'render',source:'new'});
+    finish({ok:true,arrayBuffer:async()=>new Uint8Array([65]).buffer});await tick();
+    assert.equal(h.responses().some(message=>message.ok),false);
+    if(change==='source')assert.match(h.responses()[0].error,/changed during export/);
+    else assert.equal(h.responses().length,0);
+  }
+});
+
+test('PDF snapshots refuse oversized serialized vector data',async t=>{
+  const h=snapshotHarness();t.after(h.close);h.portSend({type:'render'});
+  h.calls[0].resolve({ok:true,svg:'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><desc>'+'x'.repeat(10*1024*1024)+'</desc></svg>'});await tick();
+  h.snapshot();await tick();assert.equal(h.responses()[0].ok,false);assert.match(h.responses()[0].error,/10 MB/);
 });
