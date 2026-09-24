@@ -28,6 +28,9 @@ jobs:
       - name: Verify first diagram paint with delayed fonts
         run: npm run test:fonts
         timeout-minutes: 1
+      - name: Verify rich PDF layout and diagram snapshots in Chromium
+        run: npm run test:pdf
+        timeout-minutes: 2
       - run: npm run build
       - name: Verify reproducible archives
         run: |

@@ -11,7 +11,7 @@ export const RUNTIME_FILES = [
   'docs/runtime-dependency-licenses.md', 'docs/extra-tex-packages.md', 'docs/cancel-compatibility.md', 'docs/euler-fonts.md', 'docs/licenses/OFL-1.1.txt', 'docs/licenses/LPPL-1.3c.txt', 'docs/licenses/Apache-2.0.txt',
   'background.js', 'compiler.js', 'content.css', 'content.js',
   'conversation-bridge.js', 'conversation-export.js', 'core.js',
-  'demo.html', 'demo.js', 'examples.js', 'export-core.js', 'export-preview-renderer.js',
+  'demo.html', 'demo.js', 'examples.js', 'export-core.js', 'export-preview-renderer.js', 'export-pdf.js',
   'island.css', 'island.html', 'island.js', 'native-controls.js', 'offscreen.html', 'offscreen.js',
   'popup.html', 'popup.js', 'ui.css',
   'vendor/tikzjax/core.dump.gz', 'vendor/tikzjax/tex.wasm.gz',

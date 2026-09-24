@@ -13,8 +13,9 @@ LaTeX Islands turns supported LaTeX code blocks in ChatGPT replies into interact
 - A standalone editor with examples and a monochrome interface. Follow ChatGPT's last observed theme, follow the system, or choose light/dark.
 - Theme-adapted diagram colors or original LaTeX colors on a white background, including exports.
 - Conversation export as Markdown, plain text or a complete JSON archive, with presets, individual content options and a Dialogue/File preview.
+- Rich PDF printing for the loaded conversation or one reply, with rendered equations and complete vector diagrams fitted to the page.
 
-The conversation exporter requests the current conversation's JSON pages from ChatGPT using your existing session. It preserves code and TeX in the transcript, removes technical clutter by default, and keeps the original API pages in JSON. Attachments are references, not embedded files. The export preview displays equations as TeX source.
+Markdown, text and JSON exports request the current conversation's JSON pages from ChatGPT using your existing session. They preserve code and TeX in the transcript, remove technical clutter by default, and keep the original API pages in JSON. Attachments are references, not embedded files. Their export preview displays equations as TeX source. PDF uses the content already loaded on the page and opens the browser's print dialog to save a clean copy with rendered math and diagrams.
 
 ![Local editor with an optical diagram](docs/store-assets/editor-1280x800.png)
 

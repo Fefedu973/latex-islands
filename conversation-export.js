@@ -9,6 +9,7 @@
   const defaults = {format:'md',includeUser:true,includeProgress:false,includeTools:false,includeAttachments:true,includeSources:true,timestamps:false};
   let preferences={...defaults}, preferencesTouched=false;
   let pending=null,running=false,canceled=false,lastFocus=null,tick=0,mountedId=null,snapshot=null,revision=0,snapshotRevision=-1,previewRequested=false;
+  let replyElement=null,pdfAbort=null,pdfDocument=null;
   const root=document.createElement('div');root.className='li-export';root.dataset.latexIslandsExport='true';
   function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text)node.textContent=text;return node;}
   function button(label,className){const node=element('button',className,label);node.type='button';return node;}
@@ -39,7 +40,7 @@
     dropdowns.set(select,globalThis.LatexIslandsNativeControls.enhanceSelect(select,{prefix:'li-export',labelledBy:caption.id}));
     return {wrapper,select};
   }
-  const {wrapper:formatField,select:format}=selectField('Format','li-export-format',[['md','Markdown (.md)'],['txt','Plain text (.txt)'],['json','Complete archive (.json)']]);
+  const {wrapper:formatField,select:format}=selectField('Format','li-export-format',[['md','Markdown (.md)'],['txt','Plain text (.txt)'],['json','Complete archive (.json)'],['pdf','PDF (.pdf)']]);
   const transcriptControls=element('fieldset','li-export-transcript');
   const {wrapper:presetField,select:preset}=selectField('Content','li-export-preset',[['dialogue','Conversation'],['detailed','Detailed context'],['answers','Answers only'],['custom','Custom']]);
   const extras=element('details','li-export-options');extras.open=true;
@@ -52,6 +53,9 @@
   transcriptControls.append(presetField,extras);
   const archiveNote=element('p','li-export-archive-note','All messages, metadata and pages received from ChatGPT, unfiltered.');archiveNote.hidden=true;
   controls.append(formatField,transcriptControls,archiveNote);
+  const pdfNote=element('p','li-export-pdf-note','Print the messages currently loaded on this page with their rich formatting and diagrams. Scroll to load older messages first. Choose Save as PDF in the print dialog.');pdfNote.hidden=true;
+  const pdfUserRow=element('label','li-export-option');pdfUserRow.hidden=true;
+  const pdfUser=element('input','li-export-switch');pdfUser.type='checkbox';pdfUser.id='li-export-pdf-include-user';pdfUser.setAttribute('role','switch');pdfUserRow.append(element('span','','Include my messages'),pdfUser);controls.append(pdfNote,pdfUserRow);
   const attachmentNote=element('p','li-export-detail','Images and files are referenced; their contents are not downloaded.');
   const status=element('p','li-export-status');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
   const previewBox=element('section','li-export-preview');previewBox.hidden=true;previewBox.setAttribute('aria-label','Export file preview');
@@ -81,10 +85,18 @@
   function options(){return Object.fromEntries(Object.entries(checks).map(([key,input])=>[key,input.checked]));}
   function guessedPreset(value){if(!value.includeUser)return value.includeProgress||value.includeTools?'custom':'answers';if(value.includeProgress&&value.includeTools)return 'detailed';if(!value.includeProgress&&!value.includeTools)return 'dialogue';return 'custom';}
   function applyPreferences(){
-    format.value=preferences.format;for(const [key,input]of Object.entries(checks))input.checked=preferences[key];preset.value=guessedPreset(preferences);for(const control of dropdowns.values())control.sync();updateFormat();
+    format.value=preferences.format;for(const [key,input]of Object.entries(checks))input.checked=preferences[key];pdfUser.checked=preferences.includeUser;preset.value=guessedPreset(preferences);for(const control of dropdowns.values())control.sync();updateFormat();
   }
   function updateFormat(){
-    const isJSON=format.value==='json';transcriptControls.hidden=isJSON;archiveNote.hidden=!isJSON;dialogueMode.disabled=isJSON;
+    const isJSON=format.value==='json',isPDF=format.value==='pdf';transcriptControls.hidden=isJSON||isPDF;archiveNote.hidden=!isJSON;dialogueMode.disabled=isJSON;
+    pdfUser.checked=checks.includeUser.checked;
+    pdfNote.hidden=!isPDF;pdfUserRow.hidden=!isPDF||!!replyElement;attachmentNote.hidden=isPDF;copy.hidden=isPDF;
+    pdfNote.textContent=replyElement?'Print this reply with its rich formatting and diagrams. Choose Save as PDF in the print dialog.':'Print the messages currently loaded on this page with their rich formatting and diagrams. Scroll to load older messages first. Choose Save as PDF in the print dialog.';
+    title.textContent=replyElement?'Export reply':'Export conversation';format.disabled=running||!!replyElement;dropdowns.get(format).sync();
+    for(const [node,label] of [[inspect,isPDF?'Print preview':'Preview'],[save,isPDF?'Save PDF':'Download']]){node.querySelector('.li-export-action-label').textContent=label;node.setAttribute('aria-label',label);}
+    emptyPreview.querySelector('strong').textContent=isPDF?'A clean, printable copy':'Your conversation, ready to save';
+    emptyPreview.querySelector('p').textContent=isPDF?'Headings, tables, equations and images keep their rendered appearance. Diagrams fit the page at their original proportions.':'Choose the content, then select Preview. Your options apply immediately to the conversation.';
+    if(isPDF){previewBox.hidden=true;emptyPreview.hidden=false;}
     if(previewRequested&&snapshot)updatePreview();
   }
   function remember(){
@@ -93,6 +105,7 @@
     if(previewRequested&&snapshot)updatePreview();
   }
   format.addEventListener('change',()=>{remember();updateFormat();});
+  pdfUser.addEventListener('change',()=>{checks.includeUser.checked=pdfUser.checked;remember();});
   preset.addEventListener('change',()=>{
     if(preset.value==='dialogue')Object.assign(preferences,{includeUser:true,includeProgress:false,includeTools:false});
     if(preset.value==='answers')Object.assign(preferences,{includeUser:false,includeProgress:false,includeTools:false});
@@ -103,18 +116,18 @@
   applyPreferences();
   try{Promise.resolve(extensionAPI?.storage?.local?.get({exportPreferences:defaults})).then(saved=>{
     if(preferencesTouched)return;const next=saved?.exportPreferences;if(!next)return;
-    for(const key of Object.keys(defaults)){if(key==='format'){if(['md','txt','json'].includes(next.format))preferences.format=next.format;}else if(typeof next[key]==='boolean')preferences[key]=next[key];}
+    for(const key of Object.keys(defaults)){if(key==='format'){if(['md','txt','json','pdf'].includes(next.format))preferences.format=next.format;}else if(typeof next[key]==='boolean')preferences[key]=next[key];}
     applyPreferences();
   }).catch(()=>{});}catch{}
 
   function show(open){
     hideTooltip();globalThis.LatexIslandsNativeControls.closeAll();
-    if(!open){if(running)cancelExport();try{panel.close?.();}catch{}snapshot=null;snapshotRevision=-1;previewRequested=false;previewBox.hidden=true;emptyPreview.hidden=false;status.textContent='';}
+    if(!open){if(running)cancelExport();try{panel.close?.();}catch{}snapshot=null;snapshotRevision=-1;previewRequested=false;previewBox.hidden=true;emptyPreview.hidden=false;status.textContent='';replyElement=null;pdfDocument?.dispose();pdfDocument=null;}
     panel.hidden=!open;toggle.setAttribute('aria-expanded',String(open));
-    if(open){lastFocus=document.activeElement;panel.showModal?.();dropdowns.get(format).trigger.focus();}
+    if(open){lastFocus=document.activeElement;updateFormat();panel.showModal?.();(replyElement?inspect:dropdowns.get(format).trigger).focus();}
     else if(lastFocus?.isConnected)lastFocus.focus();
   }
-  toggle.addEventListener('click',()=>show(panel.hidden));close.addEventListener('click',()=>show(false));
+  toggle.addEventListener('click',()=>{replyElement=null;show(panel.hidden);});close.addEventListener('click',()=>show(false));
   panel.addEventListener('cancel',event=>{event.preventDefault();show(false);});
   document.addEventListener('click',event=>{if(!panel.hidden&&!running&&!root.contains(event.target))show(false);});
   window.addEventListener('resize',hideTooltip);
@@ -127,7 +140,7 @@
       if(event.shiftKey&&document.activeElement===items[0]){event.preventDefault();items.at(-1)?.focus();}else if(!event.shiftKey&&document.activeElement===items.at(-1)){event.preventDefault();items[0]?.focus();}}
   });
   function release(type,requestId){window.postMessage({channel:CHANNEL,type,requestId:requestId||crypto.randomUUID()},location.origin);}
-  function cancelExport(){canceled=true;if(pending){release('cancel',pending.id);pending.reject(new Error('Export cancelled.'));}}
+  function cancelExport(){canceled=true;pdfAbort?.abort();if(pending){release('cancel',pending.id);pending.reject(new Error('Export cancelled.'));}}
   cancel.addEventListener('click',cancelExport);
   window.addEventListener('message',event=>{
     if(event.source!==window||event.origin!==location.origin||event.data?.channel!==CHANNEL||event.data.type!=='response'||!pending||event.data.requestId!==pending.id)return;
@@ -148,6 +161,7 @@
     return selectedFormat==='txt'?core.toText(archive,selectedOptions):core.toMarkdown(archive,selectedOptions);
   }
   function updatePreview(){
+    if(format.value==='pdf')return;
     if(!snapshot)return;
     const text=output(snapshot),isJSON=format.value==='json',transcript=isJSON?null:core.buildTranscript(snapshot,options());
     previewBox.hidden=false;emptyPreview.hidden=true;previewText.textContent=text.slice(0,visibleCharacters);
@@ -174,7 +188,7 @@
   dialogueMode.addEventListener('click',()=>{previewMode='dialogue';updatePreview();});fileMode.addEventListener('click',()=>{previewMode='file';updatePreview();});
   more.addEventListener('click',()=>{visibleEntries+=20;visibleCharacters+=50000;updatePreview();});
   function setBusy(value,action){
-    running=value;for(const node of [inspect,copy,save,format,preset,...Object.values(checks)])node.disabled=value;cancel.hidden=!value;
+    running=value;for(const node of [inspect,copy,save,format,preset,pdfUser,...Object.values(checks)])node.disabled=value;format.disabled=value||!!replyElement;cancel.hidden=!value;
     for(const node of Object.values(actionButtons)){
       const active=value&&node===actionButtons[action];
       node.setAttribute('aria-busy',String(active));node.querySelector('.li-export-button-spinner').hidden=!active;
@@ -188,6 +202,13 @@
     const actionFocus=document.activeElement;
     const selectedFormat=format.value,selectedOptions=options();setBusy(true,action);canceled=false;status.textContent='';status.dataset.state='loading';
     try{
+      if(selectedFormat==='pdf'){
+        if(!globalThis.LatexIslandsPDF)throw new Error('PDF export unavailable. Reload ChatGPT after updating the extension.');
+        pdfDocument?.dispose();pdfDocument=null;pdfAbort=new AbortController();
+        pdfDocument=await globalThis.LatexIslandsPDF.prepare({replyElement,includeUser:pdfUser.checked,signal:pdfAbort.signal});
+        if(canceled||core.conversationId(location.pathname)!==id){pdfDocument.dispose();pdfDocument=null;throw new Error('Export cancelled.');}
+        pdfDocument.print();status.dataset.state='success';status.textContent='Choose Save as PDF in the print dialog.';return;
+      }
       if(!snapshot||snapshotRevision!==revision){
         const startedRevision=revision;
         snapshot=await core.collectConversation({id,fetchJSON,onProgress(){
@@ -207,18 +228,24 @@
       }
       status.dataset.state='success';
     }catch(error){status.dataset.state='error';status.textContent=error.message||'Export failed.';}
-    finally{release('release');setBusy(false);if(!panel.hidden&&document.activeElement===document.body&&actionFocus?.isConnected)actionFocus.focus();}
+    finally{if(selectedFormat!=='pdf')release('release');pdfAbort=null;setBusy(false);if(!panel.hidden&&document.activeElement===document.body&&actionFocus?.isConnected)actionFocus.focus();}
   }
   inspect.addEventListener('click',()=>run('preview'));copy.addEventListener('click',()=>run('copy'));save.addEventListener('click',()=>run('download'));
   function mount(){
     tick=0;const id=core.conversationId(location.pathname);
     if(mountedId&&id!==mountedId){if(running)cancelExport();show(false);status.textContent='';snapshot=null;}
-    mountedId=id;if(!id){if(running)cancelExport();root.remove();return;}
+    mountedId=id;if(!id){if(running)cancelExport();root.remove();document.querySelectorAll('.li-export-reply').forEach(node=>node.remove());return;}
     const header=document.querySelector('#conversation-header-actions')||document.querySelector('[data-testid="thread-header-right-actions"], #conversation-header, [data-testid="conversation-header"], #page-header, main header, header');
     if(header&&!header.contains(root)){root.classList.remove('li-export-fallback');header.append(root);}else if(!header&&!root.isConnected&&document.body){root.classList.add('li-export-fallback');document.body.append(root);}
+    for(const reply of document.querySelectorAll('main [data-message-author-role="assistant"], [role="main"] [data-message-author-role="assistant"]')){
+      if(reply.closest('.li-pdf-root, .li-export')||reply.querySelector('.li-export-reply'))continue;
+      const action=button('PDF','li-export-reply');action.setAttribute('aria-label','Export this reply as PDF');
+      action.addEventListener('click',event=>{event.stopPropagation();if(running)return;replyElement=reply;format.value='pdf';preferencesTouched=true;pdfUser.checked=checks.includeUser.checked;show(true);});reply.append(action);
+    }
   }
   const observer=new MutationObserver(records=>{
-    const external=records.filter(record=>!root.contains(record.target));if(!external.length)return;
+    const own=node=>{const el=node.nodeType===1?node:node.parentElement;return !!el?.closest('.li-export, .li-export-reply, .li-pdf-root');};
+    const external=records.filter(record=>!own(record.target)&&!(record.type==='childList'&&[...record.addedNodes,...record.removedNodes].length&&[...record.addedNodes,...record.removedNodes].every(own)));if(!external.length)return;
     if(external.some(record=>{const el=record.target.nodeType===1?record.target:record.target.parentElement;return el&&!el.closest('.latex-islands-container')&&(el.closest('[data-message-author-role]')||[...record.addedNodes].some(node=>node.nodeType===1&&(node.matches('[data-message-author-role]')||node.querySelector('[data-message-author-role]'))));})){
       revision++;
       if(previewRequested&&snapshot&&!running){status.textContent='The conversation has changed. Refresh the preview; the next export will fetch the latest version.';status.dataset.state='stale';}
@@ -226,5 +253,5 @@
     if(!tick)tick=setTimeout(mount,250);
   });
   observer.observe(document.documentElement,{childList:true,subtree:true,characterData:true});
-  window.addEventListener('popstate',mount);window.addEventListener('pagehide',cancelExport);mount();
+  window.addEventListener('popstate',mount);window.addEventListener('pagehide',()=>{cancelExport();pdfDocument?.dispose();});mount();
 })();

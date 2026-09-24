@@ -11,6 +11,7 @@ npm ci
 npm test
 npm run test:engine
 npm run test:fonts
+npm run test:pdf
 npm run build
 npm run lint:firefox
 node tests/firefox-smoke.mjs
@@ -21,6 +22,15 @@ node tests/firefox-smoke.mjs
 The Firefox smoke test requires Firefox installed locally. Set `FIREFOX_BINARY` to its executable if it is not at the default location. It copies `dist/firefox` into a temporary directory, installs that copy into a new temporary profile, runs headless, then removes its own test directory. The test copy adds a localhost fixture origin and reporting instrumentation; the release package and personal browser profiles are not modified.
 
 The font regression test requires Chrome or Edge (`CHROME_BINARY` can override discovery). It opens an isolated headless profile, serves the production island with a synthetic cached compilation, and deliberately delays bundled WOFF2 responses. It verifies that the loading indicator remains until the required faces load, then compares diagram pixels before and after hover in dark, light and native color modes. Screenshots and a report remain in the temporary directory printed by the test; the browser profile is removed.
+
+## Rich PDF feature validation — 2026-09-24 (unreleased)
+
+- All 225 unit/integration tests passed. PDF cases cover rendered-message selection, safe rich content, private diagram snapshot ports, local edits, missing assets, stale sources, navigation, cancellation and cleanup.
+- The full offline engine suite and pinned TeX asset verification passed unchanged.
+- `npm run test:pdf` passed in Chrome 153.0.8010.53 on Windows using isolated synthetic conversations and the real TeX engine. Conversation and single-reply PDFs preserve native math, Mermaid HTML labels, tables, code, images and embedded diagram fonts. Wide diagrams fit the printable width; tall diagrams are proportionally capped at 180 mm. The tall single-reply fixture fits on one page. Every generated page was rendered with Poppler and visually inspected.
+- The existing first-paint font regression passed in dark, light and native color modes, with zero changed pixels after hover.
+- Chrome and Firefox packages built successfully. Firefox 156.0 temporary-extension smoke passed for rendering, shared worker, colors, popup and existing transcript export. Firefox lint has zero errors, zero notices and the existing desktop-unrelated Android minimum-version warning.
+- PDF printing itself was verified in Chrome, not Firefox. These checks use synthetic local pages and do not claim verification against an authenticated live ChatGPT session or a store release. PDF intentionally includes only the messages currently loaded on the page, like native printing.
 
 ## Release results — 2026-09-22 (1.4.3)
 

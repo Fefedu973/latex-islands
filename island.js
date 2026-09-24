@@ -4,6 +4,8 @@ const extensionAPI=globalThis.browser||globalThis.chrome;
 const $=id=>document.getElementById(id);
 const island=document.querySelector('.island'),viewport=$('viewport');
 let current=null,parentOrigin=null,version=0,svgNode=null,previewCompiler=null,busy=false,warmed=false;
+let renderedSource=null;
+const snapshotRequests=new Map(),MAX_SNAPSHOT=10*1024*1024;
 let viewMode='inline',editor=false,zoomValue=1,fitScale=1,panX=0,panY=0,naturalWidth=500,naturalHeight=260,drag=null;
 const ownOrigin=location.protocol+'//'+location.host;
 const allowedOrigins=new Set(['https://chatgpt.com','https://chat.openai.com',ownOrigin]);
@@ -102,7 +104,7 @@ function showError(message){
   setState('error','');
 }
 function clearOutput(){
-  svgNode=null;$('output').replaceChildren();setAvailable(false);clearError();$('warning').hidden=true;
+  svgNode=null;renderedSource=null;$('output').replaceChildren();setAvailable(false);clearError();$('warning').hidden=true;
 }
 const lengthPx=value=>{
   const m=String(value||'').match(/^([\d.]+)(pt|px|cm|mm|in)?$/);
@@ -179,7 +181,7 @@ async function render(){
     const rendered=cleanSVG(result.svg);
     await loadSVGFonts(rendered);
     if(mine!==version)return;
-    svgNode=rendered;$('output').replaceChildren(svgNode);
+    svgNode=rendered;renderedSource=source;$('output').replaceChildren(svgNode);
     const size=dimensions(svgNode);naturalWidth=size.width;naturalHeight=size.height;
     $('output').style.width=naturalWidth+'px';$('output').style.height=naturalHeight+'px';
     panX=panY=0;fit();setAvailable(true);setState('ready','');
@@ -304,19 +306,23 @@ $('copy-source').addEventListener('click',copySource);$('copy-header').addEventL
 const fontCache=new Map();
 async function fontData(family){
   if(!fontCache.has(family))fontCache.set(family,(async()=>{
-    const response=await fetch('vendor/tikzjax/fonts/'+family+'.woff2');if(!response.ok)return '';
+    const response=await fetch('vendor/tikzjax/fonts/'+family+'.woff2');if(!response.ok)throw new Error('Font unavailable');
     const bytes=new Uint8Array(await response.arrayBuffer());let binary='';for(const b of bytes)binary+=String.fromCharCode(b);
     return "@font-face{font-family:'"+family+"';src:url(data:font/woff2;base64,"+btoa(binary)+") format('woff2');}";
   })().catch(()=>{fontCache.delete(family);return '';}));
   return fontCache.get(family);
 }
-async function exportSVG(){
+async function exportSVG({strictFonts=false}={}){
   if(!svgNode)return null;
   const clone=svgNode.cloneNode(true),size=dimensions(svgNode);
   // Pan/zoom belongs to the HTML wrapper; retain the SVG's own visual styles.
   clone.removeAttribute('data-width');
   if(!clone.hasAttribute('viewBox'))clone.setAttribute('viewBox','0 0 '+size.width+' '+size.height);
-  const css=(await Promise.all([...svgFontFamilies(clone)].map(fontData))).join('');
+  const css=(await Promise.all([...svgFontFamilies(clone)].map(async family=>{
+    const data=await fontData(family);
+    if(!data&&strictFonts)throw new Error('Could not embed diagram font "'+family+'". Reload the diagram and try exporting again.');
+    return data;
+  }))).join('');
   if(css){const style=document.createElementNS('http://www.w3.org/2000/svg','style');style.textContent=css;clone.prepend(style);}
   return {blob:new Blob([new XMLSerializer().serializeToString(clone)],{type:'image/svg+xml;charset=utf-8'}),...size};
 }
@@ -355,13 +361,47 @@ $('png-header').addEventListener('click',()=>download('png'));
 // this document if the iframe reloads; no message is sent to an about:blank window.
 const requestedParentOrigin=new URL(location.href).searchParams.get('parentOrigin');
 let parentChannel=null;
+async function snapshotDiagram(message,channel){
+  const {requestId,source}=message;
+  if(typeof requestId!=='string'||!/^snapshot-\d+$/.test(requestId)||typeof source!=='string'||source.length>60000||snapshotRequests.has(requestId))return;
+  const request={channel,version,node:svgNode,source};snapshotRequests.set(requestId,request);
+  const active=()=>snapshotRequests.get(requestId)===request&&parentChannel===channel;
+  const changed=()=>current?.id!==message.id||current?.source!==source||renderedSource!==source||version!==request.version||svgNode!==request.node||$('source').value!==source;
+  try{
+    if(current?.streaming)throw new Error('The diagram is still streaming. Wait for the response to finish, then export again.');
+    if(busy)throw new Error('The diagram is still rendering. Wait for it to finish, then export again.');
+    if(!svgNode)throw new Error('A diagram has not rendered. Use Render diagram or Retry, then export again.');
+    if(changed())throw new Error('The diagram has changed or has unapplied edits. Update the diagram, then export again.');
+    const exported=await exportSVG({strictFonts:true});
+    if(!active())return;
+    if(busy||current?.streaming||changed())throw new Error('The diagram changed during export. Wait for the latest render, then export again.');
+    if(!exported||exported.blob.size>MAX_SNAPSHOT)throw new Error('The diagram exceeds the 10 MB PDF export limit.');
+    const svg=await exported.blob.text();
+    if(!active())return;
+    if(busy||current?.streaming||changed())throw new Error('The diagram changed during export. Wait for the latest render, then export again.');
+    channel.port1.postMessage({channel:'latex-islands',type:'snapshot-result',id:message.id,requestId,source,ok:true,svg,width:exported.width,height:exported.height});
+  }catch(error){
+    if(active())channel.port1.postMessage({channel:'latex-islands',type:'snapshot-result',id:message.id,requestId,source,ok:false,error:error.message});
+  }finally{if(snapshotRequests.get(requestId)===request)snapshotRequests.delete(requestId);}
+}
 function connectToParent(){
   if(parent===window || !allowedOrigins.has(requestedParentOrigin) || location.hash.length<2)return;
   const id=decodeURIComponent(location.hash.slice(1)),channel=new MessageChannel();
-  parentChannel?.port1.close();parentChannel=channel;
-  channel.port1.onmessage=event=>{if(event.data?.id===id)receive(event.data,requestedParentOrigin);};
+  snapshotRequests.clear();parentChannel?.port1.close();parentChannel=channel;
+  channel.port1.onmessage=event=>{
+    const message=event.data;
+    if(parentChannel!==channel||message?.channel!=='latex-islands'||message.id!==id)return;
+    // Snapshot responses never cross the public window message channel. Only
+    // the content script holding this document's transferred port can request them.
+    if(message.type==='snapshot') {snapshotDiagram(message,channel);return;}
+    if(message.type==='snapshot-cancel') {snapshotRequests.delete(message.requestId);return;}
+    receive(message,requestedParentOrigin);
+  };
   parent.postMessage({channel:'latex-islands',type:'ready',id},requestedParentOrigin,[channel.port2]);
 }
 connectToParent();
-window.addEventListener('pagehide',()=>{parentChannel?.port1.close();parentChannel=null;});
+window.addEventListener('pagehide',()=>{
+  if(parentChannel){parentChannel.port1.postMessage({channel:'latex-islands',type:'snapshot-unavailable',id:current?.id||decodeURIComponent(location.hash.slice(1))});parentChannel.port1.close();}
+  snapshotRequests.clear();parentChannel=null;
+});
 window.addEventListener('pageshow',event=>{if(event.persisted)connectToParent();});

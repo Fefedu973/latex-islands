@@ -1,6 +1,6 @@
-# Export a ChatGPT conversation — v1.4.2
+# Export a ChatGPT conversation
 
-The **Export conversation** button in the header of a saved conversation opens a window with two panels: settings and preview. The export retrieves ChatGPT's JSON data instead of reconstructing the conversation from the text displayed on the page.
+The **Export conversation** button in the header of a saved conversation opens a window with two panels: settings and preview. Markdown, text and JSON exports retrieve ChatGPT's saved data. PDF prints the rich content currently loaded on the page.
 
 ## Choose content and format
 
@@ -9,6 +9,17 @@ The **Export conversation** button in the header of a saved conversation opens a
 | **Markdown (.md)** | A readable transcript with user messages, ChatGPT replies, code and TeX, without repeating technical JSON under each message. |
 | **Plain text (.txt)** | The same message selection, with common Markdown formatting removed. Code and TeX expressions are preserved. |
 | **Complete archive (.json)** | Every JSON page received, its metadata and a combined message list. Transcript options do not filter this archive. |
+| **PDF (.pdf)** | A clean printable copy of loaded messages, with rendered equations, tables, code, images and LaTeX Islands diagrams. |
+
+## Save a rich PDF
+
+Select **PDF (.pdf)**, then **Print preview** or **Save PDF**. Choose **Save as PDF** in the browser's print dialog. The **PDF** button below an assistant reply exports just that reply. For a conversation, **Include my messages** controls whether user messages are printed.
+
+PDF works like printing the current page: only messages loaded into the page are included. Scroll to load older messages before exporting a long conversation. It does not fetch the conversation API or reconstruct missing messages. The print copy removes navigation, composers and action buttons, uses a light background with page margins, wraps code, and preserves the page's rendered math and rich content. Browser print settings control paper size and optional browser headers and footers.
+
+Diagrams are exported as complete vector SVGs with embedded fonts, using their intrinsic proportions and fitting within the page. Preview pan and zoom do not affect their size or crop the drawing. Updated local diagram edits are included. Finish generating replies, render every diagram and apply pending editor changes before exporting; the extension reports unavailable diagrams instead of silently leaving them out.
+
+The browser loads the existing page's image resources as needed for the print copy. PDF does not download attachment files or make hidden tools and collapsed interactive content printable. The temporary print copy is removed after printing or cancellation.
 
 For Markdown and plain text, the **Content** menu offers three presets: **Conversation**, **Detailed context** and **Answers only**. Under **Customize transcript**, you can choose each option separately:
 
@@ -46,7 +57,7 @@ The paginated format covers the current conversation exposed by the server. It c
 
 Messages in the paginated format keep the server's order. Parent and turn IDs may be incomplete or reused, so they are not used to arbitrarily reconstruct the conversation. The JSON archive is the reference for structure, unknown fields, media resources and the different message copies received.
 
-A reply that is still being generated may change after export. Local edits in the extension's TikZ editor do not change the messages saved by ChatGPT and are therefore not part of this export.
+A reply that is still being generated may change after a transcript export. Local edits in the extension's TikZ editor do not change the messages saved by ChatGPT and are therefore not part of Markdown, text or JSON exports. PDF includes the current successfully rendered diagram instead.
 
 ## How retrieval works
 
@@ -66,6 +77,7 @@ Each bridge request times out after 45 seconds, and retrieval is limited to 500 
 
 ```powershell
 node --test tests/export.test.cjs tests/export-bridge.test.cjs tests/export-ui.test.cjs
+npm run test:pdf
 ```
 
 The fixtures are synthetic. They check pagination and its failure cases, preservation of pages and metadata, transcript filters, attachments, citations, code and TeX, fallback to the older format, bridge restrictions, token isolation, cancellation and navigation.

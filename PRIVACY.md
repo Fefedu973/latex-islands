@@ -13,7 +13,9 @@ LaTeX Islands is an independent browser extension maintained through [Fefedu973/
 
 ## Network requests for conversation export
 
-Selecting **Preview**, **Copy** or **Download** can request the current conversation's JSON pages from the same ChatGPT origin as the open tab. Requests contain the conversation identifier and pagination cursor, use your existing session cookies, and expose ordinary request information such as IP address to ChatGPT.
+PDF export makes a temporary printable copy of messages already loaded on the page. It does not request ChatGPT's conversation API. It includes rendered images and receives vector diagrams with embedded fonts from the extension's local renderer. The browser may load the page's existing image resources for printing. The copy stays in the current tab and is removed after printing or cancellation; the browser's print dialog controls saving the PDF.
+
+For Markdown, text and JSON, selecting **Preview**, **Copy** or **Download** can request the current conversation's JSON pages from the same ChatGPT origin as the open tab. Requests contain the conversation identifier and pagination cursor, use your existing session cookies, and expose ordinary request information such as IP address to ChatGPT.
 
 If a conversation request returns HTTP 401, the page-side bridge can read ChatGPT's `/api/auth/session` endpoint and retry with its session token. The token stays in the bridge's memory and is cleared at completion or cancellation. It is not sent to the isolated content script, saved in extension storage or added to the exported file.
 
@@ -31,7 +33,7 @@ When you request it, the extension writes the selected transcript or archive to 
 
 The Firefox package requests `clipboardWrite` so your Copy action can complete after asynchronous conversation retrieval. It does not request clipboard-read access or inspect existing clipboard contents.
 
-The preview does not automatically fetch remote images or attachment links. Opening a link is a separate browser action and contacts that destination. Files you download and anything you subsequently share are outside extension storage.
+The Markdown/text transcript preview does not automatically fetch remote images or attachment links. PDF uses the loaded page's rendered images as described above. Opening a link is a separate browser action and contacts that destination. Files you download and anything you subsequently share are outside extension storage.
 
 ## Control and deletion
 

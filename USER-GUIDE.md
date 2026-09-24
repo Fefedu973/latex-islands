@@ -42,7 +42,7 @@ The preview follows the conversation's colors and provides:
 
 PNG output matches the preview's appearance. SVG output preserves the vector drawing and embeds the fonts it uses. Downloads contain the entire diagram, regardless of the preview's pan position. **LaTeX colors · white background** preserves the drawing's original colors and includes a white background in PNG and SVG exports.
 
-Edits in the integrated editor remain an in-memory draft in the extension: they do not change the ChatGPT message or any request sent to the model. Copy the code to keep this draft. Reloading the page discards it; a source change from ChatGPT replaces it. Conversation export retrieves the source saved by ChatGPT, not this local draft.
+Edits in the integrated editor remain an in-memory draft in the extension: they do not change the ChatGPT message or any request sent to the model. Copy the code to keep this draft. Reloading the page discards it; a source change from ChatGPT replaces it. Markdown, text and JSON exports retrieve the source saved by ChatGPT. PDF includes the current successfully rendered diagram.
 
 The popup provides **Enable in ChatGPT** to enable diagrams, **Automatic rendering** to render them automatically and **Initial zoom** to set their starting size. **Open editor** opens a full page with examples, code, a preview and compilation through **Compile** or **Ctrl / ⌘ + Enter**. When automatic rendering is disabled, use **Render diagram** in the integrated preview.
 
@@ -66,17 +66,20 @@ Detection also covers the currently observed ChatGPT structure, where a block co
 
 ## Exporting a conversation
 
-The **Export conversation** button added to a saved conversation's header opens a dialog with settings on the left and a preview on the right. Three formats are available:
+The **Export conversation** button added to a saved conversation's header opens a dialog with settings on the left and a preview on the right. Four formats are available:
 
 - **Markdown (.md)**: a readable transcript with user messages and ChatGPT replies, without repeated technical JSON; code and TeX are preserved;
 - **Plain text (.txt)**: the same content with common Markdown formatting removed, while preserving code and TeX expressions;
 - **Complete archive (.json)**: all retrieved API responses, their fields and metadata, plus a combined message list, without applying transcript filters.
+- **PDF (.pdf)**: print the messages loaded on the page with rendered equations, tables, images and LaTeX Islands. Select **Save PDF**, then **Save as PDF** in the browser dialog. The **PDF** button below an assistant reply prints just that reply.
+
+PDF keeps diagram proportions, embeds their fonts, and fits the complete vector drawing to the paper independently of preview zoom or pan. It includes successfully rendered local edits. Scroll to load older messages before exporting the conversation, and finish rendering diagrams and applying edits first. PDF reports missing diagrams rather than omitting them. Transcript options below apply to Markdown and text; PDF has its own **Include my messages** switch.
 
 Choose **Conversation**, **Detailed context** or **Answers only** under **Content**, or adjust the six options under **Customize transcript**: your messages, attachments, sources and citations, timestamps, intermediate steps, and tool calls and results. Transcript options do not remove any data from the JSON archive.
 
 Click **Preview** to retrieve the conversation. The **Conversation** view displays readable messages; **File** displays the exported content. Formulas remain TeX source, without mathematical typesetting in the preview. The initial display contains up to 20 messages or 50,000 characters; **Show more** continues it. **Copy** and **Download** always use the entire file. Options update the preview without fetching the conversation again; if it changes, a message prompts you to refresh it.
 
-Export retrieves every conversation page from ChatGPT instead of copying the text visible on the page. Retrieval must succeed before a file is downloaded; errors and cancellations do not produce an export presented as complete. The default view omits internal context and technical messages while preserving references to generated images.
+Markdown, text and JSON retrieve every conversation page from ChatGPT instead of copying the text visible on the page. Retrieval must succeed before a file is downloaded; errors and cancellations do not produce an export presented as complete. The default view omits internal context and technical messages while preserving references to generated images. PDF prints the currently loaded page content without requesting the conversation API.
 
 Attachments remain references and metadata: their binary files are not downloaded. Older branches or versions absent from the server responses cannot be reconstructed. JSON is the most complete format; Markdown prioritizes readability. ChatGPT's internal API has no stability guarantee, and site changes may require an update. See [EXPORT.md](EXPORT.md).
 
@@ -97,7 +100,7 @@ TikZ code must be present in the reply's accessible content. For a diagram writt
 ## Privacy and operation
 
 - **Compilation** stays on your device, using the bundled engine and fonts. It uses the extension's local resources and no remote compilation service.
-- **Export**, triggered by **Preview**, **Copy** or **Download**, makes read requests to ChatGPT using the tab's session. Choosing a format or changing an option does not trigger a network request. Any authentication token stays in memory and is neither saved nor included in the exported file. No transfer to a third-party service is added.
+- **Markdown, text and JSON export**, triggered by **Preview**, **Copy** or **Download**, makes read requests to ChatGPT using the tab's session. Choosing a format or changing an option does not trigger a network request. Any authentication token stays in memory and is neither saved nor included in the exported file. No transfer to a third-party service is added. **PDF** prints the rendered page without fetching conversation data; the browser may load existing image resources for the print copy.
 - Conversation code, drafts and the cache are not stored in settings. Export preferences and the last observed ChatGPT theme are saved locally. The standalone editor saves its last source locally.
 - Diagrams are detected in assistant replies on `chatgpt.com` and `chat.openai.com`. The input field, user messages and already rendered formulas are not reprocessed.
 - `storage` saves preferences. Chrome also uses `offscreen` for the shared engine; Firefox uses its background page and `clipboardWrite` to finish copying after an asynchronous fetch, without reading the clipboard. Site access is limited to ChatGPT domains. Firefox declares the authentication and browsing activity data needed for export requests to ChatGPT.

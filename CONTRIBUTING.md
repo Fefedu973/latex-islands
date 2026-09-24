@@ -10,11 +10,12 @@ Use Node.js 22 or newer and npm:
 npm ci
 npm test
 npm run test:engine
+npm run test:pdf
 npm run build
 npm run lint:firefox
 ```
 
-`npm test` uses synthetic fixtures. Engine tests run the bundled TeX WebAssembly, including error recovery and timeout behavior. `npm run build` writes unpacked Chrome/Firefox directories and distribution/source ZIPs under `dist/`. See [README.md](README.md) for loading these locally.
+`npm test` uses synthetic fixtures. Engine tests run the bundled TeX WebAssembly, including error recovery and timeout behavior. `npm run test:pdf` uses a local Chrome/Chromium or Edge installation with an isolated profile to validate rich printing and real diagram snapshots; set `CHROME_BINARY` if it is not in a standard location. `npm run build` writes unpacked Chrome/Firefox directories and distribution/source ZIPs under `dist/`. See [README.md](README.md) for loading these locally.
 
 For visual checks, `node tests/preview-server.cjs` serves local test pages. Use synthetic conversations and the included examples. Production extension files must not depend on these test adapters.
 

@@ -8,6 +8,7 @@
     "test": "node --test tests/core.test.cjs tests/content.test.cjs tests/island.test.cjs tests/runtime.test.cjs tests/ui.test.cjs tests/export*.test.cjs tests/build*.test.cjs tests/firefox*.test.cjs",
     "test:engine": "node -e \"require('node:fs').mkdirSync('tests/engine-fixtures',{recursive:true})\" && node tests/engine.test.cjs && node tests/compiler.test.cjs && node tests/cancel-engine.test.cjs && node tests/euler-engine.test.cjs",
     "test:fonts": "node tests/font-render.browser.cjs",
+    "test:pdf": "node tests/pdf-print.browser.cjs",
     "build": "node scripts/build.mjs",
     "pack:crx": "node scripts/pack-crx.mjs",
     "lint:firefox": "web-ext lint --source-dir dist/firefox --no-config-discovery --no-input"

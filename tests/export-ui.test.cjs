@@ -142,7 +142,7 @@ test('custom format listbox supports arrows, typeahead, selection and Escape wit
   assert.equal(h.get('#li-export-format').hidden,true);assert.equal(h.w.document.activeElement,trigger);
   key('ArrowDown');assert.equal(menu.hidden,false);assert.equal(trigger.getAttribute('aria-expanded'),'true');
   assert.equal(h.get('#li-export-format-option-0').getAttribute('aria-selected'),'true');
-  key('End');assert.equal(trigger.getAttribute('aria-activedescendant'),'li-export-format-option-2');
+  key('End');assert.equal(trigger.getAttribute('aria-activedescendant'),'li-export-format-option-3');
   key('Escape');assert.equal(menu.hidden,true);assert.equal(h.get('.li-export-panel').hidden,false);assert.equal(h.get('#li-export-format').value,'md');
   key('p');assert.equal(trigger.getAttribute('aria-activedescendant'),'li-export-format-option-1');key('Enter');
   assert.equal(h.get('#li-export-format').value,'txt');assert.equal(trigger.querySelector('.li-export-select-value').textContent,'Plain text (.txt)');
@@ -178,4 +178,49 @@ test('header tooltip replaces native title and closes when the export dialog ope
   h.w.document.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(tooltip.hidden,true);
   toggle.dispatchEvent(new h.w.Event('pointerleave'));assert.equal(tooltip.hidden,true);
   toggle.focus();toggle.click();await new Promise(resolve=>setTimeout(resolve,330));assert.equal(tooltip.hidden,true);assert.equal(h.get('.li-export-panel').hidden,false);
+});
+
+test('PDF uses rendered page content and native print, without fetching or copying a transcript',async t=>{
+  const h=harness();t.after(h.close);const calls=[];let prints=0,disposed=0;
+  h.w.LatexIslandsPDF={prepare:async settings=>{calls.push(settings);return {print(){prints++;},dispose(){disposed++;}};}};
+  h.get('.li-export-toggle').click();h.format('pdf');
+  assert.equal(h.get('.li-export-copy').hidden,true);
+  assert.equal(h.get('.li-export-transcript').hidden,true);
+  assert.equal(h.get('.li-export-save').getAttribute('aria-label'),'Save PDF');
+  assert.equal(h.get('.li-export-inspect').getAttribute('aria-label'),'Print preview');
+  assert.match(h.get('.li-export-pdf-note').textContent,/currently loaded/);
+  h.change('#li-export-pdf-include-user',false);h.get('.li-export-save').click();await h.settle();
+  assert.equal(calls.length,1);assert.equal(calls[0].replyElement,null);assert.equal(calls[0].includeUser,false);assert.equal(prints,1);
+  assert.equal(h.sent.length,0);assert.equal(h.downloads.length,0);assert.equal(h.copied.length,0);
+  assert.match(h.get('.li-export-status').textContent,/Choose Save as PDF/);
+  h.get('.li-export-close').click();assert.equal(disposed,1);
+  h.get('.li-export-toggle').click();h.format('md');assert.equal(h.get('.li-export-copy').hidden,false);assert.equal(h.get('.li-export-save').getAttribute('aria-label'),'Download');
+});
+
+test('each reply has one PDF action which exports that reply and restores conversation scope on header open',async t=>{
+  const h=harness();t.after(h.close);const calls=[];
+  h.w.LatexIslandsPDF={prepare:async settings=>{calls.push(settings);return {print(){},dispose(){}};}};
+  const reply=h.get('main article'),action=h.get('.li-export-reply');assert.ok(action);assert.equal(action.getAttribute('aria-label'),'Export this reply as PDF');
+  action.click();assert.equal(h.get('#li-export-format').value,'pdf');assert.equal(h.get('#li-export-format').disabled,true);assert.equal(h.get('#li-export-title').textContent,'Export reply');
+  assert.equal(h.get('#li-export-pdf-include-user').parentElement.hidden,true);
+  h.get('.li-export-inspect').click();await h.settle();assert.equal(calls[0].replyElement,reply);assert.equal(h.sent.length,0);
+  h.get('.li-export-close').click();h.get('.li-export-toggle').click();assert.equal(h.get('#li-export-title').textContent,'Export conversation');assert.equal(h.get('#li-export-format').disabled,false);
+  h.get('.li-export-save').click();await h.settle();assert.equal(calls[1].replyElement,null);
+  assert.equal(h.w.document.querySelectorAll('.li-export-reply').length,1);
+});
+
+test('PDF cancellation, navigation and missing assets never start printing',async t=>{
+  for(const mode of ['cancel','navigate','assets']){
+    const h=harness();t.after(h.close);let prints=0,resolve;
+    h.w.LatexIslandsPDF={prepare:({signal})=>new Promise((done,reject)=>{resolve=()=>done({print(){prints++;},dispose(){}});signal.addEventListener('abort',()=>reject(new Error('Export cancelled.')),{once:true});if(mode==='assets')reject(new Error('Render the diagram before exporting.'));})};
+    h.format('pdf');h.get('.li-export-save').click();
+    if(mode==='cancel')h.get('.li-export-cancel').click();
+    if(mode==='navigate'){h.w.history.pushState({},'','/c/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');resolve();}
+    await h.settle();assert.equal(prints,0);assert.equal(h.get('.li-export-status').dataset.state,'error');assert.equal(h.get('.li-export-save').disabled,false);assert.equal(h.sent.length,0);
+  }
+});
+
+test('saved PDF preferences restore without network activity',async t=>{
+  const h=harness(null,'/c/'+ID,{exportPreferences:{format:'pdf',includeUser:false}});t.after(h.close);await h.settle();
+  assert.equal(h.get('#li-export-format').value,'pdf');assert.equal(h.get('#li-export-pdf-include-user').checked,false);assert.equal(h.get('.li-export-copy').hidden,true);assert.equal(h.sent.length,0);
 });

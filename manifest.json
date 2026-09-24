@@ -4,7 +4,7 @@
   "version": "1.4.3",
   "homepage_url": "https://github.com/Fefedu973/latex-islands",
   "minimum_chrome_version": "116",
-  "description": "Render TikZ diagrams locally in ChatGPT and export conversations as Markdown, text or JSON with a configurable preview.",
+  "description": "Render TikZ locally in ChatGPT. Export conversations as rich PDF, Markdown, text or JSON with a configurable preview.",
   "permissions": [
     "storage",
     "offscreen"
@@ -50,6 +50,7 @@
         "export-preview-renderer.js",
         "native-controls.js",
         "content.js",
+        "export-pdf.js",
         "conversation-export.js"
       ],
       "css": [
