@@ -1,4 +1,4 @@
-# Reviewer build and runtime provenance — 1.4.3
+# Reviewer build and runtime provenance — 1.5.0
 
 ## Extension packages
 
@@ -9,13 +9,16 @@ npm ci
 node scripts/vendor-tex-packages.mjs --check
 npm test
 npm run test:engine
+npm run test:pdf
 npm run build
 npm run lint:firefox
 ```
 
 `npm ci` installs development/test/packaging dependencies from the locked npm dependency set. These tools are not installed or downloaded by the running extension.
 
-Build outputs are `dist/chrome/`, `dist/firefox/`, `dist/latex-islands-chrome-1.4.3.zip`, `dist/latex-islands-firefox-1.4.3.zip`, and `dist/latex-islands-source-1.4.3.zip`. Browser ZIPs have `manifest.json` at their root. The source ZIP includes first-party code, scripts, tests, lockfiles, notices, readable worker modifications and the upstream archives listed below. The build does not recompile the upstream TeX toolchain.
+Build outputs are `dist/chrome/`, `dist/firefox/`, `dist/latex-islands-chrome-1.5.0.zip`, `dist/latex-islands-firefox-1.5.0.zip`, and `dist/latex-islands-source-1.5.0.zip`. Browser ZIPs have `manifest.json` at their root. The source ZIP includes first-party code, scripts, tests, lockfiles, notices, readable worker modifications and the upstream archives listed below. The build does not recompile the upstream TeX toolchain.
+
+Version 1.5.0 adds rendered-page PDF export and message selection without new runtime dependencies or permissions. PDF scrolls the current conversation to let the site load earlier messages, keeps sanitized rich-content snapshots in memory, and opens the browser's print dialog only when requested. It does not use the conversation API bridge. Markdown and text use that bridge and apply message selection; the complete JSON archive remains unfiltered. See [export details](../EXPORT.md) and [validation results](../VALIDATION.md).
 
 ## Bundled upstream inputs
 

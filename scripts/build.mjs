@@ -50,6 +50,9 @@ async function listFiles(root, directory, accept, optional=false) {
   const result = [];
   for (const entry of entries) {
     const name = directory+'/'+entry.name;
+    // Browser/engine tests write local HTML and JS here as well as images.
+    // None of those generated results belongs in the reproducible source ZIP.
+    if (name === 'tests/engine-fixtures') continue;
     if (entry.isSymbolicLink()) throw Error('Symlink not permitted in a build: '+name);
     if (entry.isDirectory()) result.push(...await listFiles(root,name,accept));
     else if (entry.isFile() && accept(name)) result.push(name);

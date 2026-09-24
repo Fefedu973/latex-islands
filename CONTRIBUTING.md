@@ -25,6 +25,8 @@ Include reproduction steps, browser/version, expected behavior and a minimal dia
 
 Use actual TeX and browser checks for rendering changes; a passing DOM test alone does not prove engine or browser integration. Document any verification you could not perform. Do not claim store approval from local linting.
 
+For export changes, cover single and nonconsecutive message selections, prompts-only and answers-only modes, empty selections, and the unfiltered JSON archive. PDF fixtures should exercise older messages loaded by scrolling, messages removed from the live DOM after capture, cancellation and scroll restoration. Preserve rendered page content and keep PDF independent of the conversation API. Inspect generated PDF pages as well as their extracted text.
+
 ## Runtime and distribution changes
 
 First-party JavaScript is shipped as source. The bundled TeX worker is an upstream Webpack artifact with documented local hardening changes. Keep its readable sources, patch script, notices, hashes and corresponding source material together. [Reviewer build notes](docs/reviewer-build.md) explain the current reproduction boundary.

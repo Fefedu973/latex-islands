@@ -13,7 +13,20 @@ function harness(t,html='<main><article data-message-author-role="user">Question
   w.fetch=()=>{throw Error('PDF must not fetch conversation data');};
   const prints=[];w.print=()=>prints.push(doc.body.className);
   w.eval(SCRIPT);t.after(()=>w.close());
-  return {w,doc,prints,prepare:options=>w.LatexIslandsPDF.prepare(options),get:selector=>doc.querySelector(selector)};
+  return {w,doc,prints,collect:options=>w.LatexIslandsPDF.collect(options),prepare:options=>w.LatexIslandsPDF.prepare(options),get:selector=>doc.querySelector(selector)};
+}
+
+function fastCollection(h, virtualClock=false) {
+  const timer=h.w.setTimeout.bind(h.w);let now=1000;
+  if(virtualClock)h.w.Date.now=()=>now;
+  h.w.setTimeout=(callback,ms,...args)=>timer(()=>{if(virtualClock&&ms===120)now+=ms;callback(...args);},ms===120||ms===150?0:ms);
+}
+
+function scrollFixture(h,{height=1200,viewport=450,start=500,render=()=>{}}={}) {
+  const scroller=h.get('#scroll');let top=start;const positions=[];
+  Object.defineProperties(scroller,{scrollHeight:{configurable:true,get:()=>typeof height==='function'?height():height},clientHeight:{get:()=>viewport},scrollTop:{get:()=>top,set:value=>{top=value;}}});
+  scroller.scrollTo=({top:next})=>{top=Math.max(0,Math.min(next,scroller.scrollHeight-viewport));positions.push(top);render(top);};
+  render(top);return {scroller,positions,get top(){return top;}};
 }
 
 test('captures only current main messages in order without backend access or UI',async t=>{
@@ -200,4 +213,130 @@ test('separately prepared exports cannot hide or print each other',async t=>{
   const h=harness(t),first=await h.prepare(),second=await h.prepare();t.after(first.dispose);t.after(second.dispose);
   first.print();assert.equal(first.root.classList.contains('li-pdf-active'),true);assert.equal(second.root.classList.contains('li-pdf-active'),false);assert.throws(()=>second.print(),/already open/);
   h.w.dispatchEvent(new h.w.Event('afterprint'));assert.ok(second.root.isConnected);second.print();assert.equal(h.prints.length,2);h.w.dispatchEvent(new h.w.Event('afterprint'));
+});
+
+test('frozen captures support all, none, arbitrary ordered choices and role filters after DOM removal',async t=>{
+  const h=harness(t,'<main><article data-message-id="u1" data-message-author-role="user">First prompt</article><article data-message-id="a1" data-message-author-role="assistant"><b>First answer</b></article><article data-message-id="u2" data-message-author-role="user">Second prompt</article><article data-message-id="a2" data-message-author-role="assistant">Second answer</article></main>');fastCollection(h);
+  const capture=await h.collect();t.after(capture.dispose);
+  assert.equal(Object.isFrozen(capture.messages),true);assert.equal(Object.isFrozen(capture.messages[0]),true);
+  assert.deepEqual(Array.from(capture.messages,x=>x.key),['message:u1','message:a1','message:u2','message:a2']);
+  h.get('main').replaceChildren();
+  const selected=await h.prepare({capture,selectedKeys:['message:a2','message:u1','message:a2']});t.after(selected.dispose);
+  assert.equal(selected.count,2);assert.ok(selected.root.textContent.indexOf('First prompt')<selected.root.textContent.indexOf('Second answer'));assert.doesNotMatch(selected.root.textContent,/First answer|Second prompt/);
+  const answers=await h.prepare({capture,roleMode:'answers'});t.after(answers.dispose);assert.equal(answers.count,2);assert.ok(answers.root.querySelector('b'));assert.doesNotMatch(answers.root.textContent,/prompt/);
+  const prompts=await h.prepare({capture,roleMode:'prompts'});t.after(prompts.dispose);assert.equal(prompts.count,2);assert.doesNotMatch(prompts.root.textContent,/answer/);
+  await assert.rejects(h.prepare({capture,selectedKeys:[]}),/no rendered messages/);
+  await assert.rejects(h.prepare({capture,selectedKeys:['missing']}),/no longer available/);
+  await assert.rejects(h.prepare({capture,selectedKeys:['message:u1'],includeUser:false}),/no rendered messages/);
+  capture.dispose();await assert.rejects(h.prepare({capture}),/expired/);
+});
+
+test('single reply capture includes only the preceding prompt and needs no history traversal',async t=>{
+  const h=harness(t,'<main><article data-message-id="u0" data-message-author-role="user">Earlier prompt</article><article data-message-id="a0" data-message-author-role="assistant">Earlier answer</article><article data-message-id="u1" data-message-author-role="user">Context prompt</article><article id="reply" data-message-id="a1" data-message-author-role="assistant"><p>Chosen answer</p></article><article data-message-author-role="user">Following prompt</article></main>');
+  h.doc.documentElement.scrollTo=()=>assert.fail('A single reply must not scroll the entire conversation');
+  const capture=await h.collect({replyElement:h.get('#reply p')});t.after(capture.dispose);
+  assert.equal(capture.scope,'reply');assert.equal(capture.replyKey,'message:a1');assert.equal(capture.precedingPromptKey,'message:u1');assert.equal(capture.messages.length,2);
+  const reply=await h.prepare({capture,selectedKeys:[capture.replyKey]});t.after(reply.dispose);assert.equal(reply.count,1);assert.doesNotMatch(reply.root.textContent,/prompt/);
+  const context=await h.prepare({capture});t.after(context.dispose);assert.equal(context.count,2);assert.doesNotMatch(context.root.textContent,/Earlier|Following/);
+  const direct=await h.prepare({replyElement:h.get('#reply'),includePrecedingPrompt:true});t.after(direct.dispose);assert.equal(direct.count,2);
+});
+
+test('an earlier reply capture remains available while a later reply is generating',async t=>{
+  const h=harness(t,'<main><article id="old" data-message-id="old" data-message-author-role="assistant">Finished answer</article><article data-message-id="current" data-message-author-role="assistant" data-is-streaming="true">Generating</article></main><button data-testid="stop-button">Stop</button>');
+  const capture=await h.collect({replyElement:h.get('#old')});t.after(capture.dispose);assert.equal(capture.messages[0].error,'');
+  const pdf=await h.prepare({capture});t.after(pdf.dispose);assert.match(pdf.root.textContent,/Finished answer/);
+});
+
+test('DOM fallback keys remain stable for the same node and capture expires on navigation',async t=>{
+  const h=harness(t),reply=h.get('[data-message-author-role="assistant"]');
+  const first=await h.collect({replyElement:reply}),second=await h.collect({replyElement:reply});t.after(first.dispose);t.after(second.dispose);
+  assert.match(first.replyKey,/^dom:/);assert.equal(first.replyKey,second.replyKey);
+  h.w.history.pushState({},'', '/c/another');await assert.rejects(h.prepare({capture:first}),/expired/);
+});
+
+test('full capture traverses overlapping virtualized windows and restores the scroll position',async t=>{
+  const h=harness(t,'<div id="scroll" style="overflow-y:auto;scroll-behavior:smooth"><main></main></div>');fastCollection(h);
+  const fixture=scrollFixture(h,{render:top=>{const first=Math.floor(top/150);h.get('main').innerHTML=Array.from({length:3},(_,offset)=>{const index=first+offset;return `<section data-testid="conversation-turn-${index}"><article data-message-id="m${index}" data-message-author-role="${index%2?'assistant':'user'}"><strong>Message ${index}</strong></article></section>`;}).join('');}});
+  const progress=[],capture=await h.collect({onProgress:event=>progress.push(event)});t.after(capture.dispose);
+  assert.deepEqual(Array.from(capture.messages,x=>x.key),Array.from({length:8},(_,index)=>'message:m'+index));
+  assert.equal(fixture.top,500);assert.equal(fixture.scroller.style.scrollBehavior,'smooth');assert.ok(fixture.positions.includes(0));assert.ok(fixture.positions.includes(750));
+  assert.equal(h.get('[data-message-id="m0"]'),null,'Older messages were unmounted by virtualization');
+  const pdf=await h.prepare({capture,selectedKeys:['message:m7','message:m0']});t.after(pdf.dispose);assert.deepEqual([...pdf.root.querySelectorAll('strong')].map(x=>x.textContent),['Message 0','Message 7']);assert.equal(progress.at(-1).phase,'ready');
+});
+
+test('history loading keeps requesting the top until older numbered turns appear',async t=>{
+  const h=harness(t,'<div id="scroll" style="overflow-y:auto"><main></main></div>');fastCollection(h);let attempts=0,loaded=false;
+  const fixture=scrollFixture(h,{height:600,viewport:450,start:100,render:top=>{if(top===0&&++attempts>=5)loaded=true;const start=loaded?0:4;h.get('main').innerHTML=Array.from({length:2},(_,offset)=>`<section data-testid="conversation-turn-${start+offset}"><article data-message-id="m${start+offset}" data-message-author-role="${offset?'assistant':'user'}">Message ${start+offset}</article></section>`).join('');}});
+  const capture=await h.collect();t.after(capture.dispose);assert.ok(attempts>=5);assert.deepEqual(Array.from(capture.messages,x=>x.key),['message:m0','message:m1']);assert.equal(fixture.top,100);
+});
+
+test('missing history overlap and a permanently incomplete beginning fail without a partial capture',async t=>{
+  for(const incompleteTop of [false,true]){
+    const h=harness(t,'<div id="scroll" style="overflow-y:auto"><main></main></div>');fastCollection(h);
+    const fixture=scrollFixture(h,{render:top=>{const first=incompleteTop?4:top===0?0:10;h.get('main').innerHTML=`<section data-testid="conversation-turn-${first}"><article data-message-id="m${first}" data-message-author-role="assistant">Message ${first}</article></section>`;}});
+    await assert.rejects(h.collect(),incompleteTop?/beginning/:/skipped/);assert.equal(fixture.top,500);assert.equal(h.get('.li-pdf-document'),null);
+  }
+});
+
+test('numbered gaps fail even when every scroll window overlaps',async t=>{
+  const h=harness(t,'<main><section data-testid="conversation-turn-0"><article data-message-id="m0" data-message-author-role="user">Prompt</article></section><section data-testid="conversation-turn-2"><article data-message-id="m2" data-message-author-role="assistant">Answer</article></section></main>');fastCollection(h);
+  await assert.rejects(h.collect(),/turns are missing/);
+});
+
+test('a stuck history loader times out and cancellation restores the original position',async t=>{
+  const h=harness(t,'<div id="scroll" style="overflow-y:auto"><div role="progressbar">Loading</div><main><article data-message-id="m0" data-message-author-role="assistant">Answer</article></main></div>');fastCollection(h,true);
+  const fixture=scrollFixture(h);await assert.rejects(h.collect(),/did not finish loading/);assert.equal(fixture.top,500);
+  h.get('[role="progressbar"]').remove();const controller=new h.w.AbortController();
+  const pending=h.collect({signal:controller.signal,onProgress:()=>controller.abort()});await assert.rejects(pending,{name:'AbortError'});assert.equal(fixture.top,500);
+});
+
+test('long messages are scrolled fully and lazy media are recaptured after becoming visible',async t=>{
+  const h=harness(t,'<div id="scroll" style="overflow-y:auto"><main><section data-testid="conversation-turn-0"><article data-message-id="a0" data-message-author-role="assistant"><p>A long response</p><img src="/placeholder.png"></article></section></main></div>');fastCollection(h);
+  const fixture=scrollFixture(h,{height:1800,viewport:450,start:100,render:top=>{if(top>=900)h.get('img').src='/loaded-picture.png';}});
+  const capture=await h.collect();t.after(capture.dispose);assert.ok(fixture.positions.includes(1350));assert.equal(capture.messages.length,1);
+  const pdf=await h.prepare({capture});t.after(pdf.dispose);assert.equal(pdf.root.querySelector('img').src,'https://chatgpt.com/loaded-picture.png');assert.equal(fixture.top,100);
+});
+
+test('an image source changed during decoding is recaptured rather than frozen as its old thumbnail',async t=>{
+  const h=harness(t,'<main><article data-message-id="a0" data-message-author-role="assistant"><img src="/thumbnail.png"></article></main>');fastCollection(h);
+  let release,decodes=0;h.w.HTMLImageElement.prototype.decode=function(){if(++decodes===1)return new Promise(resolve=>{release=resolve;});return Promise.resolve();};
+  const pending=h.collect({replyElement:h.get('article')});await new Promise(resolve=>setImmediate(resolve));
+  h.get('img').src='/final-image.png';release();const capture=await pending;t.after(capture.dispose);
+  assert.equal(capture.messages[0].error,'');assert.ok(decodes>=2);
+  const pdf=await h.prepare({capture});t.after(pdf.dispose);assert.equal(pdf.root.querySelector('img').src,'https://chatgpt.com/final-image.png');
+});
+
+test('direct PDF preparation rejects a media-only change during decoding',async t=>{
+  const h=harness(t,'<main><article data-message-author-role="assistant"><img src="/thumbnail.png"></article></main>');
+  let release;h.w.HTMLImageElement.prototype.decode=()=>new Promise(resolve=>{release=resolve;});
+  const pending=h.prepare();await new Promise(resolve=>setImmediate(resolve));h.get('main img').src='/final.png';release();
+  await assert.rejects(pending,/conversation changed/);assert.equal(h.get('.li-pdf-document'),null);
+});
+
+test('failed diagram capture blocks only the selected message and keeps controls out of fingerprints',async t=>{
+  const h=harness(t,'<main><article data-message-id="a0" data-message-author-role="assistant">Good reply</article><article data-message-id="a1" data-message-author-role="assistant"><pre>Bad TeX</pre><div class="latex-islands-container"></div></article></main>');fastCollection(h);
+  let calls=0;h.w.LatexIslandsDiagramExport={snapshot:async source=>{calls++;if(source.dataset.messageId==='a1')throw Error('Rendering failed: invalid TeX');const action=h.doc.createElement('button');action.className='li-export-reply';action.textContent='PDF';source.append(action);return [];}};
+  const capture=await h.collect();t.after(capture.dispose);assert.match(capture.messages[1].error,/invalid TeX/);assert.equal(capture.messages[0].preview,'Good reply');
+  const pdf=await h.prepare({capture,selectedKeys:['message:a0']});t.after(pdf.dispose);assert.equal(pdf.count,1);assert.doesNotMatch(pdf.root.textContent,/Bad TeX|PDF/);
+  await assert.rejects(h.prepare({capture,selectedKeys:['message:a1']}),/invalid TeX/);assert.ok(calls>=2);
+});
+
+test('capture waits for a newly mounted diagram before freezing its rendered snapshot',async t=>{
+  const h=harness(t,'<main><article data-message-id="a0" data-message-author-role="assistant"><pre id="tex">TeX</pre><div class="latex-islands-container"></div></article></main>');fastCollection(h);let calls=0;
+  h.w.LatexIslandsDiagramExport={snapshot:async()=>{if(++calls===1)throw Error('A diagram is still loading. Wait for it to render.');return [{sourceElement:h.get('#tex'),containerElement:h.get('.latex-islands-container'),svg:SVG,width:600,height:300}];}};
+  const capture=await h.collect({replyElement:h.get('article')});t.after(capture.dispose);assert.equal(calls,2);assert.equal(capture.messages[0].error,'');
+  const pdf=await h.prepare({capture});t.after(pdf.dispose);assert.ok(pdf.root.querySelector('.li-pdf-island-image'));
+});
+
+test('preview mounts inside the dialog and returns to body before printing',async t=>{
+  const h=harness(t),host=h.doc.createElement('div');h.doc.body.append(host);const pdf=await h.prepare();
+  pdf.mountPreview(host);assert.equal(pdf.root.parentElement,host);assert.equal(pdf.root.classList.contains('li-pdf-preview'),true);
+  h.w.print=()=>{assert.equal(pdf.root.parentElement,h.doc.body);assert.equal(pdf.root.classList.contains('li-pdf-preview'),false);};pdf.print();h.w.dispatchEvent(new h.w.Event('afterprint'));assert.equal(pdf.root.isConnected,false);
+});
+
+test('wide native SVG keeps its intrinsic ratio and computed clipping/transforms after IDs change',async t=>{
+  const h=harness(t,'<main><article data-message-author-role="assistant"><svg id="native" width="4000" height="1000"><defs><clipPath id="crop"><rect width="3900" height="950"/></clipPath></defs><g class="translated"><text>Chart label</text></g></svg></article></main>');
+  const original=h.w.getComputedStyle;h.w.getComputedStyle=node=>{const css=original(node);return node.matches('.translated')?{display:css.display,visibility:css.visibility,getPropertyValue:key=>({'clip-path':'url("https://chatgpt.com/c/example#crop")',transform:'matrix(1, 0, 0, 1, 100, 50)','transform-origin':'0px 0px'}[key]||css.getPropertyValue(key))}:css;};
+  const pdf=await h.prepare();t.after(pdf.dispose);const svg=pdf.root.querySelector('svg'),group=svg.querySelector('g');assert.equal(svg.getAttribute('viewBox'),'0 0 4000 1000');assert.equal(svg.style.aspectRatio,'4000 / 1000');assert.equal(svg.style.maxWidth,'100%');assert.equal(svg.style.height,'auto');assert.equal(svg.style.maxHeight,'180mm');
+  assert.equal(group.style.clipPath,'url(#'+svg.querySelector('clipPath').id+')');assert.equal(group.style.transform,'matrix(1, 0, 0, 1, 100, 50)');assert.equal(group.style.transformOrigin,'0px 0px');
 });

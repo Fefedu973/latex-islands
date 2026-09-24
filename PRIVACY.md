@@ -1,6 +1,6 @@
 # Privacy policy
 
-Applies to LaTeX Islands 1.4.2. Last updated: 2026-09-17.
+Applies to LaTeX Islands 1.5.0. Last updated: 2026-09-24.
 
 LaTeX Islands is an independent browser extension maintained through [Fefedu973/latex-islands](https://github.com/Fefedu973/latex-islands). It provides local diagram rendering and user-requested export of the current ChatGPT conversation.
 
@@ -9,13 +9,13 @@ LaTeX Islands is an independent browser extension maintained through [Fefedu973/
 - The content script reads assistant replies on `chatgpt.com` and `chat.openai.com` to identify supported diagrams. Selected diagram source is passed to the bundled local TeX worker.
 - Diagram results and compilation queues are cached in memory. The worker is released after inactivity. Embedded engine files and fonts are loaded from the extension package.
 - Local extension storage holds preferences, export options, the last observed ChatGPT theme, and the standalone editor's last source. It does not store exported conversations or credentials. Local editor source can contain anything you paste into it.
-- A conversation retrieved for export is held in memory for preview, filtering, copying and downloading. Closing the export dialog clears its cached snapshot. Reopening or updating a changed conversation can request it again.
+- Conversation data and rendered message copies used for export are held in memory for selection, preview, copying and downloading. Closing the export dialog clears its cached snapshots. Reopening or updating a changed conversation can load it again. Individual message selections are not saved in extension storage.
 
 ## Network requests for conversation export
 
-PDF export makes a temporary printable copy of messages already loaded on the page. It does not request ChatGPT's conversation API. It includes rendered images and receives vector diagrams with embedded fonts from the extension's local renderer. The browser may load the page's existing image resources for printing. The copy stays in the current tab and is removed after printing or cancellation; the browser's print dialog controls saving the PDF.
+PDF export scrolls the open conversation to let ChatGPT load and render earlier messages, then keeps temporary copies for selection and printing. The exporter does not directly request ChatGPT's conversation API; scrolling can trigger the site's own normal requests. PDF includes rendered images and receives vector diagrams with embedded fonts from the extension's local renderer. The browser may load the page's existing image resources for printing. Capture and preview data stay in the current tab and are cleared when the export window closes; the browser's print dialog controls saving the PDF.
 
-For Markdown, text and JSON, selecting **Preview**, **Copy** or **Download** can request the current conversation's JSON pages from the same ChatGPT origin as the open tab. Requests contain the conversation identifier and pagination cursor, use your existing session cookies, and expose ordinary request information such as IP address to ChatGPT.
+For Markdown, text and JSON, selecting **Preview**, **Choose messages**, **Reload**, **Copy** or **Download** can request the current conversation's JSON pages from the same ChatGPT origin as the open tab. Requests contain the conversation identifier and pagination cursor, use your existing session cookies, and expose ordinary request information such as IP address to ChatGPT.
 
 If a conversation request returns HTTP 401, the page-side bridge can read ChatGPT's `/api/auth/session` endpoint and retry with its session token. The token stays in the bridge's memory and is cleared at completion or cancellation. It is not sent to the isolated content script, saved in extension storage or added to the exported file.
 

@@ -7,6 +7,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const archiveKeys = new WeakMap();
+  let archiveSequence = 0;
   function conversationId(pathname) {
     const match = String(pathname).match(/(?:^|\/)c\/([^/]+)\/?$/);
     return match && ID.test(match[1]) ? match[1] : null;
@@ -115,13 +117,17 @@
   function inline(value) { return String(value).replace(/[\\`*_[\]<>#]/g, '\\$&').replace(/[\r\n]+/g, ' '); }
   const DEFAULT_OPTIONS = Object.freeze({
     includeUser: true, includeTools: false, includeProgress: false,
-    includeAttachments: true, includeSources: true, timestamps: false, branch: 'current'
+    includeAttachments: true, includeSources: true, timestamps: false, branch: 'current',
+    roleMode: 'conversation', selectedMessageIds: null
   });
   function normalizeOptions(options = {}) {
     if (!options || typeof options !== 'object') options = {};
     const result = {...DEFAULT_OPTIONS};
     for (const key of Object.keys(result)) if (typeof result[key] === 'boolean' && typeof options[key] === 'boolean') result[key] = options[key];
     result.branch = options.branch === 'all' ? 'all' : 'current';
+    result.roleMode = ['conversation', 'answers', 'prompts'].includes(options.roleMode) ? options.roleMode : 'conversation';
+    if (result.roleMode !== 'conversation') result.includeUser = result.roleMode === 'prompts';
+    result.selectedMessageIds = Array.isArray(options.selectedMessageIds) ? [...new Set(options.selectedMessageIds.filter(id => typeof id === 'string' && id.length > 0))] : null;
     return result;
   }
   function safeURL(value) {
@@ -325,11 +331,19 @@
     return !message.channel || message.channel === 'final' ? 'assistant' : '';
   }
   function buildTranscript(archive, inputOptions = {}) {
-    const options = normalizeOptions(inputOptions), entries = [];
-    let sourceMessageCount = 0;
-    for (const message of selectedMessages(archive, options)) {
+    const options = normalizeOptions(inputOptions), entries = [], counts = new Map();
+    // Keep role and selection filters after grouping: selecting one fragment
+    // must retain its complete response, and hidden prompts still delimit turns.
+    const groupingOptions = {...options, includeUser: true};
+    const messages = selectedMessages(archive, options);
+    // Anonymous positions are stable within this fetched archive, but must not
+    // select unrelated content at the same index after a refresh.
+    if (!archiveKeys.has(archive)) archiveKeys.set(archive, ++archiveSequence);
+    let anonymousPrefix = 'anonymous:' + archiveKeys.get(archive) + ':';
+    while (messages.some(message => typeof message?.id === 'string' && message.id.startsWith(anonymousPrefix))) anonymousPrefix = '_' + anonymousPrefix;
+    for (const [index, message] of messages.entries()) {
       if (!message || typeof message !== 'object') continue;
-      const kind = messageKind(message, options);
+      const kind = messageKind(message, groupingOptions);
       if (!kind) continue;
       const role = message.author?.role, metadata = message.metadata || {};
       const state = {role, options, attachments: Array.isArray(metadata.attachments) ? metadata.attachments.filter(item => item && typeof item === 'object') : [], seenAssets: new Set()};
@@ -343,7 +357,6 @@
       // inside fenced code, which must remain byte-for-byte reproducible.
       text = replaceReferences(text, metadata, options).trim();
       if (!text) continue;
-      sourceMessageCount++;
       const label = kind === 'user' ? 'You' : kind === 'tool' ? 'Tool' + (message.author?.name ? ' · ' + message.author.name : '') : kind === 'call' ? 'ChatGPT · Tool call: ' + message.recipient : kind === 'progress' ? 'ChatGPT · Progress update' : 'ChatGPT';
       const turn = metadata.turn_exchange_id || metadata.working_turn_id || '';
       const previous = entries.at(-1);
@@ -352,11 +365,22 @@
       if (turn && previous && previous.turn === turn && previous.kind === kind && kind === 'assistant') {
         previous.text += '\n\n' + text;
         if (message.id) previous.messageIds.push(message.id);
+        counts.set(previous, counts.get(previous) + 1);
       } else {
-        entries.push({role: kind === 'media' ? 'assistant' : role, label, text, timestamp: options.timestamps ? timestamp(message.create_time) : '', messageIds: message.id ? [message.id] : [], kind, turn});
+        const key = typeof message.id === 'string' && message.id ? message.id : anonymousPrefix + index;
+        const entry = {key, role: kind === 'media' ? 'assistant' : role, label, text, timestamp: options.timestamps ? timestamp(message.create_time) : '', messageIds: message.id ? [message.id] : [], kind, turn};
+        entries.push(entry); counts.set(entry, 1);
       }
     }
-    return {title: String(archive.title || 'ChatGPT conversation'), sourceUrl: safeURL(archive.source_url), entries, messageCount: entries.length, sourceMessageCount, rawMessageCount: Array.isArray(archive.messages) ? archive.messages.length : 0};
+    const selection = options.selectedMessageIds === null ? null : new Set(options.selectedMessageIds);
+    const filtered = entries.filter(entry => {
+      if (options.roleMode === 'prompts' && entry.role !== 'user') return false;
+      if (options.roleMode === 'answers' && (entry.role !== 'assistant' || ['call', 'tool', 'media'].includes(entry.kind))) return false;
+      if (!options.includeUser && entry.role === 'user') return false;
+      return selection === null || selection.has(entry.key) || entry.messageIds.some(id => selection.has(id));
+    });
+    const sourceMessageCount = filtered.reduce((sum, entry) => sum + counts.get(entry), 0);
+    return {title: String(archive.title || 'ChatGPT conversation'), sourceUrl: safeURL(archive.source_url), entries: filtered, messageCount: filtered.length, sourceMessageCount, rawMessageCount: Array.isArray(archive.messages) ? archive.messages.length : 0};
   }
   function toMarkdown(archive, options = {}) {
     const transcript = buildTranscript(archive, options), lines = ['# ' + inline(transcript.title), ''];

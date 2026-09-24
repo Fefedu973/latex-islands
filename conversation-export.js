@@ -9,7 +9,7 @@
   const defaults = {format:'md',includeUser:true,includeProgress:false,includeTools:false,includeAttachments:true,includeSources:true,timestamps:false};
   let preferences={...defaults}, preferencesTouched=false;
   let pending=null,running=false,canceled=false,lastFocus=null,tick=0,mountedId=null,snapshot=null,revision=0,snapshotRevision=-1,previewRequested=false;
-  let replyElement=null,pdfAbort=null,pdfDocument=null;
+  let replyElement=null,pdfAbort=null,pdfDocument=null,pdfCapture=null,pdfSelection=null,textSelection=null,pdfViewSequence=0;
   const root=document.createElement('div');root.className='li-export';root.dataset.latexIslandsExport='true';
   function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text)node.textContent=text;return node;}
   function button(label,className){const node=element('button',className,label);node.type='button';return node;}
@@ -42,7 +42,7 @@
   }
   const {wrapper:formatField,select:format}=selectField('Format','li-export-format',[['md','Markdown (.md)'],['txt','Plain text (.txt)'],['json','Complete archive (.json)'],['pdf','PDF (.pdf)']]);
   const transcriptControls=element('fieldset','li-export-transcript');
-  const {wrapper:presetField,select:preset}=selectField('Content','li-export-preset',[['dialogue','Conversation'],['detailed','Detailed context'],['answers','Answers only'],['custom','Custom']]);
+  const {wrapper:presetField,select:preset}=selectField('Content','li-export-preset',[['dialogue','Conversation'],['detailed','Detailed context'],['answers','Answers only'],['custom','Custom'],['prompts','Prompts only']]);
   const extras=element('details','li-export-options');extras.open=true;
   const extrasSummary=element('summary');extrasSummary.append(element('span','','Customize transcript'));
   const extrasChevron=element('span','li-export-options-chevron');extrasChevron.setAttribute('aria-hidden','true');extrasChevron.innerHTML='<svg viewBox="0 0 16 16" fill="none"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';extrasSummary.append(extrasChevron);extras.append(extrasSummary);
@@ -53,25 +53,34 @@
   transcriptControls.append(presetField,extras);
   const archiveNote=element('p','li-export-archive-note','All messages, metadata and pages received from ChatGPT, unfiltered.');archiveNote.hidden=true;
   controls.append(formatField,transcriptControls,archiveNote);
-  const pdfNote=element('p','li-export-pdf-note','Print the messages currently loaded on this page with their rich formatting and diagrams. Scroll to load older messages first. Choose Save as PDF in the print dialog.');pdfNote.hidden=true;
+  const {wrapper:pdfRoleField,select:pdfRole}=selectField('Content','li-export-pdf-role',[['conversation','Conversation'],['answers','Answers only'],['prompts','Prompts only']]);pdfRoleField.hidden=true;
+  const pdfNote=element('p','li-export-pdf-note','The page scrolls to load the full conversation and capture its rendered messages. Your scroll position is restored afterwards.');pdfNote.hidden=true;
   const pdfUserRow=element('label','li-export-option');pdfUserRow.hidden=true;
-  const pdfUser=element('input','li-export-switch');pdfUser.type='checkbox';pdfUser.id='li-export-pdf-include-user';pdfUser.setAttribute('role','switch');pdfUserRow.append(element('span','','Include my messages'),pdfUser);controls.append(pdfNote,pdfUserRow);
+  const pdfUser=element('input','li-export-switch');pdfUser.type='checkbox';pdfUser.id='li-export-pdf-include-user';pdfUser.setAttribute('role','switch');pdfUserRow.append(element('span','','Include prompt'),pdfUser);controls.append(pdfRoleField,pdfUserRow,pdfNote);
+  const chooseMessages=button('Choose messages','li-export-choose-messages');controls.append(chooseMessages);
   const attachmentNote=element('p','li-export-detail','Images and files are referenced; their contents are not downloaded.');
   const status=element('p','li-export-status');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
   const previewBox=element('section','li-export-preview');previewBox.hidden=true;previewBox.setAttribute('aria-label','Export file preview');
   const previewHeader=element('div','li-export-preview-heading');const previewTitle=element('strong','','Preview');const previewSummary=element('span');previewHeader.append(previewTitle,previewSummary);
   const previewText=element('pre');previewText.tabIndex=0;previewText.setAttribute('aria-label','File excerpt');const previewNote=element('p','li-export-detail');previewBox.append(previewHeader,previewText,previewNote);
   const previewModes=element('div','li-export-preview-modes');previewModes.setAttribute('role','group');previewModes.setAttribute('aria-label','Preview view');
-  const dialogueMode=button('Conversation','li-export-dialogue-mode'),fileMode=button('File','li-export-file-mode');previewModes.append(dialogueMode,fileMode);previewHeader.append(previewModes);
+  const selectionMode=button('Messages','li-export-selection-mode'),dialogueMode=button('Conversation','li-export-dialogue-mode'),fileMode=button('File','li-export-file-mode');previewModes.append(selectionMode,dialogueMode,fileMode);previewHeader.append(previewModes);
   const dialoguePreview=element('div','li-export-dialogue');dialoguePreview.tabIndex=0;dialoguePreview.setAttribute('aria-label','Exported conversation');
   const more=button('Show more','li-export-more');more.hidden=true;previewBox.insertBefore(dialoguePreview,previewNote);previewBox.append(more);
+  const selectionPane=element('div','li-export-selection');selectionPane.hidden=true;
+  const selectionTools=element('div','li-export-selection-tools'),selectAll=button('All','li-export-select-all'),selectNone=button('None','li-export-select-none'),refresh=button('Reload','li-export-refresh');
+  const search=element('input','li-export-message-search');search.type='search';search.placeholder='Find a message';search.setAttribute('aria-label','Find a message');
+  const selectionCount=element('span','li-export-selection-count');selectionCount.setAttribute('aria-live','polite');
+  selectionTools.append(selectAll,selectNone,selectionCount,refresh);const messageList=element('div','li-export-message-list');
+  selectionPane.append(search,selectionTools,messageList);previewBox.insertBefore(selectionPane,previewNote);
+  const pdfPreview=element('div','li-export-pdf-preview');pdfPreview.hidden=true;previewBox.insertBefore(pdfPreview,previewNote);
   let previewMode='dialogue',visibleEntries=20,visibleCharacters=50000;
   const previewPane=element('div','li-export-preview-pane');const emptyPreview=element('div','li-export-empty');
   emptyPreview.append(element('strong','','Your conversation, ready to save'),element('p','','Choose the content, then select Preview. Your options apply immediately to the conversation.'));
   previewPane.append(emptyPreview,previewBox);
   const actions=element('div','li-export-actions');
   const inspect=button('Preview','li-export-inspect'),copy=button('Copy','li-export-copy'),save=button('Download','li-export-save'),cancel=button('Cancel','li-export-cancel');cancel.hidden=true;
-  const actionButtons={preview:inspect,copy,download:save};
+  const actionButtons={preview:inspect,copy,download:save,messages:chooseMessages,refresh};
   for(const node of Object.values(actionButtons)){
     const label=node.textContent;
     node.setAttribute('aria-label',label);node.setAttribute('aria-busy','false');
@@ -82,47 +91,50 @@
   const layout=element('div','li-export-layout');layout.append(settingsPane,previewPane);
   const footer=element('div','li-export-footer');actions.append(inspect,copy,cancel,save);footer.append(status,actions);panel.append(heading,layout,footer);root.append(toggle,tooltip,panel);
 
-  function options(){return Object.fromEntries(Object.entries(checks).map(([key,input])=>[key,input.checked]));}
+  function options(){return {...Object.fromEntries(Object.entries(checks).map(([key,input])=>[key,input.checked])),roleMode:preset.value==='prompts'?'prompts':preset.value==='answers'?'answers':'conversation',selectedMessageIds:textSelection===null?null:[...textSelection]};}
   function guessedPreset(value){if(!value.includeUser)return value.includeProgress||value.includeTools?'custom':'answers';if(value.includeProgress&&value.includeTools)return 'detailed';if(!value.includeProgress&&!value.includeTools)return 'dialogue';return 'custom';}
   function applyPreferences(){
-    format.value=preferences.format;for(const [key,input]of Object.entries(checks))input.checked=preferences[key];pdfUser.checked=preferences.includeUser;preset.value=guessedPreset(preferences);for(const control of dropdowns.values())control.sync();updateFormat();
+    format.value=preferences.format;for(const [key,input]of Object.entries(checks))input.checked=preferences[key];pdfRole.value=preferences.includeUser?'conversation':'answers';preset.value=preferences.roleMode==='prompts'?'prompts':guessedPreset(preferences);for(const control of dropdowns.values())control.sync();updateFormat();
   }
   function updateFormat(){
+    pdfViewSequence++;pdfDocument?.dispose();pdfDocument=null;
     const isJSON=format.value==='json',isPDF=format.value==='pdf';transcriptControls.hidden=isJSON||isPDF;archiveNote.hidden=!isJSON;dialogueMode.disabled=isJSON;
-    pdfUser.checked=checks.includeUser.checked;
-    pdfNote.hidden=!isPDF;pdfUserRow.hidden=!isPDF||!!replyElement;attachmentNote.hidden=isPDF;copy.hidden=isPDF;
-    pdfNote.textContent=replyElement?'Print this reply with its rich formatting and diagrams. Choose Save as PDF in the print dialog.':'Print the messages currently loaded on this page with their rich formatting and diagrams. Scroll to load older messages first. Choose Save as PDF in the print dialog.';
+    pdfNote.hidden=!isPDF;pdfUserRow.hidden=!isPDF||!replyElement;pdfRoleField.hidden=!isPDF||!!replyElement;attachmentNote.hidden=isPDF;copy.hidden=isPDF;chooseMessages.hidden=isJSON;selectionMode.hidden=isJSON;fileMode.hidden=isPDF;
+    pdfNote.textContent=replyElement?'Export this reply with its rendered formatting and diagrams.':'The page scrolls to load the full conversation and capture its rendered messages. Your scroll position is restored afterwards.';
     title.textContent=replyElement?'Export reply':'Export conversation';format.disabled=running||!!replyElement;dropdowns.get(format).sync();
-    for(const [node,label] of [[inspect,isPDF?'Print preview':'Preview'],[save,isPDF?'Save PDF':'Download']]){node.querySelector('.li-export-action-label').textContent=label;node.setAttribute('aria-label',label);}
+    for(const [node,label] of [[inspect,'Preview'],[save,isPDF?'Save PDF':'Download']]){node.querySelector('.li-export-action-label').textContent=label;node.setAttribute('aria-label',label);}
+    dialogueMode.textContent=isPDF?'Preview':'Conversation';
     emptyPreview.querySelector('strong').textContent=isPDF?'A clean, printable copy':'Your conversation, ready to save';
     emptyPreview.querySelector('p').textContent=isPDF?'Headings, tables, equations and images keep their rendered appearance. Diagrams fit the page at their original proportions.':'Choose the content, then select Preview. Your options apply immediately to the conversation.';
-    if(isPDF){previewBox.hidden=true;emptyPreview.hidden=false;}
-    if(previewRequested&&snapshot)updatePreview();
+    previewBox.hidden=true;emptyPreview.hidden=false;pdfPreview.hidden=true;
+    if(isPDF&&pdfCapture)updatePreview();else if(!isPDF&&previewRequested&&snapshot)updatePreview();
   }
   function remember(){
-    preferencesTouched=true;preferences={...preferences,...options(),format:format.value};
+    preferencesTouched=true;const {selectedMessageIds,...persistent}=options();preferences={...preferences,...persistent,format:format.value};
     try{Promise.resolve(extensionAPI?.storage?.local?.set({exportPreferences:preferences})).catch(()=>{});}catch{}
-    if(previewRequested&&snapshot)updatePreview();
+    if(previewRequested&&(snapshot||pdfCapture))updatePreview();
   }
   format.addEventListener('change',()=>{remember();updateFormat();});
-  pdfUser.addEventListener('change',()=>{checks.includeUser.checked=pdfUser.checked;remember();});
+  pdfUser.addEventListener('change',()=>{if(pdfCapture){pdfSelection=new Set(pdfCapture.messages.filter(entry=>entry.role==='assistant'||pdfUser.checked).map(entry=>entry.key));updatePreview();}});
+  pdfRole.addEventListener('change',()=>{updatePreview();});
   preset.addEventListener('change',()=>{
     if(preset.value==='dialogue')Object.assign(preferences,{includeUser:true,includeProgress:false,includeTools:false});
     if(preset.value==='answers')Object.assign(preferences,{includeUser:false,includeProgress:false,includeTools:false});
     if(preset.value==='detailed')Object.assign(preferences,{includeUser:true,includeProgress:true,includeTools:true});
+    if(preset.value==='prompts')Object.assign(preferences,{includeUser:true,includeProgress:false,includeTools:false});
     for(const key of ['includeUser','includeProgress','includeTools'])checks[key].checked=preferences[key];remember();
   });
-  for(const input of Object.values(checks))input.addEventListener('change',()=>{remember();preset.value=guessedPreset(preferences);dropdowns.get(preset).sync();});
+  for(const input of Object.values(checks))input.addEventListener('change',()=>{preset.value=guessedPreset(options());dropdowns.get(preset).sync();remember();});
   applyPreferences();
   try{Promise.resolve(extensionAPI?.storage?.local?.get({exportPreferences:defaults})).then(saved=>{
     if(preferencesTouched)return;const next=saved?.exportPreferences;if(!next)return;
     for(const key of Object.keys(defaults)){if(key==='format'){if(['md','txt','json','pdf'].includes(next.format))preferences.format=next.format;}else if(typeof next[key]==='boolean')preferences[key]=next[key];}
-    applyPreferences();
+    if(next.roleMode==='prompts')preferences.roleMode='prompts';applyPreferences();
   }).catch(()=>{});}catch{}
 
   function show(open){
     hideTooltip();globalThis.LatexIslandsNativeControls.closeAll();
-    if(!open){if(running)cancelExport();try{panel.close?.();}catch{}snapshot=null;snapshotRevision=-1;previewRequested=false;previewBox.hidden=true;emptyPreview.hidden=false;status.textContent='';replyElement=null;pdfDocument?.dispose();pdfDocument=null;}
+    if(!open){if(running)cancelExport();try{panel.close?.();}catch{}snapshot=null;snapshotRevision=-1;previewRequested=false;previewBox.hidden=true;emptyPreview.hidden=false;status.textContent='';replyElement=null;pdfViewSequence++;pdfDocument?.dispose();pdfDocument=null;pdfCapture?.dispose();pdfCapture=null;pdfSelection=null;textSelection=null;previewMode='dialogue';search.value='';}
     panel.hidden=!open;toggle.setAttribute('aria-expanded',String(open));
     if(open){lastFocus=document.activeElement;updateFormat();panel.showModal?.();(replyElement?inspect:dropdowns.get(format).trigger).focus();}
     else if(lastFocus?.isConnected)lastFocus.focus();
@@ -160,15 +172,62 @@
     if(selectedFormat==='json')return JSON.stringify(archive,null,2);
     return selectedFormat==='txt'?core.toText(archive,selectedOptions):core.toMarkdown(archive,selectedOptions);
   }
+  function candidates(){
+    if(format.value==='pdf')return (pdfCapture?.messages||[]).filter(entry=>replyElement||pdfRole.value==='conversation'||entry.role===(pdfRole.value==='prompts'?'user':'assistant'));
+    return snapshot?core.buildTranscript(snapshot,{...options(),selectedMessageIds:null}).entries.map(entry=>({...entry,preview:entry.text})):[];
+  }
+  function selectedKeys(){return format.value==='pdf'?pdfSelection:textSelection;}
+  function setSelection(value){if(format.value==='pdf')pdfSelection=value;else textSelection=value;}
+  function selectedEntries(){const selected=selectedKeys();return candidates().filter(entry=>selected===null||selected.has(entry.key));}
+  function renderSelection(){
+    const entries=candidates(),selected=selectedKeys(),query=search.value.trim().toLocaleLowerCase();
+    selectionCount.textContent=selectedEntries().length+' / '+entries.length;
+    messageList.replaceChildren();
+    for(const [index,entry]of entries.entries()){
+      if(query&&!String(entry.preview).toLocaleLowerCase().includes(query))continue;
+      const row=element('label','li-export-message-choice'),input=element('input');input.type='checkbox';input.checked=selected===null||selected.has(entry.key);input.dataset.messageKey=entry.key;
+      const text=element('span'),label=entry.role==='user'?'You':entry.label||'ChatGPT';
+      text.append(element('strong','',(index+1)+'. '+label),element('span','',String(entry.preview||'Message').replace(/\s+/g,' ').slice(0,180)));
+      if(entry.error)text.append(element('small','li-export-message-error',String(entry.error).split('\n')[0].slice(0,180)));
+      input.setAttribute('aria-label','Include message '+(index+1)+' from '+label);
+      input.addEventListener('change',()=>{
+        const next=new Set(selectedKeys()??entries.map(item=>item.key));if(input.checked)next.add(entry.key);else next.delete(entry.key);setSelection(next);
+        selectionCount.textContent=selectedEntries().length+' / '+entries.length;previewSummary.textContent=selectedEntries().length+' messages selected';
+      });row.append(input,text);messageList.append(row);
+    }
+    if(!messageList.children.length)messageList.append(element('p','li-export-detail',query?'No matching messages.':'No messages match these options.'));
+  }
+  function previewLayout(isPDF,isJSON=false){
+    const selecting=previewMode==='messages'&&!isJSON;
+    selectionPane.hidden=!selecting;selectionMode.setAttribute('aria-pressed',String(selecting));
+    pdfPreview.hidden=!isPDF||selecting;previewText.hidden=selecting||isPDF||previewMode==='dialogue'&&!isJSON;
+    dialoguePreview.hidden=selecting||isPDF||previewMode!=='dialogue'||isJSON;
+    dialogueMode.setAttribute('aria-pressed',String(!selecting&&(isPDF||previewMode==='dialogue'&&!isJSON)));
+    fileMode.setAttribute('aria-pressed',String(!selecting&&!isPDF&&(previewMode==='file'||isJSON)));
+    if(selecting)renderSelection();
+    return selecting;
+  }
+  async function renderPDF(){
+    if(!pdfCapture)return;const token=++pdfViewSequence;
+    previewBox.hidden=false;emptyPreview.hidden=true;more.hidden=true;previewNote.textContent='';
+    previewSummary.textContent=selectedEntries().length+' messages';
+    if(previewLayout(true))return;
+    pdfDocument?.dispose();pdfDocument=null;pdfPreview.replaceChildren();
+    if(!selectedEntries().length){pdfPreview.append(element('p','li-export-detail','Select at least one message.'));return;}
+    try{
+      const prepared=await globalThis.LatexIslandsPDF.prepare({capture:pdfCapture,selectedKeys:pdfSelection===null?null:[...pdfSelection],roleMode:replyElement?'conversation':pdfRole.value,signal:pdfAbort?.signal});
+      if(token!==pdfViewSequence){prepared.dispose();return;}
+      pdfDocument=prepared;prepared.mountPreview(pdfPreview);
+    }catch(error){if(token===pdfViewSequence){status.dataset.state='error';status.textContent=error.message||'Could not prepare the PDF.';}throw error;}
+  }
   function updatePreview(){
-    if(format.value==='pdf')return;
+    if(format.value==='pdf'){void renderPDF().catch(()=>{});return;}
     if(!snapshot)return;
     const text=output(snapshot),isJSON=format.value==='json',transcript=isJSON?null:core.buildTranscript(snapshot,options());
     previewBox.hidden=false;emptyPreview.hidden=true;previewText.textContent=text.slice(0,visibleCharacters);
     const count=isJSON?snapshot.messages.length:transcript.entries.length;
     previewSummary.textContent=count+(isJSON?' records':' messages');
-    const reading=previewMode==='dialogue'&&!isJSON;previewText.hidden=reading;dialoguePreview.hidden=!reading;
-    dialogueMode.setAttribute('aria-pressed',String(reading));fileMode.setAttribute('aria-pressed',String(!reading));
+    const selecting=previewLayout(false,isJSON),reading=previewMode==='dialogue'&&!isJSON;
     dialoguePreview.replaceChildren();
     if(reading){
       dialoguePreview.append(element('h2','',transcript.title));
@@ -182,13 +241,19 @@
       }
       if(!count)dialoguePreview.append(element('p','','No messages match these options.'));
     }
-    const limited=reading?count>visibleEntries:text.length>visibleCharacters;more.hidden=!limited;
-    previewNote.textContent=limited?(reading?'Showing the first '+Math.min(visibleEntries,count)+' messages.':'Showing the first '+visibleCharacters.toLocaleString('en-US')+' characters.')+' Copy and download include the entire file.':'Copy and download include the entire file.';
+    const limited=reading?count>visibleEntries:text.length>visibleCharacters;more.hidden=selecting||!limited;
+    previewNote.textContent=selecting?'':limited?(reading?'Showing the first '+Math.min(visibleEntries,count)+' messages.':'Showing the first '+visibleCharacters.toLocaleString('en-US')+' characters.')+' Copy and download include the entire file.':'Copy and download include the entire file.';
   }
+  selectionMode.addEventListener('click',()=>{previewMode='messages';updatePreview();});
+  chooseMessages.addEventListener('click',()=>run('messages'));
+  search.addEventListener('input',renderSelection);
+  selectAll.addEventListener('click',()=>{setSelection(null);updatePreview();});
+  selectNone.addEventListener('click',()=>{setSelection(new Set());updatePreview();});
+  refresh.addEventListener('click',()=>run('refresh'));
   dialogueMode.addEventListener('click',()=>{previewMode='dialogue';updatePreview();});fileMode.addEventListener('click',()=>{previewMode='file';updatePreview();});
   more.addEventListener('click',()=>{visibleEntries+=20;visibleCharacters+=50000;updatePreview();});
   function setBusy(value,action){
-    running=value;for(const node of [inspect,copy,save,format,preset,pdfUser,...Object.values(checks)])node.disabled=value;format.disabled=value||!!replyElement;cancel.hidden=!value;
+    running=value;for(const node of [inspect,copy,save,format,preset,pdfRole,pdfUser,chooseMessages,selectAll,selectNone,refresh,search,selectionMode,dialogueMode,fileMode,...Object.values(checks),...messageList.querySelectorAll('input')])node.disabled=value;format.disabled=value||!!replyElement;cancel.hidden=!value;dialogueMode.disabled=value||format.value==='json';
     for(const node of Object.values(actionButtons)){
       const active=value&&node===actionButtons[action];
       node.setAttribute('aria-busy',String(active));node.querySelector('.li-export-button-spinner').hidden=!active;
@@ -204,25 +269,35 @@
     try{
       if(selectedFormat==='pdf'){
         if(!globalThis.LatexIslandsPDF)throw new Error('PDF export unavailable. Reload ChatGPT after updating the extension.');
-        pdfDocument?.dispose();pdfDocument=null;pdfAbort=new AbortController();
-        pdfDocument=await globalThis.LatexIslandsPDF.prepare({replyElement,includeUser:pdfUser.checked,signal:pdfAbort.signal});
-        if(canceled||core.conversationId(location.pathname)!==id){pdfDocument.dispose();pdfDocument=null;throw new Error('Export cancelled.');}
-        pdfDocument.print();status.dataset.state='success';status.textContent='Choose Save as PDF in the print dialog.';return;
+        pdfAbort=new AbortController();
+        if(!pdfCapture||action==='refresh'){
+          pdfCapture?.dispose();pdfCapture=null;pdfSelection=null;
+          pdfCapture=await globalThis.LatexIslandsPDF.collect({replyElement,includePrecedingPrompt:true,signal:pdfAbort.signal,onProgress(){if(core.conversationId(location.pathname)!==id)cancelExport();}});
+          if(replyElement)pdfSelection=new Set(pdfCapture.messages.filter(entry=>entry.role==='assistant'||pdfUser.checked).map(entry=>entry.key));
+        }
+        if(canceled||core.conversationId(location.pathname)!==id)throw new Error('Export cancelled.');
+        previewRequested=true;previewMode=action==='messages'||action==='refresh'?'messages':'dialogue';
+        await renderPDF();
+        if(canceled||core.conversationId(location.pathname)!==id)throw new Error('Export cancelled.');
+        if(action==='download'){if(!pdfDocument)throw new Error('Select at least one message.');pdfDocument.print();pdfDocument=null;}
+        status.dataset.state='success';return;
       }
-      if(!snapshot||snapshotRevision!==revision){
+      if(!snapshot||snapshotRevision!==revision||action==='refresh'){
         const startedRevision=revision;
         snapshot=await core.collectConversation({id,fetchJSON,onProgress(){
           if(core.conversationId(location.pathname)!==id){cancelExport();throw new Error('Conversation changed. Export cancelled.');}
         }});snapshotRevision=startedRevision;
       }
       if(canceled||core.conversationId(location.pathname)!==id)throw new Error('Export cancelled.');
-      const text=output(snapshot,selectedFormat,selectedOptions);
+      const text=output(snapshot,selectedFormat,{...selectedOptions,selectedMessageIds:textSelection===null?null:[...textSelection]});
       if(previewRequested)updatePreview();
-      if(action==='preview'){previewRequested=true;updatePreview();}
+      if(action==='preview'||action==='messages'||action==='refresh'){previewRequested=true;previewMode=action==='preview'?'dialogue':'messages';updatePreview();}
       else if(action==='copy'){
+        if(selectedFormat!=='json'&&!core.buildTranscript(snapshot,options()).entries.length)throw new Error('Select at least one message.');
         try{await navigator.clipboard.writeText(text);}
         catch{previewRequested=true;updatePreview();throw new Error('Copy unavailable. Download the complete file.');}
       }else{
+        if(selectedFormat!=='json'&&!core.buildTranscript(snapshot,options()).entries.length)throw new Error('Select at least one message.');
         const mime={json:'application/json',md:'text/markdown',txt:'text/plain'}[selectedFormat];
         download(text,mime+';charset=utf-8',core.fileName(snapshot.title,selectedFormat));
       }
@@ -240,7 +315,7 @@
     for(const reply of document.querySelectorAll('main [data-message-author-role="assistant"], [role="main"] [data-message-author-role="assistant"]')){
       if(reply.closest('.li-pdf-root, .li-export')||reply.querySelector('.li-export-reply'))continue;
       const action=button('PDF','li-export-reply');action.setAttribute('aria-label','Export this reply as PDF');
-      action.addEventListener('click',event=>{event.stopPropagation();if(running)return;replyElement=reply;format.value='pdf';preferencesTouched=true;pdfUser.checked=checks.includeUser.checked;show(true);});reply.append(action);
+      action.addEventListener('click',event=>{event.stopPropagation();if(running)return;replyElement=reply;format.value='pdf';preferencesTouched=true;pdfUser.checked=false;show(true);});reply.append(action);
     }
   }
   const observer=new MutationObserver(records=>{

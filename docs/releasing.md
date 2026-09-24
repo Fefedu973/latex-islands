@@ -11,8 +11,8 @@ Before tagging:
 3. Commit the release changes and push the commit. Create and push the corresponding tag, for example:
 
    ```sh
-   git tag v1.4.2
-   git push origin v1.4.2
+   git tag v1.5.0
+   git push origin v1.5.0
    ```
 
 The publish job rejects a tag that differs from `v` plus the package version or has no matching release-notes file. It downloads the **same workflow run's validated artifact**, checks `SHA256SUMS`, and attaches:

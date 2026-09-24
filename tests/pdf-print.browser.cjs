@@ -142,6 +142,9 @@ async function main() {
       const data = await fs.readFile(target);
       const mime = {'.html':'text/html;charset=utf-8','.js':'text/javascript','.css':'text/css','.wasm':'application/wasm','.woff2':'font/woff2','.svg':'image/svg+xml'};
       response.setHeader('Content-Type', mime[path.extname(target)] || 'application/octet-stream');
+      // The initial HTML already says "idle"; delay the script to exercise the
+      // source/channel handshake instead of accidentally clicking before setup.
+      if (pathname === '/island.js') await sleep(200);
       if (holdFonts && pathname.endsWith('.woff2')) { heldFonts.add({response, data}); return; }
       response.end(data);
     } catch (error) { response.writeHead(error.code === 'ENOENT' ? 404 : 500); response.end(String(error)); }
@@ -164,7 +167,13 @@ async function main() {
     await cdp.call('Emulation.setDeviceMetricsOverride', {width:1000,height:900,deviceScaleFactor:1,mobile:false});
     const browser = (await cdp.call('Browser.getVersion')).product;
     await cdp.call('Page.navigate', {url:origin + conversationPath});
-    await until(() => cdp.evaluate(`document.querySelectorAll('.latex-islands-container iframe').length===3&&[...document.querySelectorAll('.latex-islands-container iframe')].every(frame=>frame.contentDocument?.querySelector('.island')?.dataset.state==='idle')`), 'Three ready diagram frames');
+    await until(() => cdp.evaluate(`(() => {
+      const sources=${JSON.stringify(diagrams)},frames=[...document.querySelectorAll('.latex-islands-container iframe')];
+      return frames.length===sources.length&&frames.every((frame,index)=>{
+        const doc=frame.contentDocument,button=doc?.getElementById('render-manual');
+        return doc?.querySelector('.island')?.dataset.state==='idle'&&doc?.getElementById('source')?.value===sources[index]&&button&&!button.hidden;
+      });
+    })()`), 'Three initialized diagram frames');
     for (let index = 0; index < 3; index++) {
       await cdp.evaluate(`document.querySelectorAll('.latex-islands-container iframe')[${index}].contentDocument.getElementById('render-manual').click()`);
       await until(async () => {
@@ -195,6 +204,23 @@ async function main() {
     const cancelled = await until(() => cdp.evaluate(`(() => {const panel=document.querySelector('.li-export-panel');return panel.getAttribute('aria-busy')==='false'?{status:document.querySelector('.li-export-status').textContent,roots:document.querySelectorAll('.li-pdf-root,.li-pdf-document').length,printing:document.body.classList.contains('li-pdf-printing'),calls:window.testPrintCalls}:null;})()`), 'Cancelled PDF operation');
     assert.match(cancelled.status, /cancel/i); assert.equal(cancelled.roots, 0); assert.equal(cancelled.printing, false); assert.equal(cancelled.calls, 0);
     releaseFonts(); reports.push({case:'cancel during font embedding', ...cancelled});
+
+    // Preview is an in-dialog document, not an unexpected print invocation.
+    await cdp.call('Emulation.setDeviceMetricsOverride', {width:1180,height:900,deviceScaleFactor:1,mobile:false});
+    await cdp.evaluate(`document.querySelector('.li-export-inspect').click()`);
+    await until(() => cdp.evaluate(`document.querySelector('.li-export-panel').getAttribute('aria-busy')==='false'&&!!document.querySelector('.li-export-pdf-preview .li-pdf-preview')`), 'Rich in-dialog preview');
+    assert.equal(await cdp.evaluate('window.testPrintCalls'), 0);
+    let shot = await cdp.call('Page.captureScreenshot', {format:'png'});
+    await fs.writeFile(path.join(output, 'pdf-dialog-preview.png'), Buffer.from(shot.data, 'base64'));
+    await cdp.evaluate(`document.querySelector('.li-export-choose-messages').click()`);
+    await until(() => cdp.evaluate(`document.querySelectorAll('.li-export-message-choice input').length===3&&document.querySelector('.li-export-panel').getAttribute('aria-busy')==='false'`), 'Message selection');
+    await cdp.evaluate(`document.querySelector('.li-export-select-none').click();document.querySelectorAll('.li-export-message-choice input')[2].click()`);
+    shot = await cdp.call('Page.captureScreenshot', {format:'png'});
+    await fs.writeFile(path.join(output, 'pdf-dialog-selection.png'), Buffer.from(shot.data, 'base64'));
+    await cdp.evaluate(`document.querySelector('.li-export-inspect').click()`);
+    await until(() => cdp.evaluate(`document.querySelector('.li-export-panel').getAttribute('aria-busy')==='false'&&document.querySelectorAll('.li-export-pdf-preview .li-pdf-message').length===1`), 'Single selected message preview');
+    assert.equal(await cdp.evaluate('window.testPrintCalls'), 0);
+    await cdp.evaluate(`document.querySelector('.li-export-selection-mode').click();document.querySelector('.li-export-select-all').click()`);
 
     async function printCase(name, expectedMessages, expectedDiagrams, trigger) {
       await cdp.call('Emulation.setEmulatedMedia', {media:'screen'});
@@ -260,7 +286,39 @@ async function main() {
     await printCase('conversation', 3, 3, () => cdp.evaluate(`document.querySelector('.li-export-save').click()`));
     await cdp.evaluate(`document.querySelector('.li-export-close').click();document.querySelector('[data-fixture-reply="second"] .li-export-reply').click()`);
     assert.equal(await cdp.evaluate(`document.getElementById('li-export-title').textContent`), 'Export reply');
-    await printCase('reply', 1, 1, () => cdp.evaluate(`document.querySelector('.li-export-inspect').click()`));
+    await printCase('reply', 1, 1, () => cdp.evaluate(`document.querySelector('.li-export-save').click()`));
+
+    // A real scrolling DOM keeps only overlapping windows of messages mounted.
+    // There is no JSON endpoint or reconstructed transcript in this fixture.
+    await cdp.evaluate(`(() => {
+      document.querySelector('.li-export-close').click();
+      const main=document.querySelector('main'),scroller=document.getElementById('app');
+      main.style.cssText='position:relative;height:2400px;margin:0;padding:0';scroller.dataset.scrollRoot='';
+      window.virtualWindows=[];
+      const paint=()=>{const start=Math.max(0,Math.min(6,Math.floor(scroller.scrollTop/200)-1));
+        window.virtualWindows.push(start);
+        main.replaceChildren(...Array.from({length:6},(_,offset)=>{const index=start+offset,node=document.createElement('article');
+          node.dataset.messageAuthorRole=index%2?'assistant':'user';node.dataset.messageId='lazy-'+index;
+          node.dataset.testid='conversation-turn-'+index;node.style.cssText='position:absolute;top:'+(index*200)+'px;height:180px;margin:0';
+          const p=document.createElement('p');p.textContent='VISIBLE_DOM_MESSAGE_'+index;node.append(p);return node;}));};
+      scroller.addEventListener('scroll',paint);scroller.scrollTop=700;paint();
+      window.virtualStartTop=scroller.scrollTop;
+    })()`);
+    const lazy = await cdp.evaluate(`(async()=>{
+      const capture=await LatexIslandsPDF.collect();window.virtualCapture=capture;
+      return {keys:capture.messages.map(entry=>entry.key),windows:[...new Set(window.virtualWindows)],restored:document.getElementById('app').scrollTop,initial:window.virtualStartTop};
+    })()`);
+    assert.deepEqual(lazy.keys, Array.from({length:12}, (_,index) => 'message:lazy-'+index));
+    assert(lazy.windows.length>3, 'The page must actually scroll through several mounted windows');
+    assert.equal(lazy.restored,lazy.initial,'The original scroll position is restored');
+    await cdp.evaluate(`(async()=>{window.virtualDocument=await LatexIslandsPDF.prepare({capture:window.virtualCapture,selectedKeys:['message:lazy-10','message:lazy-1']});window.virtualDocument.print();})()`);
+    assert.deepEqual(await cdp.evaluate(`[...document.querySelectorAll('.li-pdf-active .li-pdf-content p')].map(node=>node.textContent)`),['VISIBLE_DOM_MESSAGE_1','VISIBLE_DOM_MESSAGE_10']);
+    await cdp.call('Emulation.setEmulatedMedia',{media:'print'});
+    assert.equal(await cdp.evaluate(`getComputedStyle(document.getElementById('app')).display`),'none');
+    const lazyPDF=await cdp.call('Page.printToPDF',{preferCSSPageSize:true,printBackground:true,displayHeaderFooter:false});
+    await fs.writeFile(path.join(output,'pdf-selected-history.pdf'),Buffer.from(lazyPDF.data,'base64'));
+    await cdp.evaluate(`window.dispatchEvent(new Event('afterprint'));window.virtualCapture.dispose()`);
+    reports.push({case:'auto-scroll virtualized history and arbitrary selection',...lazy});
     assert.deepEqual(await cdp.evaluate('window.testBridgeRequests'), [], 'PDF export must not request the conversation backend');
     assert(!requests.some(request => request.includes('/backend-api/')));
     assert.deepEqual(cdp.errors, [], 'No browser exceptions');

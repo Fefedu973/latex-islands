@@ -7,6 +7,8 @@
   const STREAMING = '[data-is-streaming="true"], .result-streaming, .streaming-animation, [aria-busy="true"]';
   const OMIT = 'script, style, link, meta, base, iframe, object, embed, form, input, textarea, select, button, dialog, nav, [role="button"], [role="toolbar"], [role="menu"], [contenteditable="true"], [data-testid="composer"], .li-export, .li-export-reply, .latex-islands-editor, animate, animateMotion, animateTransform, set';
   const ASSET_TIMEOUT = 15000;
+  const HISTORY_TIMEOUT = 600000, MAX_SCROLL_STEPS = 2000;
+  const captures = new WeakMap(), elementKeys = new WeakMap(), copyVersions = new WeakMap();
   let sequence = 0, activePrint = null;
   const make = (tag, className, text) => { const node = document.createElement(tag); if (className) node.className = className; if (text) node.textContent = text; return node; };
   const aborted = () => new DOMException('PDF export cancelled.', 'AbortError');
@@ -66,7 +68,7 @@
       // ID. Keep bounded computed paint/type properties before changing IDs,
       // without copying executable markup or globally effective CSS rules.
       const css = getComputedStyle(source);
-      for (const property of ['color','fill','fill-opacity','fill-rule','stroke','stroke-width','stroke-linecap','stroke-linejoin','stroke-dasharray','stroke-dashoffset','stroke-opacity','opacity','font-family','font-size','font-weight','font-style','letter-spacing','text-anchor','dominant-baseline','paint-order','marker-start','marker-mid','marker-end','background-color']) {
+      for (const property of ['color','fill','fill-opacity','fill-rule','stroke','stroke-width','stroke-linecap','stroke-linejoin','stroke-dasharray','stroke-dashoffset','stroke-opacity','opacity','font-family','font-size','font-weight','font-style','letter-spacing','text-anchor','dominant-baseline','paint-order','marker-start','marker-mid','marker-end','background-color','clip-path','mask','filter','transform','transform-origin','transform-box']) {
         let value = css.getPropertyValue(property);
         if (!value) continue;
         value = value.replace(/url\(\s*['"]?([^)'"\s]+)['"]?\s*\)/g, (match, target) => {
@@ -75,6 +77,20 @@
         });
         if (!/url\s*\(/i.test(value.replace(/url\(#[\w:.-]+\)/g, ''))) clone.style.setProperty(property, value);
       }
+    }
+    if (source.localName === 'svg' && !source.parentElement?.closest('svg')) {
+      // Large native diagrams need an intrinsic ratio to shrink onto paper.
+      // Preserve transforms on their children, but constrain the outer viewport.
+      const box = (source.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+      const size = name => /^\d+(?:\.\d+)?(?:px)?$/.test(source.getAttribute(name) || '') ? parseFloat(source.getAttribute(name)) : source.getBoundingClientRect()[name];
+      const width = box.length === 4 && box[2] > 0 ? box[2] : size('width');
+      const height = box.length === 4 && box[3] > 0 ? box[3] : size('height');
+      if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+        if (!source.hasAttribute('viewBox')) clone.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+        clone.style.width = width + 'px'; clone.style.aspectRatio = width + ' / ' + height;
+      }
+      clone.style.setProperty('max-width', '100%', 'important'); clone.style.setProperty('height', 'auto', 'important');
+      clone.style.setProperty('max-height', '180mm', 'important');
     }
   }
   function diagramImage(snapshot) {
@@ -205,12 +221,13 @@
 #${id} .li-pdf-content thead { display:table-header-group; }
 #${id} .li-pdf-content tr { break-inside:avoid; }
 #${id} .li-pdf-content :is(img,canvas) { max-width:100% !important; height:auto; object-fit:contain; break-inside:avoid; }
+#${id} .li-pdf-content svg:not(svg svg) { display:block; max-width:100% !important; height:auto !important; max-height:180mm !important; break-inside:avoid; }
 #${id} .li-pdf-island { display:block; max-width:100%; margin:12pt 0; padding:0; break-inside:avoid; page-break-inside:avoid; }
 #${id} .li-pdf-raw-text { white-space:pre-wrap; }
 #${id} .li-pdf-island-image { display:block; max-width:100% !important; max-height:180mm !important; height:auto !important; object-fit:contain; margin:0 auto; }
 #${id} .katex-mathml, #${id} mjx-assistive-mml { display:none !important; }
 #${id} :is(.katex-display, mjx-container[display="true"]) { max-width:100%; overflow:visible !important; break-inside:avoid; }
-#${id}.li-pdf-preview { display:block !important; width:210mm; max-width:100%; padding:16mm; margin:0 auto; }
+#${id}.li-pdf-preview { display:block !important; box-sizing:border-box; width:210mm; max-width:100%; padding:16mm; margin:0 auto; }
 @media print {
   @page li-pdf-export { size:A4; margin:16mm; }
   html:has(body.li-pdf-printing), body.li-pdf-printing { display:block !important; height:auto !important; min-height:0 !important; max-height:none !important; overflow:visible !important; position:static !important; width:auto !important; margin:0 !important; padding:0 !important; background:#fff !important; }
@@ -228,24 +245,237 @@
     const core = globalThis.LatexIslandsCore;
     return Boolean(core && [...element.querySelectorAll('pre, code, .katex-error')].some(node => core.detectKind(node.getAttribute('data-latex') || node.textContent)));
   }
-  async function prepare({replyElement = null, includeUser = true, signal, onProgress = () => {}} = {}) {
-    check(signal);
+  function pageMessages() {
     const main = document.querySelector('main, [role="main"]');
-    const messages = [...main?.querySelectorAll(MESSAGE) || []].filter(element => {
+    return [...main?.querySelectorAll(MESSAGE) || []].filter(element => {
       if (element.closest(OWN) || element.parentElement?.closest(MESSAGE)) return false;
       for (let parent = element; parent && parent !== main; parent = parent.parentElement) if (!visible(parent)) return false;
       return true;
     });
-    let selected;
-    if (replyElement) {
-      const reply = replyElement.closest?.('[data-message-author-role="assistant"]') || replyElement.querySelector?.('[data-message-author-role="assistant"]');
-      if (!reply || !messages.includes(reply)) throw Error('This reply is no longer on the page. Open it again before exporting.');
-      selected = [reply];
-    } else selected = messages.filter(element => includeUser || element.getAttribute('data-message-author-role') === 'assistant');
-    if (!selected.length) throw Error('There are no rendered messages to export on this page.');
+  }
+  function messageKey(element) {
+    const owner = element.closest('[data-message-id]') || element.querySelector('[data-message-id]');
+    const id = owner?.getAttribute('data-message-id');
+    if (id) return 'message:' + id;
+    if (!elementKeys.has(element)) elementKeys.set(element, 'dom:' + (++sequence));
+    return elementKeys.get(element);
+  }
+  function mediaSignature(element) {
+    return [...element.querySelectorAll('img, svg, canvas, .latex-islands-container')].map(node => node.localName === 'img' ? (node.currentSrc || node.getAttribute('src') || '') + ':' + node.naturalWidth : node.outerHTML).join('|');
+  }
+  function messageText(element) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let node, text = '';
+    while ((node = walker.nextNode())) if (!node.parentElement?.closest(OMIT + ', ' + OWN)) text += node.data;
+    return text;
+  }
+  function turnIndex(element) {
+    const match = element.closest('[data-testid^="conversation-turn-"]')?.getAttribute('data-testid').match(/^conversation-turn-(\d+)$/);
+    return match ? Number(match[1]) : null;
+  }
+  const conversationURL = () => location.origin + location.pathname;
+  const conversationTitle = () => (document.title || '').replace(/\s*[-–|]\s*ChatGPT\s*$/i, '').trim() || 'ChatGPT conversation';
+  function assertFinished(selected, messages = pageMessages()) {
     const lastAssistant = messages.filter(element => element.getAttribute('data-message-author-role') === 'assistant').at(-1);
     if (selected.some(element => element.closest(STREAMING) || element.querySelector(STREAMING) || (element === lastAssistant && document.querySelector('[data-testid="stop-button"]')))) throw Error('Wait for the selected reply to finish generating before exporting to PDF.');
-    const title = (document.title || '').replace(/\s*[-–|]\s*ChatGPT\s*$/i, '').trim() || 'ChatGPT conversation';
+  }
+  function pause(ms, signal) {
+    check(signal);
+    return new Promise((resolve, reject) => {
+      const finish = () => { clearTimeout(timer); signal?.removeEventListener('abort', cancel); resolve(); };
+      const cancel = () => { clearTimeout(timer); signal?.removeEventListener('abort', cancel); reject(aborted()); };
+      const timer = setTimeout(finish, ms); signal?.addEventListener('abort', cancel, {once:true});
+    });
+  }
+  async function readyAssets(root, signal) {
+    const images = [...root.querySelectorAll('img')];
+    for (const element of root.querySelectorAll('svg image')) {
+      const href = element.getAttribute('href') || element.getAttribute('xlink:href');
+      if (href && !href.startsWith('#')) { const image = make('img'); image.src = href; images.push(image); }
+    }
+    await Promise.all(images.map(image => imageReady(image, signal)));
+    if (document.fonts?.ready) await bounded(document.fonts.ready, signal, 'Fonts did not finish loading for PDF export.');
+    check(signal);
+  }
+  async function copyMessage(source, signal, waitForDiagram = false, deadline = Date.now() + ASSET_TIMEOUT) {
+    const originalText = messageText(source);
+    let snapshots;
+    for (;;) {
+      check(signal);
+      if (!source.isConnected || messageText(source) !== originalText) throw Error('The conversation changed during PDF export. Try again.');
+      const snapshotter = globalThis.LatexIslandsDiagramExport?.snapshot;
+      if (!snapshotter && hasIsland(source)) throw Error('LaTeX Island export is unavailable. Reload the page and render the diagrams before exporting.');
+      try {
+        snapshots = snapshotter ? await bounded(snapshotter(source, {signal}), signal, 'A diagram did not finish rendering for PDF export.') : [];
+        if (waitForDiagram && hasIsland(source) && !snapshots.length) throw Error('A LaTeX Island is not ready.');
+        break;
+      } catch (error) {
+        if (!waitForDiagram || Date.now() >= deadline || !/still loading|still rendering|not ready|wait for .*render|finish rendering|diagram is unavailable/i.test(error.message)) throw error;
+        await pause(150, signal);
+      }
+    }
+    check(signal);
+    const replacements = new Map(), removed = new Set();
+    for (const snapshot of snapshots) {
+      if (!snapshot.sourceElement || !source.contains(snapshot.sourceElement)) throw Error('A LaTeX Island changed during PDF export. Try again.');
+      replacements.set(snapshot.sourceElement, snapshot);
+      if (snapshot.containerElement) removed.add(snapshot.containerElement);
+    }
+    const copiedMedia = mediaSignature(source);
+    const section = make('section', 'li-pdf-message'), role = source.getAttribute('data-message-author-role');
+    section.append(make('h2', 'li-pdf-role', role === 'user' ? 'You' : 'ChatGPT'));
+    const content = make('div', 'li-pdf-content'), copy = cloneContent(source, replacements, removed);
+    if (copy) content.append(copy);
+    section.append(content);
+    if (waitForDiagram) await readyAssets(section, signal);
+    if (!source.isConnected || messageText(source) !== originalText) throw Error('The conversation changed during PDF export. Try again.');
+    if (waitForDiagram && mediaSignature(source) !== copiedMedia) {
+      if (Date.now() >= deadline) throw Error('An image or diagram kept changing during PDF capture. Wait for it to finish loading and try again.');
+      await pause(150, signal);
+      return copyMessage(source, signal, true, deadline);
+    }
+    copyVersions.set(section, {text:originalText, media:copiedMedia});
+    return section;
+  }
+  function scrollRoot(main, messages) {
+    for (let node = messages[0]?.parentElement || main; node && node !== document.body; node = node.parentElement) {
+      if (node.scrollHeight > node.clientHeight + 2 && /^(auto|scroll)$/.test(getComputedStyle(node).overflowY)) return node;
+    }
+    return document.scrollingElement || document.documentElement;
+  }
+  function loadingHistory(main, scroller) {
+    const scope = scroller === document.documentElement || scroller === document.body ? document.body : scroller;
+    return [...scope.querySelectorAll('[aria-busy="true"], [role="progressbar"], [data-testid*="loading"], [data-testid*="spinner"]')].some(node => !node.closest(MESSAGE + ', ' + OWN) && visible(node)) || main?.getAttribute('aria-busy') === 'true';
+  }
+  async function settleHistory(main, scroller, signal, sourceURL) {
+    const deadline = Date.now() + ASSET_TIMEOUT;
+    let previous = '', stable = 0;
+    while (Date.now() < deadline) {
+      await pause(120, signal);
+      if (!main.isConnected || sourceURL !== conversationURL()) throw Error('The conversation changed while loading its history. Try again.');
+      const messages = pageMessages();
+      const signature = scroller.scrollHeight + ':' + messages.map(element => messageKey(element) + ':' + messageText(element).length).join('|');
+      if (signature === previous && !loadingHistory(main, scroller)) stable++; else stable = 0;
+      previous = signature;
+      if (stable >= 3) return messages;
+    }
+    throw Error('The conversation history did not finish loading. Wait for ChatGPT and try again.');
+  }
+  function replySelection(replyElement, messages, includePrecedingPrompt) {
+    const reply = replyElement.closest?.('[data-message-author-role="assistant"]') || replyElement.querySelector?.('[data-message-author-role="assistant"]');
+    if (!reply || !messages.includes(reply)) throw Error('This reply is no longer on the page. Open it again before exporting.');
+    const prompt = includePrecedingPrompt ? messages.slice(0, messages.indexOf(reply)).findLast(element => element.getAttribute('data-message-author-role') === 'user') : null;
+    return prompt ? [prompt, reply] : [reply];
+  }
+  async function collect({replyElement = null, includePrecedingPrompt = true, signal, onProgress = () => {}} = {}) {
+    check(signal);
+    const sourceURL = conversationURL(), title = conversationTitle(), main = document.querySelector('main, [role="main"]'), collectionDeadline = Date.now() + HISTORY_TIMEOUT;
+    if (!main) throw Error('There are no rendered messages to export on this page.');
+    let messages = pageMessages();
+    const records = new Map(), order = [], initialReply = replyElement ? replySelection(replyElement, messages, includePrecedingPrompt) : null;
+    async function captureWindow(windowMessages) {
+      check(signal);
+      const keys = windowMessages.map(messageKey);
+      if (new Set(keys).size !== keys.length) throw Error('ChatGPT exposed duplicate message identifiers. Reload the conversation before exporting.');
+      if (order.length && keys.length) {
+        const known = keys.filter(key => records.has(key)), positions = known.map(key => order.indexOf(key));
+        if (!known.length || positions.some((position, index) => index && position <= positions[index - 1]) || (keys.some(key => !records.has(key)) && (positions.at(-1) !== order.length - 1 || keys.slice(0, keys.lastIndexOf(known.at(-1)) + 1).some(key => !records.has(key))))) throw Error('Some messages were skipped while ChatGPT loaded its history. Try again with the conversation open.');
+      }
+      for (const element of windowMessages) {
+        check(signal);
+        if (Date.now() > collectionDeadline) throw Error('The conversation is too long to capture safely in one pass. Try again.');
+        const key = messageKey(element), old = records.get(key);
+        if (old) {
+          if (old.originalText !== messageText(element)) throw Error('The conversation changed while loading its history. Try again.');
+          if (old.mediaSignature === mediaSignature(element)) continue;
+        }
+        let content = null, error = '';
+        try { assertFinished([element]); content = await copyMessage(element, signal, true); }
+        catch (failure) {
+          if (failure.name === 'AbortError' || /conversation changed|diagram or conversation changed/i.test(failure.message) || !element.isConnected || sourceURL !== conversationURL()) throw failure;
+          error = failure.message || 'This message could not be captured for PDF export.';
+        }
+        const role = element.getAttribute('data-message-author-role');
+        const copiedVersion = content && copyVersions.get(content);
+        records.set(key, {key, role, content, error, originalText:copiedVersion?.text ?? messageText(element), turnIndex:turnIndex(element), mediaSignature:copiedVersion?.media ?? mediaSignature(element), preview:(content?.querySelector('.li-pdf-content').textContent || messageText(element)).replace(/\s+/g, ' ').trim().slice(0, 180)});
+        if (!old) order.push(key); onProgress({phase:'messages', completed:order.length, total:null});
+      }
+    }
+    if (initialReply) await captureWindow(initialReply);
+    else {
+      const scroller = scrollRoot(main, messages), originalTop = scroller.scrollTop, originalLeft = scroller.scrollLeft;
+      const oldBehavior = scroller.style.getPropertyValue('scroll-behavior'), oldPriority = scroller.style.getPropertyPriority('scroll-behavior');
+      const deadline = collectionDeadline;
+      scroller.style.setProperty('scroll-behavior', 'auto', 'important');
+      const move = top => { if (typeof scroller.scrollTo === 'function') scroller.scrollTo({top, left:originalLeft, behavior:'instant'}); else scroller.scrollTop = top; };
+      try {
+        onProgress({phase:'history', completed:0, total:null});
+        // Staying at zero allows ChatGPT's own lazy-loading to prepend older
+        // turns. Require a stable top before beginning the downward traversal.
+        let topStable = 0, topSignature = '';
+        for (let attempt = 0; attempt < 30 && topStable < 2; attempt++) {
+          if (Date.now() > deadline) throw Error('The conversation is too long to capture safely in one pass. Try again.');
+          move(0); messages = await settleHistory(main, scroller, signal, sourceURL);
+          const signature = scroller.scrollHeight + ':' + messages.map(messageKey).join('|');
+          const firstTurn = messages.length ? turnIndex(messages[0]) : null;
+          topStable = scroller.scrollTop <= 2 && (firstTurn === null || firstTurn === 0) && signature === topSignature ? topStable + 1 : 0; topSignature = signature;
+        }
+        if (topStable < 2) throw Error('Could not reach the beginning of the conversation. Load the earlier messages and try again.');
+        if ([...main.querySelectorAll('button')].some(button => visible(button) && /(?:load|show) (?:older|earlier|previous|more) messages|charger .*messages|afficher .*messages précédents/i.test(button.textContent))) throw Error('ChatGPT is asking to load earlier messages. Load them first, then try exporting again.');
+        let bottomStable = 0, lastBottom = '', finished = false;
+        for (let step = 0; step < MAX_SCROLL_STEPS; step++) {
+          if (Date.now() > deadline) throw Error('The conversation is too long to capture safely in one pass. Try again.');
+          messages = await settleHistory(main, scroller, signal, sourceURL);
+          if (!messages.length) throw Error('ChatGPT has not loaded this part of the conversation. Try again.');
+          await captureWindow(messages);
+          const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight), atBottom = scroller.scrollTop >= maximum - 2;
+          const signature = maximum + ':' + messages.map(messageKey).join('|');
+          bottomStable = atBottom && signature === lastBottom ? bottomStable + 1 : 0; lastBottom = signature;
+          if (bottomStable >= 2) { finished = true; break; }
+          const next = atBottom ? maximum : Math.min(maximum, scroller.scrollTop + Math.max(1, scroller.clientHeight * .6));
+          if (!atBottom && (scroller.clientHeight <= 0 || next <= scroller.scrollTop)) throw Error('Could not scroll through the complete conversation. Try again.');
+          move(next);
+        }
+        if (!finished) throw Error('Could not reach the end of the conversation safely. Try again.');
+        const turns = order.map(key => records.get(key).turnIndex);
+        if (turns.every(index => index !== null)) {
+          const unique = [...new Set(turns)];
+          if (unique[0] !== 0 || unique.some((index, position) => position && index !== unique[position - 1] + 1)) throw Error('Some conversation turns are missing from the rendered history. Load the conversation again before exporting.');
+        }
+      } finally {
+        if (scroller.isConnected && sourceURL === conversationURL()) { move(originalTop); scroller.scrollLeft = originalLeft; }
+        if (oldBehavior) scroller.style.setProperty('scroll-behavior', oldBehavior, oldPriority); else scroller.style.removeProperty('scroll-behavior');
+      }
+    }
+    check(signal);
+    if (!order.length) throw Error('There are no rendered messages to export on this page.');
+    if (sourceURL !== conversationURL()) throw Error('The conversation changed while loading its history. Try again.');
+    const descriptors = Object.freeze(order.map(key => { const {role, preview, error} = records.get(key); return Object.freeze({key, role, preview, error}); }));
+    const dispose = () => { captures.delete(capture); records.clear(); window.removeEventListener('pagehide', dispose); };
+    const capture = Object.freeze({messages:descriptors, title, sourceUrl:sourceURL, scope:initialReply ? 'reply' : 'conversation', replyKey:initialReply ? messageKey(initialReply.at(-1)) : null, precedingPromptKey:initialReply?.length > 1 ? messageKey(initialReply[0]) : null, dispose});
+    captures.set(capture, {records, order, sourceURL, title}); window.addEventListener('pagehide', dispose, {once:true});
+    onProgress({phase:'ready', completed:order.length, total:order.length}); return capture;
+  }
+  async function prepare({capture = null, selectedKeys = null, roleMode, replyElement = null, includePrecedingPrompt = false, includeUser = true, signal, onProgress = () => {}} = {}) {
+    check(signal);
+    const stored = capture ? captures.get(capture) : null;
+    if (capture && (!stored || stored.sourceURL !== conversationURL())) throw Error('This PDF capture has expired. Load the conversation again.');
+    const mode = ['conversation', 'answers', 'prompts'].includes(roleMode) ? roleMode : includeUser ? 'conversation' : 'answers';
+    const acceptsRole = role => (includeUser || role !== 'user') && (mode === 'conversation' || role === (mode === 'prompts' ? 'user' : 'assistant'));
+    const messages = stored ? [] : pageMessages();
+    let selected;
+    const availableKeys = stored ? stored.order : messages.map(messageKey);
+    if (selectedKeys !== null && (!Array.isArray(selectedKeys) || selectedKeys.some(key => !availableKeys.includes(key)))) throw Error('The selected messages are no longer available. Load the conversation again.');
+    const wanted = selectedKeys === null ? null : new Set(selectedKeys);
+    if (stored) selected = stored.order.filter(key => (!wanted || wanted.has(key)) && acceptsRole(stored.records.get(key).role));
+    else {
+      selected = replyElement ? replySelection(replyElement, messages, includePrecedingPrompt) : messages;
+      selected = selected.filter(element => (!wanted || wanted.has(messageKey(element))) && acceptsRole(element.getAttribute('data-message-author-role')));
+      assertFinished(selected, messages);
+    }
+    if (!selected.length) throw Error('There are no rendered messages to export on this page.');
+    if (stored) for (const key of selected) if (stored.records.get(key).error) throw Error(stored.records.get(key).error);
+    const title = stored ? stored.title : conversationTitle();
     const id = 'li-pdf-document-' + (++sequence), root = make('div', 'li-export li-pdf-root li-pdf-document'), style = make('style');
     root.id = id; root.setAttribute('role', 'document'); root.setAttribute('aria-label', title);
     style.textContent = stylesheet(id); style.dataset.latexIslandsPdf = id;
@@ -261,49 +491,33 @@
     signal?.addEventListener('abort', dispose, {once:true});
     window.addEventListener('pagehide', dispose, {once:true});
     try {
-      const originals = selected.map(source => ({source, text:source.textContent}));
+      const originals = stored ? [] : selected.map(source => ({source, text:messageText(source), media:mediaSignature(source)}));
       for (let index = 0; index < selected.length; index++) {
         check(signal);
-        const source = selected[index];
-        if (!source.isConnected) throw Error('The conversation changed during PDF export. Try again.');
         onProgress({phase:'messages', completed:index, total:selected.length});
-        const snapshotter = globalThis.LatexIslandsDiagramExport?.snapshot;
-        if (!snapshotter && hasIsland(source)) throw Error('LaTeX Island export is unavailable. Reload the page and render the diagrams before exporting.');
-        const snapshots = snapshotter ? await snapshotter(source, {signal}) : [];
-        check(signal);
-        const replacements = new Map(), removed = new Set();
-        for (const snapshot of snapshots) {
-          if (!snapshot.sourceElement || !source.contains(snapshot.sourceElement)) throw Error('A LaTeX Island changed during PDF export. Try again.');
-          replacements.set(snapshot.sourceElement, snapshot);
-          if (snapshot.containerElement) removed.add(snapshot.containerElement);
-        }
-        const section = make('section', 'li-pdf-message'), label = source.getAttribute('data-message-author-role') === 'user' ? 'You' : 'ChatGPT';
-        section.append(make('h2', 'li-pdf-role', label));
-        const content = make('div', 'li-pdf-content'), copy = cloneContent(source, replacements, removed);
-        if (copy) content.append(copy);
-        section.append(content); root.append(section);
+        root.append(stored ? stored.records.get(selected[index]).content.cloneNode(true) : await copyMessage(selected[index], signal));
       }
       check(signal); uniqueIds(root, id + '-'); document.head.append(style); document.body.append(root);
       onProgress({phase:'assets', completed:selected.length, total:selected.length});
-      const images = [...root.querySelectorAll('img')];
-      for (const element of root.querySelectorAll('svg image')) {
-        const href = element.getAttribute('href') || element.getAttribute('xlink:href');
-        if (href && !href.startsWith('#')) { const image = make('img'); image.src = href; images.push(image); }
-      }
-      await Promise.all(images.map(image => imageReady(image, signal)));
-      if (document.fonts?.ready) await bounded(document.fonts.ready, signal, 'Fonts did not finish loading for PDF export.');
+      await readyAssets(root, signal);
       check(signal);
-      if (originals.some(({source,text}) => !source.isConnected || source.textContent !== text)) throw Error('The conversation changed during PDF export. Try again.');
+      if (stored && (!captures.has(capture) || stored.sourceURL !== conversationURL())) throw Error('This PDF capture has expired. Load the conversation again.');
+      if (originals.some(({source,text,media}) => !source.isConnected || messageText(source) !== text || mediaSignature(source) !== media)) throw Error('The conversation changed during PDF export. Try again.');
       onProgress({phase:'ready', completed:selected.length, total:selected.length});
-      return {root, count:selected.length, title, dispose, print() {
+      return {root, count:selected.length, title, dispose, mountPreview(container) {
+        check(signal);
+        if (disposed || printing || !container?.isConnected) throw Error('This PDF preview is no longer available. Prepare it again.');
+        root.classList.add('li-pdf-preview'); container.append(root); return root;
+      }, print() {
         check(signal);
         if (disposed || !root.isConnected) throw Error('This PDF export has expired. Prepare it again.');
         if (printing || activePrint) throw Error('A PDF print dialog is already open.');
         printing = true; activePrint = root; previousTitle = document.title; document.title = title;
+        root.classList.remove('li-pdf-preview'); document.body.append(root);
         root.classList.add('li-pdf-active'); document.body.classList.add('li-pdf-printing'); window.addEventListener('afterprint', dispose, {once:true});
         try { window.print(); } catch (error) { dispose(); throw error; }
       }};
     } catch (error) { dispose(); throw error; }
   }
-  globalThis.LatexIslandsPDF = {prepare};
+  globalThis.LatexIslandsPDF = {collect, prepare};
 })();

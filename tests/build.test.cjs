@@ -77,6 +77,19 @@ test('repeat builds ignore mtimes and line endings and replace only generated br
   await assert.rejects(fs.access(path.join(root,'dist/chrome/stale.txt')));assert.equal(await fs.readFile(path.join(root,'dist/keep.txt'),'utf8'),'leave me');
 });
 
+test('generated engine and browser fixtures never change source archives',async t=>{
+  const {root,write}=await fixture(t),{build}=await load();
+  const before=await build({rootDir:root});
+  await write('tests/engine-fixtures/local-preview.html','PRIVATE GENERATED PREVIEW');
+  await write('tests/engine-fixtures/nested/browser-snapshot.js','PRIVATE GENERATED DATA');
+  await write('tests/engine-fixtures/report.json','PRIVATE GENERATED REPORT');
+  const after=await build({rootDir:root});
+  assert.deepEqual(after.map(item=>item.sha256),before.map(item=>item.sha256));
+  const sources=await unzip(await fs.readFile(path.join(root,'dist/latex-islands-source-1.4.0.zip')));
+  assert.equal([...sources.keys()].some(name=>name.startsWith('tests/engine-fixtures/')),false);
+  assert.ok(sources.has('tests/core.test.cjs'),'The runnable test sources remain included.');
+});
+
 test('build fails before writing on version mismatch or missing Firefox configuration',async t=>{
   const {root,write}=await fixture(t),{build}=await load();await write('package.json',JSON.stringify({version:'9.0.0'}));
   await assert.rejects(build({rootDir:root}),/versions must match/);await assert.rejects(fs.access(path.join(root,'dist')));
