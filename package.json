@@ -1,6 +1,6 @@
 {
   "name": "latex-islands-chatgpt",
-  "version": "1.5.4",
+  "version": "1.5.5",
   "private": true,
   "description": "Local TikZ rendering and configurable conversation exports for ChatGPT",
   "license": "GPL-3.0-or-later",

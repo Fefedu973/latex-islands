@@ -27,7 +27,7 @@ PDF uses ChatGPT's actual rendered content. The extension scrolls the conversati
 
 The PDF exporter does not request the conversation API or reconstruct messages from JSON. Scrolling can trigger ChatGPT's own normal network requests. Content that the site cannot load cannot be recovered by this export. Hidden tool details and collapsed interactive content are not expanded automatically.
 
-The print copy removes navigation, composers and action buttons, uses a light background with page margins, wraps code, and preserves the page's rendered math and rich content. Browser print settings control paper size and optional browser headers and footers; the in-window preview shows the content, while the print dialog shows final pagination.
+The print copy removes navigation, composers and action buttons, uses a light background with page margins, wraps code, and preserves the page's rendered math and rich content. Pale neutral text from dark mode becomes dark ink on paper; diagram colors and deliberately colored text are preserved. Browser print settings control paper size and optional browser headers and footers; the in-window preview shows the content, while the print dialog shows final pagination.
 
 Diagrams are exported as complete vector SVGs with embedded fonts, using their intrinsic proportions and fitting within the page. Preview pan and zoom do not affect their size or crop the drawing. Updated local diagram edits are included. Finish generating replies, render every diagram and apply pending editor changes before exporting; the extension reports unavailable diagrams instead of silently leaving them out.
 

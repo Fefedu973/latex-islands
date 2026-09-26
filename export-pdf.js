@@ -43,6 +43,16 @@
     } catch {}
     return null;
   }
+  function lightNeutral(value) {
+    const color = String(value || '').trim().toLowerCase();
+    const rgb = color.match(/^rgba?\(([^)]+)\)$/), srgb = color.match(/^color\(srgb\s+([^)]+)\)$/);
+    if (!rgb && !srgb) return false;
+    const parts = (rgb || srgb)[1].split(/[\s,/]+/).filter(Boolean);
+    if (parts.length < 3 || parts.length > 4) return false;
+    const channels = parts.slice(0, 3).map(part => parseFloat(part) * (part.endsWith('%') ? 2.55 : srgb ? 255 : 1));
+    const alpha = parts[3] == null ? 1 : parseFloat(parts[3]) / (parts[3].endsWith('%') ? 100 : 1);
+    return channels.every(Number.isFinite) && alpha > 0 && Math.min(...channels) >= 128 && Math.max(...channels) - Math.min(...channels) <= 24;
+  }
   function attributes(source, clone) {
     for (const {name, value} of [...clone.attributes]) {
       const lower = name.toLowerCase();
@@ -67,11 +77,15 @@
       clone.src = src; clone.loading = 'eager'; clone.decoding = 'sync';
     }
     if (clone.localName === 'image' && !url(source.getAttribute('href') || source.getAttribute('xlink:href'), true)) throw Error('An SVG image in this reply cannot be included safely in the PDF.');
-    if (source.closest('svg') && source.isConnected) {
+    let svg = source.closest('svg');
+    while (svg?.parentElement?.closest('svg')) svg = svg.parentElement.closest('svg');
+    const math = source.closest('.katex, mjx-container, math');
+    const paperText = !svg || (math && math.contains(svg));
+    const css = source.isConnected && clone.style ? getComputedStyle(source) : null;
+    if (svg && css) {
       // Mermaid and native SVG charts may have a <style> scoped to their live
       // ID. Keep bounded computed paint/type properties before changing IDs,
       // without copying executable markup or globally effective CSS rules.
-      const css = getComputedStyle(source);
       for (const property of ['color','fill','fill-opacity','fill-rule','stroke','stroke-width','stroke-linecap','stroke-linejoin','stroke-dasharray','stroke-dashoffset','stroke-opacity','opacity','font-family','font-size','font-weight','font-style','letter-spacing','text-anchor','dominant-baseline','paint-order','marker-start','marker-mid','marker-end','background-color','clip-path','mask','filter','transform','transform-origin','transform-box']) {
         let value = css.getPropertyValue(property);
         if (!value) continue;
@@ -80,6 +94,15 @@
           return match;
         });
         if (!/url\s*\(/i.test(value.replace(/url\(#[\w:.-]+\)/g, ''))) clone.style.setProperty(property, value);
+      }
+    }
+    // Host typography can set pale ink on each assistant wrapper (including
+    // local theme variables and !important rules), overriding the paper root.
+    // Normalize only light neutral text, retaining semantic colors and all
+    // standalone diagram paint. Native math SVGs are text, not diagrams.
+    if (paperText && css) {
+      for (const property of ['color', '-webkit-text-fill-color', ...(svg ? ['fill', 'stroke'] : [])]) {
+        if (lightNeutral(css.getPropertyValue(property))) clone.style.setProperty(property, '#171717', 'important');
       }
     }
     if (source.localName === 'svg' && !source.parentElement?.closest('svg')) {

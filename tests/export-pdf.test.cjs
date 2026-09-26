@@ -226,6 +226,30 @@ test('dark redesigned prompt bubbles and copied theme scopes use readable paper 
   assert.equal(sourceScope.dataset.theme,'dark');assert.equal(h.w.getComputedStyle(sourceBubble).backgroundColor,'rgb(27, 27, 27)','The live page theme is not changed');
 });
 
+test('dark assistant text and native math use paper ink while semantic colors and diagram paint remain intact',async t=>{
+  const h=harness(t,`<style>.dark-message{color:rgb(236,236,236)!important;--color-text-primary:#ececec}.dark-message h3{color:rgb(245,245,245)!important}.neutral-fill{-webkit-text-fill-color:rgb(237,237,237)}</style><main>${redesignedTurn(0,{answer:`<div class="dark-message">
+    <h3 class="paper-heading">Heading</h3><p class="paper-prose">Inherited assistant text <strong>and emphasis</strong>.</p>
+    <p class="neutral-fill">Text fill</p><p class="inline-fill" style="-webkit-text-fill-color:rgb(236,236,236)!important">Inline text fill</p><p class="semantic-text" style="color:rgb(20,80,200)">Explicit blue text</p>
+    <span class="katex"><span class="katex-html" aria-hidden="true"><span class="mord">x</span><span class="colored-math" style="color:rgb(180,30,50)">y</span><svg viewBox="0 0 20 20"><path class="math-line" style="fill:rgb(236,236,236);stroke:rgb(236,236,236)" d="M0 0L20 20"/><path class="colored-math-line" style="fill:rgb(180,30,50)" d="M0 0L10 10"/></svg></span></span>
+    <math><mi>x</mi></math>
+    <svg class="native-diagram" viewBox="0 0 20 20"><path style="fill:rgb(236,236,236);stroke:rgb(20,80,200)" d="M0 0L20 20"/><foreignObject><div xmlns="http://www.w3.org/1999/xhtml" class="native-label" style="color:rgb(236,236,236)">Native label</div></foreignObject></svg>
+    </div>`})}</main>`);
+  h.doc.documentElement.dataset.theme='dark';const source=h.get('.dark-message'),before=source.outerHTML;
+  assert.equal(h.w.getComputedStyle(h.get('.paper-prose')).color,'rgb(236, 236, 236)','Reproduces the dark inherited text before export');
+  const pdf=await h.prepare();t.after(pdf.dispose);
+  for(const selector of ['.paper-heading','.paper-prose','.paper-prose strong','.neutral-fill','.katex','.katex .mord'])assert.equal(h.w.getComputedStyle(pdf.root.querySelector(selector)).color,'rgb(23, 23, 23)',selector+' must be readable on white paper');
+  for(const selector of ['.neutral-fill','.inline-fill']){
+    const element=pdf.root.querySelector(selector);
+    assert.equal(h.w.getComputedStyle(element).getPropertyValue('-webkit-text-fill-color'),'rgb(23, 23, 23)');
+    assert.equal(element.style.getPropertyPriority('-webkit-text-fill-color'),'important');
+  }
+  assert.equal(h.w.getComputedStyle(pdf.root.querySelector('.math-line')).fill,'#171717');assert.equal(h.w.getComputedStyle(pdf.root.querySelector('.math-line')).stroke,'#171717');
+  assert.equal(h.w.getComputedStyle(pdf.root.querySelector('.semantic-text')).color,'rgb(20, 80, 200)');
+  assert.equal(h.w.getComputedStyle(pdf.root.querySelector('.colored-math')).color,'rgb(180, 30, 50)');assert.equal(h.w.getComputedStyle(pdf.root.querySelector('.colored-math-line')).fill,'rgb(180,30,50)');
+  assert.equal(h.w.getComputedStyle(pdf.root.querySelector('.native-diagram path')).fill,'rgb(236,236,236)');assert.equal(h.w.getComputedStyle(pdf.root.querySelector('.native-diagram path')).stroke,'rgb(20,80,200)');
+  assert.equal(h.w.getComputedStyle(pdf.root.querySelector('.native-label')).color,'rgb(236, 236, 236)');assert.equal(source.outerHTML,before,'The live message and its dark theme remain unchanged');
+});
+
 test('asset failures and unsafe image URLs prevent incomplete PDFs',async t=>{
   const h=harness(t,'<main><article data-message-author-role="assistant"><img src="/image.png"></article></main>');
   h.w.HTMLImageElement.prototype.decode=async()=>{throw Error('Image decode failed');};
