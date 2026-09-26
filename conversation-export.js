@@ -339,7 +339,7 @@
     // top-layer membership without resetting its options or in-flight export.
     if(wasOpen){try{panel.close?.();panel.showModal?.();}catch{}if(panel.contains(focused))focused.focus();}
   }
-  const controlSelector='.li-export, .li-export-reply';
+  const controlSelector='.li-export:not(.li-pdf-root), .li-export-reply';
   function unownedControl(node){return node.matches(controlSelector)&&node!==root&&![...replyActions.values()].includes(node);}
   function mount(){
     tick=0;

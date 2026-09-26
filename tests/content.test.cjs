@@ -91,7 +91,7 @@ test('a reloaded extension document replaces its port and receives unchanged sou
   const second=h.connect(frame);
   assert.equal(first.port.closed,true);assert.equal(second.length,1);assert.equal(second[0].data.source,SOURCE);
   h.settings({renderColors:'native'});
-  assert.equal(first.length,1);assert.equal(second.at(-1).data.renderColors,'native');
+  assert.equal(first.length,2);assert.equal(first.at(-1).data.type,'document-ping');assert.equal(second.at(-1).data.renderColors,'native');
 });
 
 test('removing a source or iframe stops messages before the next cleanup scan',async t=>{
@@ -324,11 +324,12 @@ test('connected inactive conversation views regain one fresh preview before pain
   }
 });
 
-test('cached cleanup preserves foreign containers and an actively owned srcdoc override',async t=>{
+test('cached cleanup preserves foreign containers and retires an interrupted owned document',async t=>{
   const h=harness({modern:true});t.after(h.close);await h.advance(0);const owned=h.frames()[0];h.connect(owned);
   const foreign=owned.parentElement.cloneNode(true);foreign.querySelector('iframe').src='chrome-extension://another-extension/island.html?parentOrigin=https%3A%2F%2Fchatgpt.com#li-foreign';h.get('assistant').append(foreign);
   owned.setAttribute('srcdoc','');h.get('assistant').append(h.w.document.createTextNode('New token'));await h.advance(60);
-  assert.equal(foreign.isConnected,true);assert.equal(owned.isConnected,true);assert.equal(owned.getAttribute('srcdoc'),'');
+  assert.equal(foreign.isConnected,true);assert.equal(owned.isConnected,false);assert.equal(owned.getAttribute('srcdoc'),'');
+  assert.equal(h.frames().filter(frame=>frame.src.startsWith(EXT)).length,1);
 });
 
 test('resize and result messages require the correct extension origin, source window and island id',async t=>{
@@ -566,7 +567,7 @@ test('September message and code widgets render without legacy role attributes o
 \node {réseau};
 \end{tikzpicture}`;
   const h=harness({modern:true,source});t.after(h.close);await h.advance(60);
-  assert.equal(h.get('assistant').querySelector('pre'),null);
+  assert.equal(h.get('assistant').querySelector('pre:not(.latex-islands-boot-report)'),null);
   assert.equal(h.w.document.querySelector('[data-message-author-role]'),null);
   assert.equal(h.frames().length,1);
   const frame=h.frames()[0],sent=h.connect(frame);assert.equal(sent[0].data.source,source);
@@ -654,7 +655,7 @@ test('host code toggle stays reversible through connection loss, timeout and ret
   const port=h.connect(original);h.message(original,{type:'resize',height:222});port.reply({type:'snapshot-unavailable'});
   assert.equal(toggle().textContent,'Hide code');assert.equal(h.hidden('diagram'),false);
   await h.advance(15000);assert.equal(toggle().textContent,'Hide code');toggle().click();assert.equal(h.hidden('diagram'),true);toggle().click();
-  original.parentElement.querySelector('.latex-islands-boot-retry').click();assert.notEqual(h.frames()[0],original);
+  const replacement=h.frames()[0];await h.advance(15000);replacement.parentElement.querySelector('.latex-islands-boot-retry').click();assert.notEqual(h.frames()[0],replacement);
   assert.equal(toggle().textContent,'Hide code');assert.equal(h.hidden('diagram'),false);assert.equal(toggle().disabled,false);
   h.connect(h.frames()[0]);assert.equal(toggle().textContent,'Hide code');toggle().click();assert.equal(h.hidden('diagram'),true);assert.equal(toggle().textContent,'Show code');
 });
@@ -779,7 +780,7 @@ test('lost iframe connections get a bounded recovery overlay and a new port reus
   const h=harness({modern:true});t.after(h.close);await h.advance(0);const frame=h.frames()[0],first=h.connect(frame),draft=SOURCE.replace('(1,1)','(4,4)');
   h.message(frame,{type:'source-change',source:draft});h.message(frame,{type:'result',ok:true,source:draft});assert.equal(frame.parentElement.querySelector('.latex-islands-boot'),null);
   first.reply({type:'snapshot-unavailable'});assert.equal(first.port.closed,true);assert.ok(frame.parentElement.querySelector('.latex-islands-boot'));assert.equal(h.hidden('diagram'),true);
-  await h.advance(15000);assert.ok(frame.parentElement.querySelector('[role="alert"]'));assert.equal(h.frames()[0],frame);
+  await h.advance(14999);assert.equal(frame.parentElement.querySelector('[role="alert"]'),null);assert.equal(h.frames()[0],frame);
   const second=h.connect(frame);assert.equal(second[0].data.source,draft);h.message(frame,{type:'resize',height:222});assert.equal(frame.parentElement.querySelector('.latex-islands-boot'),null);
   await h.advance(30000);assert.equal(h.frames()[0],frame);assert.notEqual(second.port.closed,true);
 });
@@ -794,7 +795,7 @@ test('bootstrap deadlines are cancelled on removal, disabling and navigation',as
   }
 });
 
-test('bootstrap retry refuses srcdoc and changed conversation identity, and refreshes changed source',async t=>{
+test('bootstrap retry replaces interrupted documents, refuses changed identity, and refreshes source',async t=>{
   for(const changed of ['srcdoc','url','message-id','source']) {
     const h=harness({modern:true});t.after(h.close);await h.advance(15000);const original=h.frames()[0],retry=original.parentElement.querySelector('.latex-islands-boot-retry');
     const next=SOURCE.replace('(1,1)','(7,7)');
@@ -803,7 +804,7 @@ test('bootstrap retry refuses srcdoc and changed conversation identity, and refr
     else if(changed==='message-id')h.get('assistant').querySelector('[data-chatgpt-selection-message-id]').setAttribute('data-chatgpt-selection-message-id','another-message');
     else h.get('diagram').querySelector('code').textContent=next;
     retry.click();
-    if(changed==='source') {assert.notEqual(h.frames()[0],original);assert.equal(h.connect(h.frames()[0])[0].data.source,next);}
+    if(changed==='source' || changed==='srcdoc') {assert.notEqual(h.frames()[0],original);assert.equal(h.connect(h.frames()[0])[0].data.source,changed==='source'?next:SOURCE);}
     else assert.equal(h.frames()[0],original,'retry never overrides a document outside its intended current context');
     if(changed==='srcdoc')assert.equal(original.getAttribute('srcdoc'),'');
   }
@@ -821,11 +822,135 @@ test('new compilation and iframe replacement retain the last height until the ne
   h.settings({scale:1.5});h.message(replacement,{type:'resize',height:360});assert.equal(replacement.style.height,'360px','resizing an already rendered source must not wait for another compiler result');
 });
 
-test('snapshot rejects a srcdoc override without removing it or replacing the iframe',async t=>{
+test('snapshot rejects an interrupted document until its fresh replacement authenticates',async t=>{
   const h=harness({modern:true});t.after(h.close);await h.advance(60);const frame=h.frames()[0],sent=h.connect(frame);
-  frame.setAttribute('srcdoc','');await assert.rejects(h.w.LatexIslandsDiagramExport.snapshot(h.get('diagram')),/diagram is unavailable/);
+  frame.setAttribute('srcdoc','');await assert.rejects(h.w.LatexIslandsDiagramExport.snapshot(h.get('diagram')),/connection is still loading/);
   assert.equal(sent.filter(item=>item.data.type==='snapshot').length,0);await h.advance(60);
-  assert.equal(h.frames()[0],frame);assert.equal(frame.hasAttribute('srcdoc'),true);assert.equal(frame.getAttribute('srcdoc'),'');
+  assert.notEqual(h.frames()[0],frame);assert.equal(frame.isConnected,false);assert.equal(frame.getAttribute('srcdoc'),'');assert.equal(sent.port.closed,true);
+  const replacement=h.frames()[0],second=h.connect(replacement),pending=h.w.LatexIslandsDiagramExport.snapshot(h.get('diagram'));second.reply(snapshotReply(second.at(-1).data));assert.equal((await pending).length,1);
+});
+
+test('delayed document overrides get one fresh renderer, then an explicit retry without changing the old document',async t=>{
+  for(const attribute of ['srcdoc','src']) {
+    const h=harness({modern:true});t.after(h.close);await h.advance(0);const original=h.frames()[0],first=h.connect(original),draft=SOURCE.replace('(1,1)','(8,8)'),next=SOURCE.replace('(1,1)','(2,2)');
+    h.message(original,{type:'source-change',source:draft});h.message(original,{type:'result',ok:true,source:draft});
+    await h.advance(500);h.get('diagram').querySelector('code').textContent=next;original.setAttribute(attribute,attribute==='srcdoc'?'':'about:blank');await tick();
+    const replacement=h.frames()[0];assert.notEqual(replacement,original);assert.equal(first.port.closed,true);assert.equal(original.getAttribute(attribute),attribute==='srcdoc'?'':'about:blank');assert.equal(h.frames().length,1);assert.equal(h.hidden('diagram'),true);
+    assert.match(replacement.src,/^chrome-extension:\/\/test-id\/island\.html\?/);assert.equal(replacement.hasAttribute('srcdoc'),false);
+    h.message(original,{type:'ready'},EXT,original.contentWindow,[{postMessage(){assert.fail('Retired document authenticated');},close(){}}]);
+    const second=h.connect(replacement);assert.equal(second[0].data.source,next,'host edits supersede an old local draft');h.message(replacement,{type:'result',ok:true,source:next});
+    replacement.setAttribute(attribute,attribute==='srcdoc'?'':'https://example.invalid/');await tick();
+    assert.equal(h.frames()[0],replacement);assert.equal(second.port.closed,true);assert.match(replacement.parentElement.querySelector('[role="alert"]').textContent,/interrupted again/);assert.equal(replacement.parentElement.querySelector('.latex-islands-boot-spinner').hidden,true);
+    h.get('assistant').append(h.w.document.createTextNode('More tokens'));h.settings({scale:1.2});await h.advance(60000);assert.equal(h.frames()[0],replacement,'no repeated automatic recreation');
+    replacement.parentElement.querySelector('.latex-islands-boot-retry').click();const retried=h.frames()[0];assert.notEqual(retried,replacement);assert.equal(h.frames().length,1);assert.equal(h.connect(retried)[0].data.source,next);
+  }
+});
+
+test('a lost private connection that never resumes gets one automatic fresh document',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);const original=h.frames()[0],first=h.connect(original);first.reply({type:'snapshot-unavailable'});
+  await h.advance(14999);assert.equal(h.frames()[0],original);await h.advance(1);const replacement=h.frames()[0];assert.notEqual(replacement,original);assert.equal(first.port.closed,true);
+  const second=h.connect(replacement);second.reply({type:'snapshot-unavailable'});await h.advance(15000);assert.equal(h.frames()[0],replacement);assert.match(replacement.parentElement.querySelector('[role="alert"]').textContent,/interrupted again/);
+});
+
+test('failure diagnostics distinguish actual document mutations from private-port timeouts without conversation data',async t=>{
+  for(const failure of ['srcdoc-override','probe-timeout','pagehide-timeout']){
+    const h=harness({modern:true});t.after(h.close);await h.advance(0);let frame=h.frames()[0],port=h.connect(frame);let copied='';
+    Object.defineProperty(h.w.navigator,'clipboard',{value:{writeText:async value=>{copied=value;}}});
+    for(let attempt=0;attempt<2;attempt++){
+      if(failure==='srcdoc-override'){frame.setAttribute('srcdoc','<p>Private document contents</p>');await tick();}
+      else if(failure==='probe-timeout'){frame.dispatchEvent(new h.w.Event('load'));await h.advance(5000);}
+      else{port.reply({type:'snapshot-unavailable'});await h.advance(15000);}
+      if(!attempt){frame=h.frames()[0];port=h.connect(frame);}
+    }
+    const boot=frame.parentElement.querySelector('.latex-islands-boot');assert.equal(boot.getAttribute('data-latex-islands-error-reason'),failure);
+    const details=boot.querySelector('details');assert.equal(details.hidden,false);assert.equal(details.open,false);const report=JSON.parse(boot.querySelector('pre').textContent);
+    assert.equal(report.events.at(-1).reason,failure);assert.equal(report.events.at(-1).event,'boot-error');assert.ok(report.events.some(event=>event.frame===1));assert.ok(report.events.some(event=>event.frame===2));
+    if(failure==='srcdoc-override')assert.equal(report.events.filter(event=>event.event==='frame-attribute'&&event.reason==='srcdoc-added').length,2);
+    if(failure==='pagehide-timeout')assert.equal(report.events.filter(event=>event.reason==='renderer-pagehide').length,2);
+    assert.equal(copied,'','diagnostics stay local until the user explicitly copies');boot.querySelector('.latex-islands-boot-copy-diagnostics').click();await tick();
+    assert.ok(copied.startsWith('{'));assert.ok(!copied.includes(SOURCE));assert.ok(!copied.includes('Private document'));assert.ok(!copied.includes(h.w.location.href));assert.ok(!copied.includes('answer-1'));assert.ok(!copied.includes(EXT));assert.ok(report.events.every(event=>Number.isFinite(event.ms)));
+  }
+});
+
+test('diagnostic history is bounded after many healthy loads and acknowledgements',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);let frame=h.frames()[0],port=h.connect(frame);
+  for(let i=0;i<40;i++){frame.dispatchEvent(new h.w.Event('load'));port.reply({type:'document-pong',requestId:port.at(-1).data.requestId});}
+  frame.setAttribute('srcdoc','');await tick();frame=h.frames()[0];port=h.connect(frame);frame.setAttribute('srcdoc','');await tick();
+  const report=JSON.parse(frame.parentElement.querySelector('.latex-islands-boot-report').textContent);assert.equal(report.events.length,64);assert.equal(report.events.at(-1).event,'boot-error');
+});
+
+test('iframe loads probe the authenticated document and recover only when its acknowledgement is missing',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);const original=h.frames()[0],first=h.connect(original);h.message(original,{type:'result',ok:true,source:SOURCE});
+  original.dispatchEvent(new h.w.Event('load'));const ping=first.at(-1).data;assert.equal(ping.type,'document-ping');
+  first.reply({type:'document-pong',requestId:ping.requestId});await h.advance(6000);assert.equal(h.frames()[0],original);assert.equal(original.parentElement.querySelector('.latex-islands-boot'),null,'ready before load must not cause a loading flash');
+  original.dispatchEvent(new h.w.Event('load'));const unanswered=first.at(-1).data;first.reply({type:'document-pong',requestId:ping.requestId});h.message(original,{type:'document-pong',requestId:unanswered.requestId});
+  await h.advance(4999);assert.equal(h.frames()[0],original);await h.advance(1);const replacement=h.frames()[0];assert.notEqual(replacement,original);assert.equal(first.port.closed,true);
+  const second=h.connect(replacement);replacement.dispatchEvent(new h.w.Event('load'));await h.advance(5000);assert.equal(h.frames()[0],replacement);assert.equal(second.port.closed,true);assert.match(replacement.parentElement.querySelector('[role="alert"]').textContent,/interrupted again/);
+});
+
+test('a new authenticated port cancels an old document probe without losing its draft',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);const frame=h.frames()[0],first=h.connect(frame),draft=SOURCE.replace('(1,1)','(3,3)');h.message(frame,{type:'source-change',source:draft});
+  frame.dispatchEvent(new h.w.Event('load'));const second=h.connect(frame);assert.equal(first.port.closed,true);assert.equal(second[0].data.source,draft);
+  await h.advance(6000);assert.equal(h.frames()[0],frame);assert.notEqual(second.port.closed,true);
+});
+
+test('same DOM and TeX reused for a different conversation or message never inherit its local draft',async t=>{
+  for(const identity of ['url','message']) {
+    const h=harness({modern:true});t.after(h.close);await h.advance(0);const original=h.frames()[0],first=h.connect(original),draft=SOURCE.replace('(1,1)','(99,99)');h.message(original,{type:'source-change',source:draft});
+    if(identity==='url'){h.w.history.replaceState({},'', '/c/other');h.get('assistant').append(h.w.document.createTextNode('Next conversation'));}
+    else h.get('assistant').querySelector('[data-chatgpt-selection-message-id]').setAttribute('data-chatgpt-selection-message-id','answer-2');
+    await h.advance(60);assert.equal(first.port.closed,true);assert.notEqual(h.frames()[0],original);assert.equal(h.frames().length,1);assert.equal(h.connect(h.frames()[0])[0].data.source,SOURCE);
+  }
+});
+
+test('private repair requests append the exact source and error to a textarea draft without submitting',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);const frame=h.frames()[0],sent=h.connect(frame),composer=h.w.document.createElement('textarea');composer.id='prompt-textarea';composer.value='Existing draft';h.w.document.body.append(composer);
+  let inputs=0;composer.addEventListener('input',()=>inputs++);h.w.document.addEventListener('submit',()=>assert.fail('Repair must never submit'));h.w.document.addEventListener('click',()=>assert.fail('Repair must never click Send'));
+  const error='Start of actual error\n'+('TeX log line\n'.repeat(2000))+'Exact final line',request={type:'fix-error',requestId:'fix-1',source:SOURCE,error};
+  h.message(frame,request);assert.equal(composer.value,'Existing draft','public window messages cannot edit the composer');sent.reply(request);sent.reply(request);await h.advance(16);
+  assert.ok(composer.value.startsWith('Existing draft\n\nPlease fix'));assert.ok(composer.value.includes(SOURCE));assert.ok(composer.value.includes(error));assert.equal(inputs,1);assert.equal(composer.selectionStart,composer.value.length);assert.equal(h.w.document.activeElement,composer);
+  const response=sent.at(-1).data;assert.equal(response.type,'fix-error-result');assert.equal(response.requestId,'fix-1');assert.equal(response.ok,true);
+  const draft=composer.value;sent.reply(request);await h.advance(16);assert.equal(composer.value,draft);assert.equal(inputs,1);
+});
+
+test('repair appends through the contenteditable editor, preserves rich draft nodes, and closes the diagram editor',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);const frame=h.frames()[0],sent=h.connect(frame),wrapper=h.w.document.createElement('div'),composer=h.w.document.createElement('div');wrapper.setAttribute('data-chatgpt-composer','');composer.setAttribute('contenteditable','true');composer.innerHTML='<p>Existing <strong>draft</strong><br>Second line</p><div>Second paragraph</div>';wrapper.append(composer);h.w.document.body.append(wrapper);const strong=composer.querySelector('strong');
+  // Editors may represent inserted newlines with BRs instead of text nodes.
+  let inserted;h.w.document.execCommand=(command,showUI,text)=>{assert.equal(command,'insertText');assert.equal(showUI,false);inserted=text;const range=h.w.document.getSelection().getRangeAt(0);assert.equal(range.collapsed,true);const fragment=h.w.document.createDocumentFragment();text.split('\n').forEach((line,index)=>{if(index)fragment.append(h.w.document.createElement('br'));fragment.append(h.w.document.createTextNode(line));});range.insertNode(fragment);return true;};
+  h.message(frame,{type:'open-editor'});assert.ok(h.w.document.querySelector('.latex-islands-is-editing'));
+  sent.reply({type:'fix-error',requestId:'fix-1',source:SOURCE,error:'Unknown `key`'});await h.advance(16);
+  assert.equal(composer.querySelector('strong'),strong);assert.ok(inserted.startsWith('\n\nPlease fix'));assert.equal(h.w.document.querySelector('.latex-islands-is-editing'),null);assert.equal(h.w.document.activeElement,composer);assert.equal(sent.at(-1).data.ok,true);
+});
+
+test('repair reports no-op or framework-reverted composer edits instead of claiming success',async t=>{
+  for(const mode of ['no-op','partial','reverted']){
+    const h=harness({modern:true});t.after(h.close);await h.advance(0);const sent=h.connect(h.frames()[0]),composer=h.w.document.createElement(mode==='reverted'?'textarea':'div');composer.id='prompt-textarea';if(mode==='reverted')composer.value='Keep draft';else{composer.setAttribute('contenteditable','true');composer.textContent='Keep draft';}h.w.document.body.append(composer);
+    if(mode==='reverted')composer.addEventListener('input',()=>queueMicrotask(()=>{composer.value='Keep draft';}));
+    else h.w.document.execCommand=()=>{if(mode==='partial')composer.append('Partial insertion');return true;};
+    sent.reply({type:'fix-error',requestId:'fix-1',source:SOURCE,error:'Missing library'});await h.advance(16);
+    assert.equal(sent.at(-1).data.ok,false);assert.match(sent.at(-1).data.message,/Could not add/);assert.ok((composer.value || composer.textContent).startsWith('Keep draft'));
+    if(mode==='partial')assert.equal(composer.textContent,'Keep draftPartial insertion','partial insertion is never retried automatically');
+  }
+});
+
+test('repair verifies retained DOM text despite CSS collapsing internal spaces in innerText',async t=>{
+  const source=SOURCE.replace('\\draw','\n  \\draw'),error='TeX log:  two spaces\n  indented error';
+  const h=harness({modern:true,source});t.after(h.close);await h.advance(0);const frame=h.frames()[0],sent=h.connect(frame),composer=h.w.document.createElement('div');composer.id='prompt-textarea';composer.setAttribute('contenteditable','true');composer.innerHTML='<p>Keep  <strong>this draft</strong></p><p>Second paragraph</p>';h.w.document.body.append(composer);
+  let layoutReads=0;Object.defineProperty(composer,'innerText',{get(){layoutReads++;return composer.textContent.replace(/\s+/g,' ');}});
+  h.w.document.execCommand=(command,showUI,text)=>{for(const line of text.split('\n')){const paragraph=h.w.document.createElement('p');paragraph.textContent=line;composer.append(paragraph);}return true;};
+  sent.reply({type:'fix-error',requestId:'fix-1',source,error});await h.advance(16);
+  assert.equal(sent.at(-1).data.ok,true);assert.equal(layoutReads,0,'rendered whitespace is unsuitable for verifying the retained draft');assert.ok(composer.textContent.includes('Keep  this draft'));assert.ok(composer.textContent.includes('TeX log:  two spaces'));assert.ok(composer.textContent.includes('  indented error'));
+});
+
+test('repair validates source, error size, composer availability, and old private ports before editing',async t=>{
+  for(const mode of ['source','long-error','no-composer','readonly','hidden','old-port','foreign-message','changed-identity']){
+    const h=harness({modern:true});t.after(h.close);await h.advance(0);const frame=h.frames()[0],sent=h.connect(frame),composer=h.w.document.createElement('textarea');composer.id='prompt-textarea';composer.value='Keep draft';if(mode!=='no-composer')h.w.document.body.append(composer);
+    if(mode==='readonly')composer.readOnly=true;if(mode==='hidden')composer.hidden=true;if(mode==='old-port')h.connect(frame);
+    if(mode==='foreign-message')h.get('assistant').append(composer);
+    if(mode==='changed-identity')h.get('assistant').querySelector('[data-chatgpt-selection-message-id]').setAttribute('data-chatgpt-selection-message-id','different-answer');
+    sent.reply({type:'fix-error',requestId:'fix-1',source:mode==='source'?SOURCE+'changed':SOURCE,error:mode==='long-error'?'e'.repeat(60001):'Compile error'});await h.advance(16);
+    assert.equal(composer.value,'Keep draft');if(mode!=='old-port')assert.equal(sent.at(-1).data.ok,false);else assert.equal(sent.filter(item=>item.data.type==='fix-error-result').length,0);
+  }
 });
 
 test('September copy controls do not end a fence but a following code widget does',async t=>{

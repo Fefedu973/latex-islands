@@ -12,7 +12,7 @@
   const HIDDEN_ATTRIBUTE = 'data-latex-islands-hidden';
   const states = new Map(), ids = new Map(), dirty = new Set();
   const snapshots = new Map(), MAX_SNAPSHOT = 10 * 1024 * 1024;
-  let snapshotSequence = 0;
+  let snapshotSequence = 0, diagnosticSequence = 0;
   const settings = {enabled:true, autoRender:true, scale:1, renderColors:'chatgpt'};
   let timer = 0, timerDue = Infinity, sequence = 0, fullScan = true, editor = null;
   let pageThemeKey = '', storedThemeKey = '', themeStorageReady = false;
@@ -42,7 +42,7 @@
     if(state.hideSource) {if(el.getAttribute(HIDDEN_ATTRIBUTE)!=='true')el.setAttribute(HIDDEN_ATTRIBUTE,'true');}
     else if(el.hasAttribute(HIDDEN_ATTRIBUTE))el.removeAttribute(HIDDEN_ATTRIBUTE);
     const toggle=state.boot?.querySelector('.latex-islands-boot-source');
-    if(toggle){toggle.textContent=state.hideSource?'Show code':'Hide code';toggle.setAttribute('aria-expanded',String(!state.hideSource));}
+    if(toggle){const label=state.hideSource?'Show code':'Hide code',expanded=String(!state.hideSource);if(toggle.textContent!==label)toggle.textContent=label;if(toggle.getAttribute('aria-expanded')!==expanded)toggle.setAttribute('aria-expanded',expanded);}
   }
   function currentSource(el, type) {
     if (type === 'error') return [el.getAttribute('data-latex'), el.textContent, el.getAttribute('title')].find(v => v && core.detectKind(v)) || '';
@@ -122,8 +122,19 @@
     state.port.postMessage({channel:CHANNEL,id:state.id,...data});
     return true;
   }
-  function liveFrame(state) {
-    return ids.get(state.id)===state && !state.documentDetached && state.element.isConnected && state.container?.isConnected && state.frame?.isConnected && state.frame.parentElement===state.container && state.frame.src===state.frameURL;
+  function attachedFrame(state) {return ids.get(state.id)===state && state.element.isConnected && state.container?.isConnected && state.frame?.isConnected && state.frame.parentElement===state.container;}
+  function liveFrame(state) {return attachedFrame(state) && !state.documentDetached && !state.frame.hasAttribute('srcdoc') && state.frame.src===state.frameURL;}
+  function recordDiagnostic(state,event,reason) {
+    state.diagnostics ||= [];state.diagnosticStart ??=Date.now();
+    const source=state.frame?.getAttribute('src') || '';
+    // Record only lifecycle facts. Never retain diagram text, chat/message IDs,
+    // URLs, compiler logs, composer drafts, or iframe document contents.
+    const src=source===state.frameURL?'renderer':!source?'missing':source==='about:blank'?'about-blank':/^https?:/i.test(source)?'web':/^(?:chrome|moz)-extension:/i.test(source)?'extension':'other';
+    state.diagnostics.push({ms:Date.now()-state.diagnosticStart,event,...(reason?{reason}:{}),frame:state.diagnosticFrame || 0,generation:state.generation || 0,src,srcdoc:Boolean(state.frame?.hasAttribute('srcdoc')),ready:Boolean(state.ready),port:Boolean(state.port),attached:Boolean(attachedFrame(state)),detached:Boolean(state.documentDetached),visible:Boolean(state.element?.isConnected && chatgpt.isVisible(state.element.parentElement)),routeChanged:Boolean(state.href && state.href!==location.href),recoveries:state.navigationRecoveries || 0,pageVisible:document.visibilityState==='visible',sinceReadyMs:state.diagnosticReadyAt==null?null:Date.now()-state.diagnosticReadyAt,sinceResultMs:state.diagnosticResult==null?null:Date.now()-state.diagnosticResult.at,lastResult:state.diagnosticResult?.ok ?? null});
+    if(state.diagnostics.length>64)state.diagnostics.splice(0,state.diagnostics.length-64);
+  }
+  function diagnosticReport(state) {
+    return JSON.stringify({extension:'LaTeX Islands',version:chrome.runtime.getManifest?.().version || 'unknown',diagram:state.diagnosticNumber,elapsedMs:Date.now()-(state.diagnosticStart || Date.now()),events:state.diagnostics || []},null,2);
   }
   function sourceForSnapshot(state) {
     const source=currentSource(state.element,state.type);
@@ -149,11 +160,73 @@
   function checkSnapshots() {
     for(const request of snapshots.values())if(!snapshotCurrent(request))request.finish(new Error('The diagram or conversation changed. Try exporting the PDF again.'));
   }
+  async function fixError(state,data) {
+    if(typeof data.requestId!=='string' || !/^fix-\d{1,10}$/.test(data.requestId))return;
+    state.fixResponses ||=new Map();
+    if(state.fixResponses.has(data.requestId)){post(state,state.fixResponses.get(data.requestId));return;}
+    state.fixPending ||=new Set();const pending=state.fixPending;if(pending.has(data.requestId))return;pending.add(data.requestId);
+    const port=state.port;
+    const respond=(ok,message)=>{
+      pending.delete(data.requestId);if(state.port!==port)return;
+      const response={type:'fix-error-result',requestId:data.requestId,ok,...(message?{message}:{})};
+      state.fixResponses.set(data.requestId,response);while(state.fixResponses.size>20)state.fixResponses.delete(state.fixResponses.keys().next().value);
+      try{post(state,response);}catch{ /* A navigating document can close the port before acknowledgement. */ }
+    };
+    if(!liveFrame(state) || state.href!==location.href || assistantFor(state.element)!==state.message || chatgpt.messageId(state.message)!==state.messageId || !state.complete || typeof data.source!=='string' || data.source.length>MAX_SOURCE ||
+      data.source!==(state.draftSource??state.source) || data.source!==state.sentSource || sourceForSnapshot(state)!==state.source ||
+      typeof data.error!=='string' || !data.error.trim() || data.error.length>60000){respond(false,'The diagram changed. Render it again before asking ChatGPT to fix it.');return;}
+    const candidates=[...document.querySelectorAll('#prompt-textarea, [data-chatgpt-composer] textarea, [data-chatgpt-composer] [contenteditable="true"], [data-chatgpt-composer] [contenteditable="plaintext-only"]')];
+    const composer=candidates.find(node=>chatgpt.isVisible(node) && !node.disabled && !node.readOnly && node.getAttribute('aria-readonly')!=='true' &&
+      !node.closest('.latex-islands-container, .latex-islands-editor, .li-export, [data-message-author-role], [data-chatgpt-search-unit-key], [data-chatgpt-selection-message-id]') &&
+      (node.localName==='textarea' || node.matches('[contenteditable="true"], [contenteditable="plaintext-only"]')));
+    if(!composer){respond(false,'The ChatGPT composer is not available. Open the conversation and try again.');return;}
+    const log=data.error;
+    const fence='`'.repeat(Math.max(3,...[... (data.source+log).matchAll(/`+/g)].map(match=>match[0].length+1)));
+    const prompt=['Please fix this TikZ/LaTeX diagram so it renders correctly. Return the corrected diagram in a single tikz Markdown code block.','',fence+'tikz',data.source,fence,'','Renderer error:',fence+'text',log,fence].join('\n');
+    const readComposer=()=>{
+      if(composer.localName==='textarea')return composer.value;
+      // innerText reflects CSS whitespace collapsing, not the draft's retained
+      // text: ordinary paragraph styling can turn a valid TeX log's two spaces
+      // into one. Read text nodes and explicit line/block boundaries instead.
+      const read=node=>{
+        if(node.nodeType===Node.TEXT_NODE)return node.textContent;
+        if(node.nodeType!==Node.ELEMENT_NODE)return '';
+        if(node.localName==='br')return '\n';
+        const text=[...node.childNodes].map(read).join('');
+        return /^(p|div|li|blockquote|pre|h[1-6])$/.test(node.localName)?'\n'+text+'\n':text;
+      };
+      return [...composer.childNodes].map(read).join('');
+    };
+    const existing=readComposer();
+    const insertion=(existing.trim()?'\n\n':'')+prompt;
+    if(editor?.state===state)closeEditor();
+    try{
+      composer.focus();
+      if(composer.localName==='textarea'){
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(composer,existing+insertion);
+        composer.setSelectionRange(composer.value.length,composer.value.length);
+        composer.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:insertion}));
+      }else{
+        const selection=document.getSelection(),range=document.createRange();range.selectNodeContents(composer);range.collapse(false);selection.removeAllRanges();selection.addRange(range);
+        if(typeof document.execCommand!=='function' || !document.execCommand('insertText',false,insertion))throw Error('Composer editing unavailable');
+      }
+      // Verify the editor/framework accepted the draft, including asynchronous
+      // input reconciliation. Never retry insertion automatically after a partial edit.
+      await new Promise(resolve=>{let done=false;const finish=()=>{if(done)return;done=true;clearTimeout(timeout);resolve();};const timeout=setTimeout(finish,100);requestAnimationFrame(finish);});
+      const normalize=text=>text.replace(/\r\n?/g,'\n').replace(/\u00a0/g,' ').split('\n').map(line=>line.trimEnd()).filter(Boolean).join('\n');
+      if(!composer.isConnected || normalize(readComposer())!==normalize(existing+insertion))throw Error('Composer did not retain the request');
+      // Populate the draft only. Sending remains the user's explicit action.
+      respond(true);
+    }catch{respond(false,'Could not add the repair request to the composer. Try again.');}
+  }
   function receiveSnapshot(state,port,data) {
     if(state.port!==port || data?.channel!==CHANNEL || data.id!==state.id)return;
+    if(data.type==='document-pong'){if(state.documentProbe?.port===port && state.documentProbe.requestId===data.requestId){recordDiagnostic(state,'probe-ack');stopDocumentProbe(state);}return;}
+    if(data.type==='fix-error'){fixError(state,data);return;}
     if(data.type==='snapshot-unavailable') {
+      recordDiagnostic(state,'connection-lost','renderer-pagehide');
       cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');
-      state.ready=false;state.port.close();state.port=null;startBootWatchdog(state);return;
+      stopDocumentProbe(state);state.ready=false;state.port.close();state.port=null;startBootWatchdog(state,true);return;
     }
     if(data.type!=='snapshot-result' || typeof data.requestId!=='string')return;
     const request=snapshots.get(data.requestId);
@@ -230,59 +303,87 @@
     const actions=document.createElement('div');actions.className='latex-islands-boot-actions';
     const reveal=document.createElement('button');reveal.type='button';reveal.className='latex-islands-boot-source';
     reveal.textContent=state.hideSource?'Show code':'Hide code';reveal.setAttribute('aria-expanded',String(!state.hideSource));
-    reveal.addEventListener('click',()=>{const hidden=!state.hideSource;state.revealedSource=!hidden;setSourceHidden(state,hidden);});
+    reveal.addEventListener('click',()=>{if(state.boot!==boot || !boot.isConnected)return;const hidden=!state.hideSource;state.revealedSource=!hidden;setSourceHidden(state,hidden);});
     if(state.type==='raw')reveal.hidden=true;
     const retry=document.createElement('button');retry.type='button';retry.textContent='Retry';retry.className='latex-islands-boot-retry';retry.hidden=true;
-    retry.addEventListener('click',()=>retryIsland(state));actions.append(reveal,retry);
-    boot.append(spinner,status,actions);state.boot=boot;state.container.append(boot);state.container.classList.add('latex-islands-booting');
+    retry.addEventListener('click',()=>{if(state.boot===boot && boot.isConnected)retryIsland(state);});actions.append(reveal,retry);
+    const diagnostics=document.createElement('details');diagnostics.className='latex-islands-boot-diagnostics';diagnostics.hidden=true;
+    const summary=document.createElement('summary');summary.textContent='Technical details';
+    const report=document.createElement('pre');report.className='latex-islands-boot-report';
+    const copy=document.createElement('button');copy.type='button';copy.className='latex-islands-boot-copy-diagnostics';copy.textContent='Copy diagnostics';
+    copy.addEventListener('click',async()=>{
+      if(state.boot!==boot || !boot.isConnected)return;
+      try{await navigator.clipboard.writeText(diagnosticReport(state));copy.textContent='Copied';}
+      catch{copy.textContent='Select diagnostics';diagnostics.open=true;const range=document.createRange();range.selectNodeContents(report);const selection=document.getSelection();selection.removeAllRanges();selection.addRange(range);}
+    });diagnostics.append(summary,report,copy);
+    boot.append(spinner,status,actions,diagnostics);state.boot=boot;state.container.append(boot);state.container.classList.add('latex-islands-booting');
   }
   function stopBootWatchdog(state) {clearTimeout(state.bootWatchdog);state.bootWatchdog=0;}
+  function stopDocumentProbe(state) {clearTimeout(state.documentProbe?.timer);state.documentProbe=null;}
+  function probeDocument(state) {
+    stopDocumentProbe(state);if(!state.ready || !state.port || !liveFrame(state))return;
+    state.probeSequence=(state.probeSequence || 0)+1;
+    const probe={port:state.port,requestId:'ping-'+state.probeSequence};state.documentProbe=probe;
+    recordDiagnostic(state,'probe-start');
+    probe.timer=setTimeout(()=>{if(state.documentProbe!==probe)return;stopDocumentProbe(state);restartIsland(state,true,'probe-timeout');},5000);
+    try{post(state,{type:'document-ping',requestId:probe.requestId});}catch{stopDocumentProbe(state);restartIsland(state,true,'probe-send-failed');}
+  }
   function resetBoot(state) {
     state.bootFailed=false;
     if(!state.boot)return;
     const status=state.boot.querySelector('[role="status"], [role="alert"]');status.setAttribute('role','status');status.textContent='Connecting diagram…';
     state.boot.querySelector('.latex-islands-boot-spinner').hidden=false;state.boot.querySelector('.latex-islands-boot-retry').hidden=true;
+    state.boot.querySelector('.latex-islands-boot-diagnostics').hidden=true;state.boot.removeAttribute('data-latex-islands-error-reason');
   }
-  function startBootWatchdog(state) {
+  function failBoot(state,message,reason) {
+    recordDiagnostic(state,'boot-error',reason);
+    addBoot(state);state.bootFailed=true;
+    const status=state.boot.querySelector('[role="status"], [role="alert"]');status.setAttribute('role','alert');status.textContent=message;
+    state.boot.querySelector('.latex-islands-boot-spinner').hidden=true;state.boot.querySelector('.latex-islands-boot-retry').hidden=false;
+    state.boot.setAttribute('data-latex-islands-error-reason',reason || 'unknown');state.boot.querySelector('.latex-islands-boot-report').textContent=diagnosticReport(state);state.boot.querySelector('.latex-islands-boot-diagnostics').hidden=false;
+  }
+  function startBootWatchdog(state,recoverLostDocument=false) {
     stopBootWatchdog(state);
-    if(!liveFrame(state) || state.ready)return;
+    if(!attachedFrame(state) || state.ready)return;
     addBoot(state);resetBoot(state);
     state.bootWatchdog=setTimeout(()=>{
       state.bootWatchdog=0;
-      if(!settings.enabled || state.ready || !liveFrame(state))return;
-      addBoot(state);state.bootFailed=true;
-      const status=state.boot.querySelector('[role="status"]');status.setAttribute('role','alert');
-      status.textContent=state.frame.hasAttribute('srcdoc')?'The diagram preview is unavailable. Reload the conversation or show the code.':'The diagram preview did not connect. Retry or show the code.';
-      state.boot.querySelector('.latex-islands-boot-spinner').hidden=true;
-      state.boot.querySelector('.latex-islands-boot-retry').hidden=state.frame.hasAttribute('srcdoc');
+      if(!settings.enabled || state.ready || !attachedFrame(state))return;
+      if(recoverLostDocument){restartIsland(state,true,'pagehide-timeout');return;}
+      failBoot(state,'The diagram preview did not connect. Retry or show the code.','initial-handshake-timeout');
     },BOOT_TIMEOUT_MS);
   }
-  function retryIsland(state) {
-    // Never undo an external srcdoc override, or revive a document belonging to
-    // another conversation. Recovery is an explicit action in the current page.
-    if(!settings.enabled || !liveFrame(state) || state.frame.hasAttribute('srcdoc') || state.href!==location.href ||
-      assistantFor(state.element)!==state.message || chatgpt.messageId(state.message)!==state.messageId)return;
-    // A click can arrive before the next token scan. Refresh edited host source
-    // first so recovery cannot submit an obsolete diagram or an old local draft.
-    dirty.add(state.message);scan();if(!liveFrame(state))return;
-    stopBootWatchdog(state);cancelSnapshots(state,'The diagram is reconnecting. Wait for it to render, then export again.');
+  function restartIsland(state,automatic=false,reason='manual-retry') {
+    if(!settings.enabled || !attachedFrame(state) || state.href!==location.href || assistantFor(state.element)!==state.message ||
+      chatgpt.messageId(state.message)!==state.messageId || (automatic && state.navigationFailed))return false;
+    recordDiagnostic(state,automatic?'automatic-recovery':'manual-retry',reason);
+    stopBootWatchdog(state);stopDocumentProbe(state);cancelSnapshots(state,'The diagram is reconnecting. Wait for it to render, then export again.');
     state.ready=false;state.port?.close();state.port=null;
+    // A cached page may replace the document while retaining its iframe node.
+    // Retire that document once, never mutate its srcdoc or use its window as a
+    // trusted destination. Repeated interruptions require an explicit retry.
+    if(automatic && state.navigationRecoveries>=1){state.navigationFailed=true;failBoot(state,'The diagram preview was interrupted again. Retry or show the code.',reason);return false;}
+    const recoveries=automatic?(state.navigationRecoveries || 0)+1:0;
+    // Refresh source before rebuilding: late hydration may have changed it in
+    // the same mutation batch as the iframe, invalidating an old local draft.
+    consider(state.element,state.type,sourceForSnapshot(state));if(!attachedFrame(state))return false;
     if(editor?.state===state)closeEditor();
     state.container.remove();state.boot=null;state.sentKey=null;state.sentSource=null;
-    addIsland(state.element,state);send(state);
+    addIsland(state.element,state,recoveries);send(state);return true;
   }
-  function addIsland(el,state) {
-    stopBootWatchdog(state);state.boot=null;state.documentDetached=false;
+  function retryIsland(state) {restartIsland(state);}
+  function addIsland(el,state,navigationRecoveries=0) {
+    stopBootWatchdog(state);stopDocumentProbe(state);state.boot=null;state.documentDetached=false;state.navigationRecoveries=navigationRecoveries;state.navigationFailed=false;
     const container=document.createElement('div');container.className='latex-islands-container latex-islands-booting';
     container.setAttribute('role','region');container.setAttribute('aria-label','TikZ diagram');
     const frame=document.createElement('iframe');frame.title='TikZ diagram — preview, code and download';
     frame.style.height=(state.lastHeight || 222)+'px';
     frame.src=chrome.runtime.getURL('island.html')+'?parentOrigin='+encodeURIComponent(location.origin)+'#'+encodeURIComponent(state.id);
-    state.frameURL=frame.src;state.generation=0;
-    frame.addEventListener('load',()=>{if(state.frame!==frame)return;state.generation++;cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');});
+    state.frameURL=frame.src;state.generation=0;state.diagnosticFrame=(state.diagnosticFrame || 0)+1;state.diagnosticReadyAt=null;state.diagnosticResult=null;
+    frame.addEventListener('load',()=>{if(state.frame!==frame)return;recordDiagnostic(state,'frame-load');state.generation++;cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');probeDocument(state);});
     frame.setAttribute('scrolling','no');frame.setAttribute('allow','clipboard-write');frame.referrerPolicy='no-referrer';
     state.container=container;state.frame=frame;ids.set(state.id,state);
-    container.append(frame);addBoot(state);el.insertAdjacentElement('afterend',container);startBootWatchdog(state);
+    container.append(frame);addBoot(state);el.insertAdjacentElement('afterend',container);recordDiagnostic(state,'frame-created');startBootWatchdog(state);
   }
   const editorBoundsProperties=['--li-editor-left','--li-editor-top','--li-editor-width','--li-editor-height'];
   function trackEditorBounds(active) {
@@ -366,7 +467,7 @@
     sendView(state);state.frame.focus();
   }
   function removeState(el,state) {
-    stopBootWatchdog(state);
+    stopBootWatchdog(state);stopDocumentProbe(state);
     cancelSnapshots(state,'The diagram was removed. Try exporting the current conversation again.');
     state.ready=false;state.port?.close();state.port=null;
     if(editor?.state===state) closeEditor();
@@ -404,7 +505,9 @@
     const kind=core.detectKind(source,type==='code'?chatgpt.language(el):'');
     if(source.length>MAX_SOURCE || !kind) {const old=states.get(el);if(old)removeState(el,old);return;}
     let state=states.get(el);
-    if(!state) {state={id:'li-'+Date.now().toString(36)+'-'+(++sequence),source,type,element:el,updated:Date.now(),complete:false,ready:false,sentSource:null};setSourceHidden(state,false);states.set(el,state);addIsland(el,state);}
+    const message=assistantFor(el),messageId=chatgpt.messageId(message);
+    if(state && (state.href!==location.href || state.message!==message || state.messageId!==messageId)){removeState(el,state);state=null;}
+    if(!state) {state={id:'li-'+Date.now().toString(36)+'-'+(++sequence),diagnosticNumber:++diagnosticSequence,source,type,element:el,updated:Date.now(),complete:false,ready:false,sentSource:null};setSourceHidden(state,false);states.set(el,state);addIsland(el,state);}
     else if(state.source!==source) {setSourceHidden(state,false);state.source=source;state.draftSource=null;state.failedSource=null;state.revealedSource=false;state.updated=Date.now();}
     state.message=assistantFor(el);state.messageId=chatgpt.messageId(state.message);state.href=location.href;
     const streaming=chatgpt.isStreaming(el), settled=Date.now()-state.updated>=SETTLE_MS;
@@ -420,7 +523,8 @@
     for(const state of [...states.values()])rebindHydratedSource(state);
     for(const [el,state]of states) {
       const assistant=assistantFor(el);
-      if(!el.isConnected || !assistant || el.closest(excludedSelector)) removeState(el,state);
+      if(!el.isConnected || !assistant || el.closest(excludedSelector) || state.href!==location.href || state.message!==assistant || state.messageId!==chatgpt.messageId(assistant)) {removeState(el,state);if(assistant)dirty.add(assistant);}
+      else if(attachedFrame(state) && !state.documentDetached && (state.frame.hasAttribute('srcdoc') || state.frame.src!==state.frameURL))restartIsland(state,true,state.frame.hasAttribute('srcdoc')?'srcdoc-override':'src-changed');
       else if(!liveFrame(state)) {
         // React can replace an injected sibling while retaining the original
         // code widget. Rebuild its document without discarding the user's draft.
@@ -456,7 +560,9 @@
       const port=event.ports?.[0];if(!port) return;
       cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');
       state.port?.close();state.port=port;state.ready=true;state.generation++;
-      stopBootWatchdog(state);resetBoot(state);
+      state.diagnosticReadyAt=Date.now();recordDiagnostic(state,'ready');
+      state.navigationFailed=false;state.fixResponses=new Map();state.fixPending=new Set();
+      stopBootWatchdog(state);stopDocumentProbe(state);resetBoot(state);
       port.onmessage=message=>receiveSnapshot(state,port,message.data);port.start?.();send(state,true);
     }
     if(data.type==='resize' && Number.isFinite(data.height) && editor?.state!==state) {
@@ -473,6 +579,7 @@
     if(data.type==='result') {
       if(!state.complete || (typeof data.source==='string' && data.source!==state.sentSource) || state.sentSource!==(state.draftSource??state.source)) return;
       const success=data.ok===true || (typeof data.svg==='string' && data.svg.length>0 && !data.error);
+      state.diagnosticResult={at:Date.now(),ok:success};recordDiagnostic(state,'render-result',success?'success':'failure');
       state.loading=false;state.failedSource=success?null:state.sentSource;state.revealedSource=false;finishBoot(state);
       setSourceHidden(state,success);
     }
@@ -488,10 +595,13 @@
     // Final connectedness misses detach/restore within one mutation batch.
     // Removing an iframe's ancestor discards its document even if the host
     // reattaches that same node from a conversation cache before this callback.
-    for(const state of states.values())if(mutations.some(mutation=>mutation.type==='childList' && [...mutation.removedNodes].some(node=>node===state.frame || node.contains?.(state.frame))))state.documentDetached=true;
+    for(const state of states.values()){
+      for(const mutation of mutations)if(mutation.type==='attributes' && mutation.target===state.frame && ['src','srcdoc'].includes(mutation.attributeName))recordDiagnostic(state,'frame-attribute',mutation.attributeName+'-'+(mutation.oldValue===null?'added':state.frame.hasAttribute(mutation.attributeName)?'changed':'removed'));
+      if(!state.documentDetached && mutations.some(mutation=>mutation.type==='childList' && [...mutation.removedNodes].some(node=>node===state.frame || node.contains?.(state.frame)))){state.documentDetached=true;recordDiagnostic(state,'frame-detached');}
+    }
     // Our own insertions are ignored below, but a host update removing an island
     // still needs a scan even if the mutation contains only extension nodes.
-    for(const state of states.values())if(!liveFrame(state)){dirty.add(assistantFor(state.element));changed=urgent=true;}
+    for(const state of states.values())if(!liveFrame(state) && (!state.navigationFailed || state.documentDetached || !attachedFrame(state))){dirty.add(assistantFor(state.element));changed=urgent=true;}
     for(const mutation of mutations) {
       if(ownNode(mutation.target)) continue;
       const el=mutation.target.nodeType===Node.ELEMENT_NODE?mutation.target:mutation.target.parentElement;
@@ -538,7 +648,7 @@
   });
   window.addEventListener('pagehide',()=>cancelSnapshots(null,'The conversation closed. Try exporting the current conversation again.'));
   window.addEventListener('popstate',checkSnapshots);
-  observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeOldValue:true,attributeFilter:[...new Set([...chatgpt.observedAttributes,'class','data-theme','data-language',HIDDEN_ATTRIBUTE])]});
+  observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeOldValue:true,attributeFilter:[...new Set([...chatgpt.observedAttributes,'class','data-theme','data-language','src','srcdoc',HIDDEN_ATTRIBUTE])]});
   // Theme tracking is independent of diagram detection, including when islands
   // are disabled. One observer batch and palette comparison avoid storage writes
   // for every streamed token, every island, or our own fullscreen class changes.

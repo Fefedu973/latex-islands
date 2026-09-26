@@ -1,6 +1,6 @@
 # LaTeX Islands — TikZ & Export for ChatGPT
 
-Chrome and Firefox desktop Manifest V3 extension · **Version 1.5.2** · English interface
+Chrome and Firefox desktop Manifest V3 extension · **Version 1.5.4** · English interface
 
 Render TikZ diagrams in ChatGPT replies with an interface inspired by its native diagrams: an integrated preview, zoom, drag and a fullscreen editor. ChatGPT continues to display formulas, Markdown and Mermaid. The popup and editor use a monochrome interface. Conversation export provides a configurable transcript and preview based on the site's JSON data.
 
@@ -10,7 +10,7 @@ The Chrome package requires Chrome 116 or newer. The Firefox package requires Fi
 
 ### First installation
 
-1. Fully extract the **Chrome v1.5.2** ZIP into a permanent folder.
+1. Fully extract the **Chrome v1.5.4** ZIP into a permanent folder.
 2. Open `chrome://extensions` and enable **Developer mode**.
 3. Click **Load unpacked**.
 4. Select the extracted folder that directly contains `manifest.json`.
@@ -34,11 +34,11 @@ The extension recognizes `tikzpicture`, `circuitikz`, `axis`, `tikzcd`, `\chemfi
 
 The preview follows the conversation's colors and provides:
 
-- **− / +** to zoom, and drag to move the diagram;
+- **− / +** to zoom, and drag to move the diagram. Click or keyboard-focus an inline preview to zoom with the mouse wheel around the pointer. Move out of the preview or press **Escape** to resume scrolling the conversation. The standalone preview and fullscreen editor accept wheel zoom directly;
 - an **…** menu with **Fit diagram**, **Open editor**, **Copy code**, **Download PNG** and **Download SVG**;
 - a fullscreen editor with code on the left, a preview on the right and **Hide code**;
 - **Update** or **Ctrl / ⌘ + Enter** to compile a local edit;
-- a readable error, **Retry** and access to the code if compilation fails.
+- a readable error, **Retry** and access to the code if compilation fails. In ChatGPT, **Ask ChatGPT to fix** adds the failed code and compiler error to the prompt, preserving any existing draft. Review and send it yourself.
 
 PNG output matches the preview's appearance. SVG output preserves the vector drawing and embeds the fonts it uses. Downloads contain the entire diagram, regardless of the preview's pan position. **LaTeX colors · white background** preserves the drawing's original colors and includes a white background in PNG and SVG exports.
 
@@ -115,6 +115,8 @@ TikZ code must be present in the reply's accessible content. For a diagram writt
 **Manifest not found:** select the folder that directly contains `manifest.json`, not the ZIP or its parent folder.
 
 **Compilation error:** reduce the code to a minimal example. The engine does not download missing packages.
+
+**Preview repeatedly interrupted in an automation-controlled tab:** try a regular Chrome tab outside browser control. Some controlled contexts replace extension frames before their scripts load. **Technical details** on the error shows the connection history; **Copy diagnostics** copies that local report without diagram code or conversation identifiers.
 
 **Export rejected:** make sure the saved conversation is open in a signed-in session, then reload the page. An API change may require an update.
 

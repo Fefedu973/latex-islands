@@ -7,6 +7,9 @@
 .latex-islands-boot button:hover { background:var(--color-surface-hover,var(--surface-hover,#8882)); }
 .latex-islands-boot button:focus-visible { outline:2px solid currentColor; outline-offset:2px; }
 .latex-islands-boot [hidden] { display:none; }
+.latex-islands-boot-diagnostics { flex-basis:100%; min-width:0; max-height:calc(100% - 72px); overflow:auto; text-align:left; }
+.latex-islands-boot-diagnostics summary { width:max-content; max-width:100%; margin:auto; cursor:pointer; }
+.latex-islands-boot-report { max-height:120px; overflow:auto; margin:8px 0; padding:8px; border-radius:8px; background:#8881; white-space:pre-wrap; overflow-wrap:anywhere; font:11px/1.4 ui-monospace,monospace; user-select:text; }
 .latex-islands-boot-spinner { width:16px; height:16px; box-sizing:border-box; border:1.8px solid #8884; border-top-color:currentColor; border-radius:50%; animation:latex-islands-spin .8s linear infinite; }
 @keyframes latex-islands-spin { to { transform:rotate(360deg); } }
 @media(prefers-reduced-motion:reduce) { .latex-islands-boot-spinner { animation:none; } }

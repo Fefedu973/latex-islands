@@ -75,6 +75,7 @@ class CDP {
     });
   }
   async evaluate(expression) {
+    this.lastExpression=expression.slice(0,300);
     const result = await this.call('Runtime.evaluate', {expression, awaitPromise:true, returnByValue:true});
     if (result.exceptionDetails) throw Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
     return result.result.value;
@@ -474,6 +475,102 @@ async function main() {
       cachedNavigations.push({mode,cached,revisit,snapshot,replyButtons:1,headerButtons:1});
     }
     reports.push({case:'Restored cached conversation DOM, including stale iframe placeholders',navigations:cachedNavigations});
+
+    // A cached page may override the new iframe only after it has connected.
+    // Exercise a real document navigation on the active node, not just a stale
+    // detached clone. Recovery must replace the document once, then stop.
+    const waitModernReady=label=>until(async()=>{
+      const state=await cdp.evaluate(`(()=>{const frames=[...document.querySelectorAll('.latex-islands-container iframe')],doc=frames[0]?.contentDocument;return {frames:frames.length,state:doc?.querySelector('.island')?.dataset.state,error:doc?.getElementById('error')?.textContent,alert:document.querySelector('.latex-islands-boot [role="alert"]')?.textContent,boot:!!document.querySelector('.latex-islands-boot'),svg:!!doc?.querySelector('#output svg')}})()`);
+      if(state.state==='error'||state.alert)throw Error(label+': '+(state.alert||state.error));
+      return state.frames===1&&state.state==='ready'&&!state.boot&&state.svg;
+    },label,90000);
+    const beforeRecoveryRequests=requests.filter(request=>request==='/island.js').length;
+    await cdp.evaluate(`(()=>{
+      window.documentRecovery={source:document.querySelector('[data-markdown-copy="code-block"]'),root:document.querySelector('[data-chatgpt-conversation-selection-target]'),original:document.querySelector('.latex-islands-container iframe')};
+      setTimeout(()=>window.documentRecovery.original.setAttribute('srcdoc',''),120);
+    })()`);
+    await until(()=>cdp.evaluate(`document.querySelector('.latex-islands-container iframe')!==window.documentRecovery.original`),'Delayed restored iframe replacement');
+    await waitModernReady('One automatic recovery after delayed cached-page override');
+    const automaticRecovery=await cdp.evaluate(`(async()=>{
+      const recovery=window.documentRecovery;recovery.replacement=document.querySelector('.latex-islands-container iframe');
+      const items=await LatexIslandsDiagramExport.snapshot(recovery.source);
+      return {sameSource:recovery.source===document.querySelector('[data-markdown-copy="code-block"]'),sameRoot:recovery.root===document.querySelector('[data-chatgpt-conversation-selection-target]'),oldConnected:recovery.original.isConnected,oldOverrideRetained:recovery.original.hasAttribute('srcdoc'),newOverride:recovery.replacement.hasAttribute('srcdoc'),snapshot:items.length===1&&items[0].sourceElement===recovery.source&&items[0].svg.includes('<svg')};
+    })()`);
+    assert.deepEqual(automaticRecovery,{sameSource:true,sameRoot:true,oldConnected:false,oldOverrideRetained:true,newOverride:false,snapshot:true});
+    assert.equal(requests.filter(request=>request==='/island.js').length-beforeRecoveryRequests,1,'A delayed override creates exactly one new renderer');
+    await cdp.evaluate(`window.documentRecovery.replacement.setAttribute('srcdoc','')`);
+    await until(()=>cdp.evaluate(`!!document.querySelector('.latex-islands-boot [role="alert"]')`),'Repeated active-frame override stops with explicit recovery controls');
+    const boundedRecovery=await cdp.evaluate(`(async()=>{
+      const recovery=window.documentRecovery,samples=[];
+      for(let i=0;i<20;i++){await new Promise(resolve=>requestAnimationFrame(resolve));samples.push({sameFrame:document.querySelector('.latex-islands-container iframe')===recovery.replacement,frames:document.querySelectorAll('.latex-islands-container iframe').length});}
+      const boot=document.querySelector('.latex-islands-boot');
+      return {alert:boot.querySelector('[role="alert"]').textContent,retryVisible:!boot.querySelector('.latex-islands-boot-retry').hidden,spinnerHidden:boot.querySelector('.latex-islands-boot-spinner').hidden,sourceHidden:getComputedStyle(recovery.source).display==='none',sameFrame:samples.every(sample=>sample.sameFrame),maxFrames:Math.max(...samples.map(sample=>sample.frames)),overrideRetained:recovery.replacement.hasAttribute('srcdoc')};
+    })()`);
+    assert.match(boundedRecovery.alert,/interrupted again/i);assert(boundedRecovery.retryVisible&&boundedRecovery.spinnerHidden&&boundedRecovery.sourceHidden&&boundedRecovery.sameFrame&&boundedRecovery.overrideRetained);assert.equal(boundedRecovery.maxFrames,1);
+    assert.equal(requests.filter(request=>request==='/island.js').length-beforeRecoveryRequests,1,'Repeated overrides cannot cause an automatic reload loop');
+    await cdp.evaluate(`document.querySelector('.latex-islands-boot-retry').click()`);
+    await waitModernReady('Explicit Retry recovers the interrupted active iframe');
+    const explicitRecovery=await cdp.evaluate(`(async()=>{
+      const recovery=window.documentRecovery,frame=document.querySelector('.latex-islands-container iframe'),items=await LatexIslandsDiagramExport.snapshot(recovery.source);
+      return {freshFrame:frame!==recovery.replacement,oldConnected:recovery.replacement.isConnected,oldOverrideRetained:recovery.replacement.hasAttribute('srcdoc'),sourceMatches:frame.contentDocument.getElementById('source').value===${JSON.stringify(diagrams[0])},snapshot:items.length===1&&items[0].svg.includes('<svg')};
+    })()`);
+    assert.deepEqual(explicitRecovery,{freshFrame:true,oldConnected:false,oldOverrideRetained:true,sourceMatches:true,snapshot:true});
+    assert.equal(requests.filter(request=>request==='/island.js').length-beforeRecoveryRequests,2);
+    reports.push({case:'Delayed active iframe override after restoration: one automatic recovery, bounded repeat, explicit Retry',automaticRecovery,boundedRecovery,explicitRecovery});
+
+    // Real browser input also checks scroll chaining across the iframe boundary.
+    // Give the synthetic conversation room on either side of the diagram.
+    await cdp.evaluate(`(async()=>{
+      const root=document.querySelector('[data-chatgpt-conversation-selection-target]'),scroll=document.querySelector('[data-app-action-timeline-scroll]');
+      window.wheelFixture={root,scroll,top:scroll.scrollTop,spacers:[]};
+      for(const position of ['prepend','append']){const spacer=document.createElement('div');spacer.style.height='700px';spacer.setAttribute('data-wheel-fixture','');root[position](spacer);window.wheelFixture.spacers.push(spacer);}
+      document.querySelector('.latex-islands-container iframe').scrollIntoView({block:'center'});
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      window.wheelFixture.top=scroll.scrollTop;
+    })()`);
+    const wheelPoint=()=>cdp.evaluate(`(()=>{const f=document.querySelector('.latex-islands-container iframe'),r=f.getBoundingClientRect(),v=f.contentDocument.getElementById('viewport').getBoundingClientRect();return {x:r.left+v.left+v.width*.62,y:r.top+v.top+v.height*.56}})()`);
+    const wheelState=()=>cdp.evaluate(`(()=>{const doc=document.querySelector('.latex-islands-container iframe').contentDocument,v=doc.getElementById('viewport');return {top:window.wheelFixture.scroll.scrollTop,transform:doc.getElementById('output').style.transform,focused:doc.activeElement===v,outline:doc.defaultView.getComputedStyle(v).outlineStyle}})()`);
+    const clickAt=async point=>{await cdp.call('Input.dispatchMouseEvent',{type:'mouseMoved',...point});await cdp.call('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});await cdp.call('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});};
+    await clickAt({x:30,y:150});
+    let point=await wheelPoint();await cdp.call('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+    const unfocusedBefore=await wheelState();assert.equal(unfocusedBefore.focused,false);
+    await cdp.call('Input.dispatchMouseEvent',{type:'mouseWheel',...point,deltaX:0,deltaY:100});
+    await until(async()=>Math.abs((await wheelState()).top-unfocusedBefore.top)>10,'Unfocused wheel scrolls the conversation through the iframe');
+    const unfocusedAfter=await wheelState();assert.equal(unfocusedAfter.transform,unfocusedBefore.transform);
+    await cdp.evaluate(`(async()=>{window.wheelFixture.scroll.scrollTop=window.wheelFixture.top;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));})()`);
+    point=await wheelPoint();await clickAt(point);
+    const focusedBefore=await wheelState();assert.equal(focusedBefore.focused,true);assert.equal(focusedBefore.outline,'none');
+    const anchorBefore=await cdp.evaluate(`(()=>{const f=document.querySelector('.latex-islands-container iframe'),r=f.getBoundingClientRect(),v=f.contentDocument.getElementById('viewport').getBoundingClientRect();return {x:${point.x}-r.left-v.left-v.width/2,y:${point.y}-r.top-v.top-v.height/2}})()`);
+    await cdp.call('Input.dispatchMouseEvent',{type:'mouseWheel',...point,deltaX:0,deltaY:-100});
+    await until(async()=>(await wheelState()).transform!==focusedBefore.transform,'Focused ordinary wheel zooms the diagram');
+    const focusedAfter=await wheelState();assert(Math.abs(focusedAfter.top-focusedBefore.top)<1,'Focused zoom must preserve conversation position');
+    const transform=value=>{const match=value.match(/translate\(([-.\d]+)px,\s*([-.\d]+)px\)\s*scale\(([-.\d]+)\)/);assert(match,'Expected a measured diagram transform: '+value);return {x:+match[1],y:+match[2],scale:+match[3]};};
+    const from=transform(focusedBefore.transform),to=transform(focusedAfter.transform);
+    assert(to.scale>from.scale);assert(Math.abs((anchorBefore.x-from.x)/from.scale-(anchorBefore.x-to.x)/to.scale)<.1);assert(Math.abs((anchorBefore.y-from.y)/from.scale-(anchorBefore.y-to.y)/to.scale)<.1);
+    await cdp.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:30,y:150});
+    point=await wheelPoint();await cdp.call('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+    const reenteredBefore=await wheelState();assert.equal(reenteredBefore.focused,false,'Leaving deactivates ordinary wheel zoom; re-entering alone does not activate it');
+    await cdp.call('Input.dispatchMouseEvent',{type:'mouseWheel',...point,deltaX:0,deltaY:100});
+    await until(async()=>Math.abs((await wheelState()).top-reenteredBefore.top)>10,'Wheel scrolls the conversation after leaving and re-entering');
+    const reenteredAfter=await wheelState();assert.equal(reenteredAfter.transform,reenteredBefore.transform);
+    await cdp.evaluate(`(async()=>{const fixture=window.wheelFixture;fixture.spacers.forEach(node=>node.remove());fixture.scroll.scrollTop=0;const doc=document.querySelector('.latex-islands-container iframe').contentDocument;doc.getElementById('viewport').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));})()`);
+    reports.push({case:'Real mouse wheel: page scroll until clicked, pointer-anchored zoom, scroll restored on leave',unfocusedScroll:unfocusedAfter.top-unfocusedBefore.top,focusedScroll:focusedAfter.top-focusedBefore.top,scaleBefore:from.scale,scaleAfter:to.scale,reenteredScroll:reenteredAfter.top-reenteredBefore.top,focusOutline:focusedBefore.outline});
+    await cdp.evaluate(`(()=>{
+      const source=document.querySelector('[data-markdown-copy="code-block"]'),broken=source.cloneNode(true);
+      broken.classList.remove('latex-islands-original-hidden');broken.removeAttribute('data-latex-islands-hidden');broken.setAttribute('data-error-fixture','');
+      broken.querySelector('code').textContent=${JSON.stringify(String.raw`\begin{tikzpicture}\node {\FixtureUndefinedCommand};\end{tikzpicture}`)};
+      source.parentElement.append(broken);window.errorFixture=broken;
+    })()`);
+    await until(()=>cdp.evaluate(`window.errorFixture.nextElementSibling?.querySelector('iframe')?.contentDocument?.querySelector('.island')?.dataset.state==='error'`),'Real compiler error panel',90000);
+    const errorLayout=await cdp.evaluate(`(()=>{
+      const frame=window.errorFixture.nextElementSibling.querySelector('iframe'),doc=frame.contentDocument,panel=doc.getElementById('error-panel'),rect=panel.getBoundingClientRect();
+      return {visible:!panel.hidden,width:rect.width,left:rect.left,right:rect.right,viewportWidth:doc.documentElement.clientWidth,overflow:doc.documentElement.scrollWidth-doc.documentElement.clientWidth,title:doc.getElementById('error-title').textContent,message:doc.getElementById('error').textContent,retry:!doc.getElementById('retry').hidden&&doc.getElementById('retry').getBoundingClientRect().width>0,showCode:doc.getElementById('error-source').getBoundingClientRect().width>0,askFixHidden:doc.getElementById('ask-fix').hidden};
+    })()`);
+    assert(errorLayout.visible&&errorLayout.width>100&&errorLayout.left>=0&&errorLayout.right<=errorLayout.viewportWidth+1);assert(errorLayout.overflow<=1);assert.match(errorLayout.title,/Could not render/);assert(errorLayout.message.length>0);assert(errorLayout.retry&&errorLayout.showCode);assert(errorLayout.askFixHidden,'ChatGPT-only composition stays unavailable on the local test origin');
+    shot=await cdp.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,'chatgpt-compiler-error.png'),Buffer.from(shot.data,'base64'));
+    reports.push({case:'Real compiler error keeps finite readable actions within the inline viewport',...errorLayout});
+    await cdp.evaluate(`window.errorFixture.remove()`);
+    await until(()=>cdp.evaluate(`document.querySelectorAll('.latex-islands-container iframe').length===1`),'Broken test diagram cleanup');
     shot=await cdp.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,'chatgpt-september-inline.png'),Buffer.from(shot.data,'base64'));
     await cdp.call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
     await cdp.evaluate(`window.modernFrame=document.querySelector('.latex-islands-container iframe');window.modernFrame.contentDocument.getElementById('open-editor').click()`);
@@ -590,7 +687,7 @@ async function main() {
     await fs.writeFile(path.join(output, 'pdf-print-report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
   } catch (error) {
-    console.error(JSON.stringify({browserErrors:cdp?.errors,requests:requests.slice(-15),stderr}, null, 2));
+    console.error(JSON.stringify({completedCases:reports.map(report=>report.case),lastExpression:cdp?.lastExpression,browserErrors:cdp?.errors,requests:requests.slice(-15),stderr}, null, 2));
     throw error;
   } finally {
     releaseFonts();releaseIslands();

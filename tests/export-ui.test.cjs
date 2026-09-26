@@ -38,7 +38,7 @@ function installPDF(h){
     async prepare(settings){
       prepares.push(settings);
       const entries=settings.capture.messages.filter(entry=>(settings.selectedKeys===null||settings.selectedKeys.includes(entry.key))&&(settings.roleMode==='conversation'||entry.role===(settings.roleMode==='prompts'?'user':'assistant')));
-      const root=h.w.document.createElement('div');root.className='li-pdf-root';
+      const root=h.w.document.createElement('div');root.className='li-export li-pdf-root li-pdf-document';
       for(const entry of entries){const paragraph=h.w.document.createElement('p'),strong=h.w.document.createElement('strong');strong.textContent=entry.preview;paragraph.dataset.messageKey=entry.key;paragraph.append(strong);root.append(paragraph);}
       const prepared={root,disposed:false,mountPreview(container){mounts.push(entries.map(entry=>entry.key));container.append(root);},print(){prints.push(entries.map(entry=>entry.key));this.dispose();},dispose(){this.disposed=true;root.remove();}};
       documents.push(prepared);return prepared;
@@ -428,6 +428,15 @@ test('PDF Preview mounts rich content and only Save PDF invokes printing without
   assert.equal(h.get('.li-export-status').dataset.state,'success');
   h.get('.li-export-close').click();assert.equal(pdf.captures[0].disposed,true);
   h.get('.li-export-toggle').click();h.format('md');assert.equal(h.get('.li-export-copy').hidden,false);assert.equal(h.get('.li-export-save').getAttribute('aria-label'),'Download');
+});
+
+test('PDF preview documents sharing the export styling class survive delayed control cleanup',async t=>{
+  const h=harness();t.after(h.close);const pdf=installPDF(h);
+  h.get('.li-export-toggle').click();h.format('pdf');h.get('.li-export-inspect').click();await h.settle();
+  const prepared=pdf.documents.at(-1),preview=prepared.root;assert.equal(preview.classList.contains('li-export'),true);
+  await h.remount();await h.remount();
+  assert.equal(preview.isConnected,true);assert.equal(preview.parentElement,h.get('.li-export-pdf-preview'));assert.equal(prepared.disposed,false);
+  assert.equal(preview.querySelectorAll('p').length,4);assert.equal(h.get('.li-export-panel').hidden,false);assert.equal(pdf.prepares.length,1);
 });
 
 test('each reply has one PDF action which exports that reply and restores conversation scope on header open',async t=>{

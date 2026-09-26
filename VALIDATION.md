@@ -1,4 +1,4 @@
-# Validation — 1.5.2
+# Validation — 1.5.4
 
 This file describes reproducible checks and their scope. It does not claim Chrome Web Store or Mozilla approval. No private conversations, account exports, HAR captures or credentials are part of the public fixtures.
 
@@ -12,6 +12,7 @@ npm test
 npm run test:engine
 npm run test:fonts
 npm run test:pdf
+npm run test:chrome
 npm run build
 npm run lint:firefox
 node tests/firefox-smoke.mjs
@@ -22,6 +23,31 @@ node tests/firefox-smoke.mjs
 The Firefox smoke test requires Firefox installed locally. Set `FIREFOX_BINARY` to its executable if it is not at the default location. It copies `dist/firefox` into a temporary directory, installs that copy into a new temporary profile, runs headless, then removes its own test directory. The test copy adds a localhost fixture origin and reporting instrumentation; the release package and personal browser profiles are not modified.
 
 The font regression test requires Chrome or Edge (`CHROME_BINARY` can override discovery). It opens an isolated headless profile, serves the production island with a synthetic cached compilation, and deliberately delays bundled WOFF2 responses. It verifies that the loading indicator remains until the required faces load, then compares diagram pixels before and after hover in dark, light and native color modes. Screenshots and a report remain in the temporary directory printed by the test; the browser profile is removed.
+
+## Version 1.5.4 navigation diagnosis — 2026-09-26
+
+Final checks passed: 364 unit/integration tests, the complete Chromium PDF/layout suite, the combined Chrome 154 MV3 navigation and repair-prompt test, and the Firefox 156 extension smoke test. Firefox lint reports zero errors, zero notices and the existing Firefox for Android minimum-version warning. The font regression remains unchanged and passed in dark, light and native colors.
+
+The 1.5.4 runtime diagnostic showed an external `srcdoc` attribute being added 6–7 ms after each frame was created, before any load, ready or compilation event. The first replacement was affected too. The user then confirmed that the same conversation navigation works in a fresh Chrome tab opened manually outside Codex browser control. The repeated live failure is isolated to the controlled-tab context, not reproduced by normal navigation. No attempt hides frames from browser protections or removes an overriding attribute in place.
+
+An actual Chrome 154.0.8037.57 MV3 test uses a temporary extension copy and a new isolated profile, with the production service worker, offscreen compiler and private ports. Cloned cache, hidden connected cache and synchronous detach/reinsert each pass A → B → A, with successful vector snapshots and no unexpected recreation. Private liveness replies arrive in 0–13 ms. `node tests/chromium-extension-navigation.mjs` reproduces that check; only the temporary copy permits its synthetic localhost parent.
+
+The same MV3 test compiles invalid TeX, clicks the production repair button and checks insertion through the real contenteditable editor. Its two-paragraph draft and original bold node survive, the full failed source and compiler error are present, and no submit or Send click occurs. It caught a false failure from CSS-collapsed `innerText`; verification now reads DOM text and line boundaries while retaining no-op, partial-insertion and framework-revert checks. This actual-extension test is included in CI and requires Chrome 138+ (`CHROME_BINARY` overrides executable discovery).
+
+The connection error exposes a bounded local technical report with relative times and frame state, excluding source code, conversation URLs and message identifiers. Additional tests validate the report and explicit clipboard copying. Temporary MAIN-world writer hooks were removed after the manual isolation test; they are not included in the extension.
+
+## Version 1.5.3 navigation and interaction validation — 2026-09-26
+
+The user still reproduced the unavailable preview after navigating A → B → A with 1.5.2. This update covers a replaced document inside a retained iframe, rather than only detached or cloned conversation DOM.
+
+- All 361 unit/integration tests passed. New cases cover one automatic recovery after a delayed `srcdoc` or `src` override, a finite second failure with explicit Retry, missing private-port acknowledgements, ready-before-load ordering, and fresh identity when a different conversation reuses the same DOM and TeX. An invalid frame no longer causes an observer loop by repeatedly rewriting its unchanged Show code label.
+- Chrome 154.0.8037.57 passed the isolated navigation regression with production code and the real TeX engine. After a delayed document override the replacement renders and provides a PDF snapshot. A second override stays on one frame for twenty animation frames, shows a finite error, and successfully renders after Retry. The old overridden document is retired without modifying its attributes or relaxing origin/port checks.
+- Real mouse input scrolls the conversation by 100 px while the inline preview is inactive, changes only diagram zoom after clicking it, and resumes page scrolling after leaving and returning. The point under the pointer remains fixed; no white focus outline appears. Keyboard Escape, focus transfer and window blur release activation; blur also cancels a captured drag.
+- A real TeX failure keeps its message and Retry/Show code actions inside the preview without overflow. Ask ChatGPT is intentionally unavailable in the standalone localhost fixture. DOM tests verify that a compilation repair appends exact code and error to an existing textarea or rich editable draft, checks accepted text after input reconciliation, ignores old/public channels, and never submits. Missing, read-only, reverted and partially accepting editors return an error without a second insertion.
+- The first-paint font regression passed in dark, light and native colors, with zero changed diagram pixels after hover.
+- A separate export regression preserves the PDF document across two delayed toolbar-cleanup passes. This fixes the prior CI failure where cleanup removed its `.li-pdf-root` alongside stale controls.
+
+These are controlled browser and DOM fixtures. The user still reproduced "The diagram preview was interrupted again" with 1.5.3. Version 1.5.4 subsequently isolated that failure to the automation-controlled tab, as recorded above. These tests do not establish compatibility with every ChatGPT rollout or store approval.
 
 ## Version 1.5.2 integration validation — 2026-09-26
 

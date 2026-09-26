@@ -6,6 +6,7 @@ const island=document.querySelector('.island'),viewport=$('viewport');
 let current=null,parentOrigin=null,version=0,svgNode=null,previewCompiler=null,busy=false,warmed=false;
 let renderAbort=null,suspended=false;
 let renderedSource=null;
+let failedDiagram=null,fixRequest=null,fixSequence=0;
 const snapshotRequests=new Map(),MAX_SNAPSHOT=10*1024*1024;
 let viewMode='inline',editor=false,zoomValue=1,fitScale=1,panX=0,panY=0,naturalWidth=500,naturalHeight=260,drag=null;
 const ownOrigin=location.protocol+'//'+location.host;
@@ -136,10 +137,13 @@ function setAvailable(available){
   viewport.classList.toggle('has-diagram',available);
 }
 function clearError(){
+  clearTimeout(fixRequest?.timer);fixRequest=null;failedDiagram=null;
+  $('ask-fix').hidden=true;$('ask-fix').disabled=false;$('ask-fix').removeAttribute('aria-busy');
+  $('fix-status').textContent='';$('fix-status').hidden=true;
   $('error-panel').hidden=true;$('error').hidden=true;$('error-actions').hidden=true;
   $('error-details').hidden=true;$('error-details').open=false;$('error-log').textContent='';
 }
-function showError(message){
+function showError(message,source=null){
   clearOutput();closeMenu(false);
   const text=String(message||'Please try again.');
   const detailed=text.length>240||text.includes('\n');
@@ -147,7 +151,26 @@ function showError(message){
   $('error').textContent=detailed?(firstLine.length>240?firstLine.slice(0,237)+'…':firstLine):text;
   $('error-log').textContent=detailed?text:'';$('error-details').hidden=!detailed;
   $('error-panel').hidden=false;$('error').hidden=false;$('error-actions').hidden=false;
+  if(typeof source==='string'&&parentChannel&&['https://chatgpt.com','https://chat.openai.com'].includes(parentOrigin)){
+    failedDiagram={source,error:text};$('ask-fix').hidden=false;
+  }
   setState('error','');
+}
+function finishFixRequest(message){
+  if(!fixRequest||message.requestId!==fixRequest.id)return;
+  clearTimeout(fixRequest.timer);fixRequest=null;
+  $('ask-fix').disabled=false;$('ask-fix').removeAttribute('aria-busy');
+  $('fix-status').textContent=message.ok?'':String(message.message||'Could not fill the ChatGPT prompt. Try again.');
+  $('fix-status').hidden=Boolean(message.ok);resize();
+}
+function askChatGPTToFix(){
+  if(!failedDiagram||!parentChannel||fixRequest||$('ask-fix').hidden)return;
+  const id='fix-'+(++fixSequence),channel=parentChannel;
+  $('fix-status').hidden=true;$('ask-fix').disabled=true;$('ask-fix').setAttribute('aria-busy','true');
+  fixRequest={id,timer:setTimeout(()=>finishFixRequest({requestId:id,ok:false,message:'Could not reach the ChatGPT prompt. Try again.'}),5000)};
+  const error=failedDiagram.error.length>60000?failedDiagram.error.slice(0,59950)+'\n[Remaining compiler log omitted.]':failedDiagram.error;
+  try{channel.port1.postMessage({channel:'latex-islands',type:'fix-error',id:current.id,requestId:id,source:failedDiagram.source,error});}
+  catch{finishFixRequest({requestId:id,ok:false});}
 }
 function clearOutput(){
   svgNode=null;renderedSource=null;$('output').replaceChildren();setAvailable(false);clearError();$('warning').hidden=true;
@@ -228,6 +251,7 @@ async function render(){
   if(!current||busy||current.streaming||suspended)return;
   const mine=version,source=current.source,controller=new AbortController();renderAbort=controller;busy=true;clearError();$('warning').hidden=true;
   setState('loading','Rendering diagram…');
+  let compilationError=false;
   try{
     let result;
     let work;
@@ -237,7 +261,7 @@ async function render(){
     // well: an extension runtime response can be lost during navigation.
     result=await awaitRender(work,controller.signal,120000,'The renderer did not respond in time. Try again.');
     if(mine!==version)return;
-    if(!result?.ok)throw new Error(result?.error||'Compiler unavailable. Reload the page after installation.');
+    if(!result?.ok){compilationError=Boolean(result?.error);throw new Error(result?.error||'Compiler unavailable. Reload the page after installation.');}
     const rendered=cleanSVG(result.svg);
     await loadSVGFonts(rendered,controller.signal);
     if(mine!==version)return;
@@ -248,7 +272,7 @@ async function render(){
     if(result.warnings?.length){$('warning').textContent=result.warnings.join('\n');$('warning').hidden=false;}
     send('result',{ok:true,source});
   }catch(e){
-    if(mine===version){showError(e.message);send('result',{ok:false,error:e.message,source});}
+    if(mine===version){showError(e.message,compilationError?source:null);send('result',{ok:false,error:e.message,source});}
   }finally{
     if(renderAbort===controller){
       renderAbort=null;busy=false;$('compile').disabled=current?.streaming===true;$('retry').disabled=current?.streaming===true;resize();
@@ -295,12 +319,34 @@ $('source').addEventListener('keydown',event=>{
 });
 $('source-toggle').addEventListener('click',()=>setSourceVisible($('source-details').hidden));
 $('error-source').addEventListener('click',revealSource);
+$('ask-fix').addEventListener('click',askChatGPTToFix);
 $('zoom-in').addEventListener('click',()=>zoom(1.25));
 $('zoom-out').addEventListener('click',()=>zoom(.8));
 $('reset-zoom').addEventListener('click',resetZoom);
 viewport.addEventListener('dblclick',resetZoom);
-viewport.addEventListener('wheel',event=>{if(svgNode&&event.deltaY!==0&&(viewMode!=='inline'||event.ctrlKey||event.metaKey)){event.preventDefault();zoom(event.deltaY<0?1.1:1/1.1,event.clientX,event.clientY);}},{passive:false});
+let pointerOutside=false;
+function releaseInlineWheel(){if(viewMode==='inline'&&document.activeElement===viewport)viewport.blur();}
+function cancelDrag(){
+  if(!drag)return;
+  const id=drag.id;drag=null;viewport.classList.remove('dragging');try{viewport.releasePointerCapture?.(id);}catch{}
+}
+viewport.addEventListener('blur',cancelDrag);
+window.addEventListener('blur',()=>{cancelDrag();releaseInlineWheel();});
+viewport.addEventListener('pointerenter',()=>{pointerOutside=false;});
+viewport.addEventListener('pointerleave',()=>{pointerOutside=true;if(!drag)releaseInlineWheel();});
+viewport.addEventListener('wheel',event=>{
+  // A focused diagram was activated by click or keyboard navigation. Until
+  // then, an ordinary wheel gesture continues scrolling the conversation.
+  if(svgNode&&event.deltaY!==0&&(viewMode!=='inline'||document.activeElement===viewport||event.ctrlKey||event.metaKey)){
+    event.preventDefault();zoom(event.deltaY<0?1.1:1/1.1,event.clientX,event.clientY);
+  }
+},{passive:false});
 viewport.addEventListener('keydown',event=>{
+  if(event.key==='Escape'&&viewMode==='inline'){
+    event.preventDefault();
+    cancelDrag();
+    releaseInlineWheel();return;
+  }
   if(!svgNode)return;
   if(['+','=','-','0','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key))event.preventDefault();
   if(event.key==='+'||event.key==='=')zoom(1.25);
@@ -310,13 +356,13 @@ viewport.addEventListener('keydown',event=>{
 });
 viewport.addEventListener('pointerdown',event=>{
   if(!svgNode||event.button!==0)return;
-  drag={id:event.pointerId,x:event.clientX,y:event.clientY,panX,panY};viewport.setPointerCapture?.(event.pointerId);viewport.classList.add('dragging');viewport.focus();
+  pointerOutside=false;drag={id:event.pointerId,x:event.clientX,y:event.clientY,panX,panY};viewport.setPointerCapture?.(event.pointerId);viewport.classList.add('dragging');viewport.focus({preventScroll:true});
 });
 viewport.addEventListener('pointermove',event=>{
   if(!drag||drag.id!==event.pointerId)return;
   panX=drag.panX+event.clientX-drag.x;panY=drag.panY+event.clientY-drag.y;applyTransform();
 });
-function stopDrag(event){if(drag?.id===event.pointerId){drag=null;viewport.classList.remove('dragging');}}
+function stopDrag(event){if(drag?.id===event.pointerId){drag=null;viewport.classList.remove('dragging');if(pointerOutside)releaseInlineWheel();}}
 viewport.addEventListener('pointerup',stopDrag);viewport.addEventListener('pointercancel',stopDrag);viewport.addEventListener('lostpointercapture',stopDrag);
 function closeMenu(focus=true){const wasOpen=!$('diagram-menu').hidden;$('diagram-menu').hidden=true;$('menu-toggle').setAttribute('aria-expanded','false');if(focus)$('menu-toggle').focus();if(wasOpen)resize();}
 $('menu-toggle').addEventListener('click',()=>{
@@ -455,8 +501,13 @@ function connectToParent(){
     if(parentChannel!==channel||message?.channel!=='latex-islands'||message.id!==id)return;
     // Snapshot responses never cross the public window message channel. Only
     // the content script holding this document's transferred port can request them.
+    if(message.type==='document-ping'){
+      if(typeof message.requestId==='string'&&/^ping-\d{1,10}$/.test(message.requestId))channel.port1.postMessage({channel:'latex-islands',type:'document-pong',id,requestId:message.requestId});
+      return;
+    }
     if(message.type==='snapshot') {snapshotDiagram(message,channel);return;}
     if(message.type==='snapshot-cancel') {snapshotRequests.delete(message.requestId);return;}
+    if(message.type==='fix-error-result') {finishFixRequest(message);return;}
     receive(message,requestedParentOrigin);
   };
   parent.postMessage({channel:'latex-islands',type:'ready',id},requestedParentOrigin,[channel.port2]);
@@ -464,6 +515,7 @@ function connectToParent(){
 connectToParent();
 window.addEventListener('pagehide',()=>{
   hideControlTooltip();
+  if(fixRequest)finishFixRequest({requestId:fixRequest.id,ok:false});
   suspended=true;
   // Runtime promises are not guaranteed to settle after a frozen document is
   // restored. Cancel only our wait, leaving shared compiler work/cache intact.

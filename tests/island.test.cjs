@@ -75,6 +75,16 @@ test('loaded island offers a document-bound port only to an allowed parent and a
   assert.equal(h.calls.length,1,'back/forward cache restores the channel without recompiling');
 });
 
+test('document liveness replies only on the current private port and never start a compilation',t=>{
+  const h=harness({url:'chrome-extension://test-id/island.html?parentOrigin=https%3A%2F%2Fchatgpt.com#test'});t.after(h.close);
+  h.send({type:'document-ping',requestId:'ping-1'});assert.equal(h.channels[0].messages.length,0);
+  const ping=requestId=>h.channels[0].port1.onmessage({data:{channel:'latex-islands',id:'test',type:'document-ping',requestId}});
+  ping('bad');assert.equal(h.channels[0].messages.length,0);ping('ping-1');
+  assert.equal(h.channels[0].messages.length,1);assert.equal(h.channels[0].messages[0].type,'document-pong');assert.equal(h.channels[0].messages[0].requestId,'ping-1');
+  h.w.dispatchEvent(new h.w.Event('pagehide'));ping('ping-2');assert.equal(h.channels[0].messages.length,2,'only the pagehide notification is added after closing the port');
+  assert.equal(h.calls.length,0);
+});
+
 test('island never offers a ready port to an arbitrary parent origin',t=>{
   for(const origin of ['https://attacker.example','*','null']){
     const h=harness({url:'chrome-extension://test-id/island.html?parentOrigin='+encodeURIComponent(origin)+'#diagram-id'});t.after(h.close);
@@ -270,6 +280,46 @@ test('long error details retain exact escaped logs and reset when retrying or re
   h.send({mode:'editor',type:'prepare',source:'new diagram'});assert.equal(h.el('error-panel').hidden,true);assert.equal(h.el('source').value,'new diagram');
 });
 
+test('compilation repair sends the exact failed code and error privately, without submitting a chat',async t=>{
+  const h=harness({url:'chrome-extension://test-id/island.html?parentOrigin=https%3A%2F%2Fchatgpt.com#test'});t.after(h.close);
+  const source='\\begin{tikzpicture}\n\\badcommand\n\\end{tikzpicture}',error='Undefined control sequence.\n<unsafe text> \\badcommand';
+  h.send({source,mode:'editor'});h.calls[0].resolve({ok:false,error});await tick();
+  assert.equal(h.el('ask-fix').hidden,false);h.el('source').value='unapplied changes';
+  h.el('ask-fix').click();h.el('ask-fix').click();
+  const channel=h.channels[0],requests=channel.messages.filter(message=>message.type==='fix-error');
+  assert.equal(requests.length,1);assert.equal(requests[0].source,source);assert.equal(requests[0].error,error);
+  assert.equal(h.sent.some(event=>event.data.type==='fix-error'),false,'repair payload never uses the public window channel');
+  assert.equal(h.el('ask-fix').disabled,true);
+  h.send({type:'fix-error-result',requestId:requests[0].requestId,ok:true});
+  assert.equal(h.el('ask-fix').disabled,true,'public window acknowledgements are ignored');
+  channel.port1.onmessage({data:{channel:'latex-islands',type:'fix-error-result',id:'test',requestId:requests[0].requestId,ok:true}});
+  assert.equal(h.el('ask-fix').disabled,false);assert.equal(h.el('fix-status').hidden,true);
+  assert.equal(h.calls.length,1,'preparing a repair prompt does not compile or send a chat');
+});
+
+test('repair is hidden without a ChatGPT composer and for font or transport failures',async t=>{
+  for(const origin of ['chrome-extension://test-id','https://chatgpt.com']){
+    const h=harness({url:'chrome-extension://test-id/island.html?parentOrigin='+encodeURIComponent(origin)+'#test'});t.after(h.close);
+    h.send({},origin);
+    if(origin.startsWith('chrome-extension:'))h.calls[0].resolve({ok:false,error:'TeX failed'});
+    else h.calls[0].reject(new Error('Extension runtime disconnected.'));
+    await tick();assert.equal(h.el('ask-fix').hidden,true);h.el('ask-fix').click();
+    assert.equal(h.channels[0].messages.some(message=>message.type==='fix-error'),false);
+  }
+});
+
+test('repair failure preserves the original compilation error and can be retried',async t=>{
+  const h=harness({url:'chrome-extension://test-id/island.html?parentOrigin=https%3A%2F%2Fchatgpt.com#test'});t.after(h.close);
+  const timeouts=[],timer=h.w.setTimeout.bind(h.w);
+  h.w.setTimeout=(callback,ms,...args)=>{if(ms===5000)timeouts.push(()=>callback(...args));return timer(callback,ms,...args);};
+  h.send();h.calls[0].resolve({ok:false,error:'TeX failed'});await tick();h.el('ask-fix').click();timeouts[0]();
+  assert.equal(h.el('ask-fix').disabled,false);assert.equal(h.el('error').textContent,'TeX failed');assert.equal(h.el('fix-status').hidden,false);
+  h.el('ask-fix').click();const requests=h.channels[0].messages.filter(message=>message.type==='fix-error');assert.equal(requests.length,2);
+  h.channels[0].port1.onmessage({data:{channel:'latex-islands',type:'fix-error-result',id:'test',requestId:requests[0].requestId,ok:true}});
+  assert.equal(h.el('ask-fix').disabled,true,'late acknowledgement cannot unlock a newer attempt');
+  h.send({source:'replacement'});assert.equal(h.el('ask-fix').hidden,true);assert.equal(h.el('fix-status').hidden,true);
+});
+
 test('SVG download embeds the used local font and preserves diagram labels',async t=>{
   const h=harness();t.after(h.close);h.send();h.calls[0].resolve({ok:true,svg:svg('R = 10 kΩ')});await tick();
   h.el('download').click();await tick();assert.equal(h.exports.length,1);assert.equal(h.exports[0].filename,'tikz-diagram.svg');
@@ -366,6 +416,7 @@ test('plain wheel zooms standalone and modal diagrams while inline ChatGPT keeps
   let before=h.el('output').style.transform;
   assert.equal(wheel().defaultPrevented,false);assert.equal(h.el('output').style.transform,before);
   assert.equal(wheel({ctrlKey:true}).defaultPrevented,true);assert.notEqual(h.el('output').style.transform,before);
+  assert.equal(wheel({metaKey:true}).defaultPrevented,true);
   for(const mode of ['preview','fullscreen','editor']){
     h.send({type:'view',mode});before=h.el('output').style.transform;
     assert.equal(wheel().defaultPrevented,true,mode+' handles wheel');assert.notEqual(h.el('output').style.transform,before);
@@ -373,6 +424,37 @@ test('plain wheel zooms standalone and modal diagrams while inline ChatGPT keeps
   }
   h.send({type:'view',mode:'inline'});before=h.el('output').style.transform;
   assert.equal(wheel().defaultPrevented,false);assert.equal(h.el('output').style.transform,before);assert.equal(h.calls.length,1);
+});
+
+test('inline ordinary wheel requires click or keyboard focus and releases on Escape, leave and focus transfer',async t=>{
+  const h=harness();t.after(h.close);h.send();const viewport=h.el('viewport');
+  const wheel=()=>{const event=new h.w.WheelEvent('wheel',{deltaY:-100,cancelable:true,clientX:150,clientY:100});viewport.dispatchEvent(event);return event;};
+  viewport.focus();assert.equal(wheel().defaultPrevented,false,'loading diagrams never intercept wheel scrolling');viewport.blur();
+  h.calls[0].resolve({ok:true,svg:svg('wheel activation')});await tick();
+  viewport.dispatchEvent(new h.w.Event('pointerenter'));assert.equal(wheel().defaultPrevented,false,'hover alone leaves page scrolling active');
+  const down=new h.w.MouseEvent('pointerdown',{button:0,clientX:150,clientY:100});Object.defineProperty(down,'pointerId',{value:1});viewport.dispatchEvent(down);
+  const up=new h.w.MouseEvent('pointerup');Object.defineProperty(up,'pointerId',{value:1});viewport.dispatchEvent(up);
+  assert.equal(h.w.document.activeElement,viewport);assert.equal(h.w.getComputedStyle(viewport).outline,'none','activation must not add the old white frame');
+  const before=h.el('output').style.transform;assert.equal(wheel().defaultPrevented,true);assert.notEqual(h.el('output').style.transform,before);
+  viewport.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));assert.notEqual(h.w.document.activeElement,viewport);assert.equal(wheel().defaultPrevented,false);
+  viewport.focus();assert.equal(wheel().defaultPrevented,true,'keyboard focus activates ordinary wheel zoom');
+  viewport.dispatchEvent(new h.w.Event('pointerleave'));assert.notEqual(h.w.document.activeElement,viewport);assert.equal(wheel().defaultPrevented,false);
+  viewport.dispatchEvent(new h.w.Event('pointerenter'));assert.equal(wheel().defaultPrevented,false,'returning the pointer does not reactivate the diagram');
+  viewport.focus();h.el('menu-toggle').focus();assert.equal(wheel().defaultPrevented,false,'another control releases the viewport activation');assert.equal(h.calls.length,1);
+});
+
+test('inline wheel activation survives a captured drag until release outside, and Escape cancels that drag',async t=>{
+  const h=harness();t.after(h.close);h.send();h.calls[0].resolve({ok:true,svg:svg('drag activation')});await tick();const viewport=h.el('viewport');
+  const pointer=(type,x=100,y=100)=>{const event=new h.w.MouseEvent(type,{button:0,clientX:x,clientY:y});Object.defineProperty(event,'pointerId',{value:2});viewport.dispatchEvent(event);};
+  const wheel=()=>{const event=new h.w.WheelEvent('wheel',{deltaY:-100,cancelable:true});viewport.dispatchEvent(event);return event.defaultPrevented;};
+  pointer('pointerdown');pointer('pointerleave');assert.equal(h.w.document.activeElement,viewport);assert.equal(wheel(),true,'leaving during pointer capture must not interrupt a drag');
+  pointer('pointermove',130,150);assert.equal(viewport.classList.contains('dragging'),true);
+  pointer('pointerup',130,150);assert.equal(viewport.classList.contains('dragging'),false);assert.notEqual(h.w.document.activeElement,viewport);assert.equal(wheel(),false);
+  pointer('pointerenter');pointer('pointerdown');const before=h.el('output').style.transform;
+  viewport.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));pointer('pointermove',200,200);
+  assert.equal(h.el('output').style.transform,before);assert.equal(viewport.classList.contains('dragging'),false);assert.equal(wheel(),false);
+  pointer('pointerdown');const beforeBlur=h.el('output').style.transform;h.w.dispatchEvent(new h.w.Event('blur'));pointer('pointermove',250,250);
+  assert.equal(h.el('output').style.transform,beforeBlur,'switching windows during a drag must not leave it active');assert.equal(viewport.classList.contains('dragging'),false);assert.equal(wheel(),false);
 });
 
 test('wheel keeps the diagram point under the pointer fixed after pan and at both zoom limits',async t=>{
@@ -387,15 +469,16 @@ test('wheel keeps the diagram point under the pointer fixed after pan and at bot
   const anchor=()=>{const s=state();return {x:(point.x-s.x)/s.scale,y:(point.y-s.y)/s.scale};};
   for(const mode of ['inline','preview','fullscreen','editor']){
     h.send({type:'view',mode});viewport.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'0'}));
+    if(mode==='inline')viewport.focus();
     viewport.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'ArrowRight'}));viewport.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'ArrowDown'}));
     const initial=anchor();
     for(const deltaY of [...Array(50).fill(-100),...Array(80).fill(100)]){
-      const event=new h.w.WheelEvent('wheel',{deltaY,cancelable:true,ctrlKey:mode==='inline',clientX:bounds.left+bounds.width/2+point.x,clientY:bounds.top+bounds.height/2+point.y});
+      const event=new h.w.WheelEvent('wheel',{deltaY,cancelable:true,clientX:bounds.left+bounds.width/2+point.x,clientY:bounds.top+bounds.height/2+point.y});
       viewport.dispatchEvent(event);assert.equal(event.defaultPrevented,true);
       const current=anchor();assert.ok(Math.abs(current.x-initial.x)<1e-9&&Math.abs(current.y-initial.y)<1e-9,mode+' retains pointer anchor');
     }
     const atMinimum=state();
-    viewport.dispatchEvent(new h.w.WheelEvent('wheel',{deltaY:100,cancelable:true,ctrlKey:mode==='inline',clientX:700,clientY:500}));
+    viewport.dispatchEvent(new h.w.WheelEvent('wheel',{deltaY:100,cancelable:true,clientX:700,clientY:500}));
     assert.deepEqual(state(),atMinimum,'clamped zoom does not move the diagram');
   }
   assert.equal(h.calls.length,1);

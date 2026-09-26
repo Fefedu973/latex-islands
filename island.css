@@ -37,6 +37,7 @@
 #error-actions .text-button{justify-content:center;padding:7px 14px;border:1px solid var(--border);border-radius:999px}
 #error-actions #retry{background:var(--text);border-color:transparent;color:var(--background)}
 #error-actions #retry:not(:disabled):hover{opacity:.85}
+#fix-status{margin:12px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
 #error-details{margin-top:14px;text-align:left;color:var(--muted);font-size:12px}
 #error-details summary{width:fit-content;margin:auto;cursor:pointer;border-radius:4px}
 #error-details summary:focus-visible{outline:2px solid var(--text);outline-offset:3px}

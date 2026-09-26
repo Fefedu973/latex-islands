@@ -31,6 +31,9 @@ jobs:
       - name: Verify rich PDF layout and diagram snapshots in Chromium
         run: npm run test:pdf
         timeout-minutes: 2
+      - name: Verify navigation and repair prompts in the actual Chrome extension
+        run: npm run test:chrome
+        timeout-minutes: 2
       - run: npm run build
       - name: Verify reproducible archives
         run: |
