@@ -4,7 +4,9 @@ const extensionAPI=globalThis.browser||globalThis.chrome;
 const $=id=>document.getElementById(id);
 const island=document.querySelector('.island'),viewport=$('viewport');
 let current=null,parentOrigin=null,version=0,svgNode=null,previewCompiler=null,busy=false,warmed=false;
+let renderAbort=null,suspended=false;
 let renderedSource=null;
+let failedDiagram=null,fixRequest=null,fixSequence=0;
 const snapshotRequests=new Map(),MAX_SNAPSHOT=10*1024*1024;
 let viewMode='inline',editor=false,zoomValue=1,fitScale=1,panX=0,panY=0,naturalWidth=500,naturalHeight=260,drag=null;
 const ownOrigin=location.protocol+'//'+location.host;
@@ -16,6 +18,44 @@ function resize() {
   send('resize',{height:Math.min(2400,Math.ceil(Math.max(document.body.getBoundingClientRect().height,menuBottom))+2)});
 }
 new ResizeObserver(resize).observe(document.body);
+
+// Native-looking tooltips live in the iframe's top layer so editor and preview
+// overflow cannot clip them. Labels follow each control's accessible name.
+const controlTooltip=document.createElement('div');
+controlTooltip.id='control-tooltip';controlTooltip.hidden=true;controlTooltip.setAttribute('role','tooltip');controlTooltip.setAttribute('popover','manual');document.body.append(controlTooltip);
+let tooltipAnchor=null,tooltipTimer=0;
+function hideControlTooltip(){
+  clearTimeout(tooltipTimer);tooltipTimer=0;tooltipAnchor?.removeAttribute('aria-describedby');tooltipAnchor=null;
+  try{controlTooltip.hidePopover?.();}catch{}
+  controlTooltip.hidden=true;
+}
+function positionControlTooltip(){
+  if(!tooltipAnchor?.isConnected||tooltipAnchor.disabled||tooltipAnchor.closest('[hidden]')){hideControlTooltip();return;}
+  const rect=tooltipAnchor.getBoundingClientRect();
+  if(!rect.width||!rect.height){hideControlTooltip();return;}
+  controlTooltip.textContent=tooltipAnchor.getAttribute('aria-label');
+  const width=controlTooltip.offsetWidth,height=controlTooltip.offsetHeight;
+  controlTooltip.style.left=Math.max(8,Math.min(rect.left+rect.width/2-width/2,innerWidth-width-8))+'px';
+  controlTooltip.style.top=Math.max(8,Math.min(rect.bottom+height+16<=innerHeight?rect.bottom+8:rect.top-height-8,innerHeight-height-8))+'px';
+}
+function showControlTooltip(anchor){
+  hideControlTooltip();if(anchor.disabled)return;tooltipAnchor=anchor;
+  tooltipTimer=setTimeout(()=>{
+    tooltipTimer=0;if(tooltipAnchor!==anchor||!anchor.isConnected||anchor.disabled||anchor.closest('[hidden]'))return;
+    controlTooltip.textContent=anchor.getAttribute('aria-label');controlTooltip.hidden=false;
+    anchor.setAttribute('aria-describedby',controlTooltip.id);
+    try{controlTooltip.showPopover?.();}catch{}
+    positionControlTooltip();
+  },300);
+}
+for(const anchor of document.querySelectorAll('button[title]')){
+  anchor.removeAttribute('title');
+  anchor.addEventListener('pointerenter',()=>showControlTooltip(anchor));anchor.addEventListener('focus',()=>showControlTooltip(anchor));
+  for(const event of ['pointerleave','blur','click'])anchor.addEventListener(event,hideControlTooltip);
+}
+window.addEventListener('resize',()=>{if(!controlTooltip.hidden)positionControlTooltip();});
+document.addEventListener('scroll',()=>{if(!controlTooltip.hidden)positionControlTooltip();},{capture:true,passive:true});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')hideControlTooltip();});
 
 function cleanSVG(markup) {
   let xml=new DOMParser().parseFromString(markup,'image/svg+xml');
@@ -51,6 +91,13 @@ function setTheme(message) {
     const value=message.colors?.[key];
     if(typeof value==='string'&&/^(?:#[\da-f]{3,8}|rgba?\([\d.,%\s/]+\)|hsla?\([\d.,%\s/]+\))$/i.test(value))document.documentElement.style.setProperty('--'+key,value);
   }
+  if(typeof message.colors?.hover==='string'&&message.colors.hover.length<300&&globalThis.CSS?.supports('color',message.colors.hover))document.documentElement.style.setProperty('--hover',message.colors.hover);
+  else if(message.theme==='dark'||message.theme==='light')document.documentElement.style.removeProperty('--hover');
+  for(const key of ['background','text','border','shadow']){
+    const value=message.tooltip?.[key],property=key==='shadow'?'box-shadow':'color';
+    if(typeof value==='string'&&value.length<300&&globalThis.CSS?.supports(property,value))document.documentElement.style.setProperty('--tooltip-'+key,value);
+    else if(message.theme==='dark'||message.theme==='light')document.documentElement.style.removeProperty('--tooltip-'+key);
+  }
 }
 function setSourceVisible(visible){
   if(viewMode==='preview'||viewMode==='fullscreen')visible=false;
@@ -61,11 +108,11 @@ function setSourceVisible(visible){
 function setView(mode){
   if(!['inline','editor','preview','fullscreen'].includes(mode)||viewMode===mode)return;
   viewMode=mode;editor=mode==='editor'||mode==='fullscreen';
+  hideControlTooltip();
   island.dataset.mode=mode;island.classList.toggle('editor',editor);
   $('source-toggle').hidden=mode==='fullscreen';
   $('open-editor').textContent=mode==='preview'?'Open full screen':'Open editor';
   $('close-editor').setAttribute('aria-label',mode==='fullscreen'?'Close full screen':'Close editor');
-  $('close-editor').title=mode==='fullscreen'?'Close full screen':'Close editor';
   if(mode!=='inline')viewport.style.removeProperty('height');
   setSourceVisible(mode==='editor');closeMenu(false);
   // Keep the user's pan and zoom when the host expands the existing iframe.
@@ -90,10 +137,13 @@ function setAvailable(available){
   viewport.classList.toggle('has-diagram',available);
 }
 function clearError(){
+  clearTimeout(fixRequest?.timer);fixRequest=null;failedDiagram=null;
+  $('ask-fix').hidden=true;$('ask-fix').disabled=false;$('ask-fix').removeAttribute('aria-busy');
+  $('fix-status').textContent='';$('fix-status').hidden=true;
   $('error-panel').hidden=true;$('error').hidden=true;$('error-actions').hidden=true;
   $('error-details').hidden=true;$('error-details').open=false;$('error-log').textContent='';
 }
-function showError(message){
+function showError(message,source=null){
   clearOutput();closeMenu(false);
   const text=String(message||'Please try again.');
   const detailed=text.length>240||text.includes('\n');
@@ -101,7 +151,26 @@ function showError(message){
   $('error').textContent=detailed?(firstLine.length>240?firstLine.slice(0,237)+'…':firstLine):text;
   $('error-log').textContent=detailed?text:'';$('error-details').hidden=!detailed;
   $('error-panel').hidden=false;$('error').hidden=false;$('error-actions').hidden=false;
+  if(typeof source==='string'&&parentChannel&&['https://chatgpt.com','https://chat.openai.com'].includes(parentOrigin)){
+    failedDiagram={source,error:text};$('ask-fix').hidden=false;
+  }
   setState('error','');
+}
+function finishFixRequest(message){
+  if(!fixRequest||message.requestId!==fixRequest.id)return;
+  clearTimeout(fixRequest.timer);fixRequest=null;
+  $('ask-fix').disabled=false;$('ask-fix').removeAttribute('aria-busy');
+  $('fix-status').textContent=message.ok?'':String(message.message||'Could not fill the ChatGPT prompt. Try again.');
+  $('fix-status').hidden=Boolean(message.ok);resize();
+}
+function askChatGPTToFix(){
+  if(!failedDiagram||!parentChannel||fixRequest||$('ask-fix').hidden)return;
+  const id='fix-'+(++fixSequence),channel=parentChannel;
+  $('fix-status').hidden=true;$('ask-fix').disabled=true;$('ask-fix').setAttribute('aria-busy','true');
+  fixRequest={id,timer:setTimeout(()=>finishFixRequest({requestId:id,ok:false,message:'Could not reach the ChatGPT prompt. Try again.'}),5000)};
+  const error=failedDiagram.error.length>60000?failedDiagram.error.slice(0,59950)+'\n[Remaining compiler log omitted.]':failedDiagram.error;
+  try{channel.port1.postMessage({channel:'latex-islands',type:'fix-error',id:current.id,requestId:id,source:failedDiagram.source,error});}
+  catch{finishFixRequest({requestId:id,ok:false});}
 }
 function clearOutput(){
   svgNode=null;renderedSource=null;$('output').replaceChildren();setAvailable(false);clearError();$('warning').hidden=true;
@@ -158,28 +227,43 @@ function svgFontFamilies(node){
   }
   return families;
 }
-async function loadSVGFonts(node){
+function awaitRender(work,signal,timeout,message){
+  return new Promise((resolve,reject)=>{
+    let settled=false,timer;
+    const finish=(callback,value)=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',cancel);callback(value);};
+    const cancel=()=>finish(reject,new DOMException('Rendering suspended.','AbortError'));
+    if(signal.aborted)cancel();
+    else {signal.addEventListener('abort',cancel,{once:true});timer=setTimeout(()=>finish(reject,new Error(message)),timeout);}
+    Promise.resolve(work).then(value=>finish(resolve,value),error=>finish(reject,error));
+  });
+}
+async function loadSVGFonts(node,signal){
   // TeX uses private-use glyphs: fallback fonts show squares or blank labels.
   // Load the used faces before inserting the SVG, including on compiler cache hits.
   await Promise.all([...svgFontFamilies(node)].map(async family=>{
     try{
-      const faces=await document.fonts.load('16px "'+family+'"',node.textContent||' ');
+      const faces=await awaitRender(document.fonts.load('16px "'+family+'"',node.textContent||' '),signal,15000,'Diagram fonts did not finish loading.');
       if(!faces.length)throw new Error('Missing font face');
     }catch{throw new Error('Could not load diagram font "'+family+'". Reload the page and try again.');}
   }));
 }
 async function render(){
-  if(!current||busy||current.streaming)return;
-  const mine=version,source=current.source;busy=true;clearError();$('warning').hidden=true;
+  if(!current||busy||current.streaming||suspended)return;
+  const mine=version,source=current.source,controller=new AbortController();renderAbort=controller;busy=true;clearError();$('warning').hidden=true;
   setState('loading','Rendering diagram…');
+  let compilationError=false;
   try{
     let result;
-    if(extensionAPI?.runtime?.id)result=await extensionAPI.runtime.sendMessage({channel:'latex-islands',target:'background',source});
-    else {previewCompiler ||=new TikZCompiler();result=await previewCompiler.compile(source);}
+    let work;
+    if(extensionAPI?.runtime?.id)work=extensionAPI.runtime.sendMessage({channel:'latex-islands',target:'background',source});
+    else {previewCompiler ||=new TikZCompiler();work=previewCompiler.compile(source);}
+    // The shared compiler has its own work limit. Bound this document's wait as
+    // well: an extension runtime response can be lost during navigation.
+    result=await awaitRender(work,controller.signal,120000,'The renderer did not respond in time. Try again.');
     if(mine!==version)return;
-    if(!result?.ok)throw new Error(result?.error||'Compiler unavailable. Reload the page after installation.');
+    if(!result?.ok){compilationError=Boolean(result?.error);throw new Error(result?.error||'Compiler unavailable. Reload the page after installation.');}
     const rendered=cleanSVG(result.svg);
-    await loadSVGFonts(rendered);
+    await loadSVGFonts(rendered,controller.signal);
     if(mine!==version)return;
     svgNode=rendered;renderedSource=source;$('output').replaceChildren(svgNode);
     const size=dimensions(svgNode);naturalWidth=size.width;naturalHeight=size.height;
@@ -188,10 +272,12 @@ async function render(){
     if(result.warnings?.length){$('warning').textContent=result.warnings.join('\n');$('warning').hidden=false;}
     send('result',{ok:true,source});
   }catch(e){
-    if(mine===version){showError(e.message);send('result',{ok:false,error:e.message,source});}
+    if(mine===version){showError(e.message,compilationError?source:null);send('result',{ok:false,error:e.message,source});}
   }finally{
-    busy=false;$('compile').disabled=current?.streaming===true;$('retry').disabled=current?.streaming===true;resize();
-    if(mine!==version&&current.autoRender!==false&&!current.streaming)render();
+    if(renderAbort===controller){
+      renderAbort=null;busy=false;$('compile').disabled=current?.streaming===true;$('retry').disabled=current?.streaming===true;resize();
+      if(!suspended&&mine!==version&&current.autoRender!==false&&!current.streaming)render();
+    }
   }
 }
 function receive(m,origin){
@@ -233,12 +319,34 @@ $('source').addEventListener('keydown',event=>{
 });
 $('source-toggle').addEventListener('click',()=>setSourceVisible($('source-details').hidden));
 $('error-source').addEventListener('click',revealSource);
+$('ask-fix').addEventListener('click',askChatGPTToFix);
 $('zoom-in').addEventListener('click',()=>zoom(1.25));
 $('zoom-out').addEventListener('click',()=>zoom(.8));
 $('reset-zoom').addEventListener('click',resetZoom);
 viewport.addEventListener('dblclick',resetZoom);
-viewport.addEventListener('wheel',event=>{if(svgNode&&event.deltaY!==0&&(viewMode!=='inline'||event.ctrlKey||event.metaKey)){event.preventDefault();zoom(event.deltaY<0?1.1:1/1.1,event.clientX,event.clientY);}},{passive:false});
+let pointerOutside=false;
+function releaseInlineWheel(){if(viewMode==='inline'&&document.activeElement===viewport)viewport.blur();}
+function cancelDrag(){
+  if(!drag)return;
+  const id=drag.id;drag=null;viewport.classList.remove('dragging');try{viewport.releasePointerCapture?.(id);}catch{}
+}
+viewport.addEventListener('blur',cancelDrag);
+window.addEventListener('blur',()=>{cancelDrag();releaseInlineWheel();});
+viewport.addEventListener('pointerenter',()=>{pointerOutside=false;});
+viewport.addEventListener('pointerleave',()=>{pointerOutside=true;if(!drag)releaseInlineWheel();});
+viewport.addEventListener('wheel',event=>{
+  // A focused diagram was activated by click or keyboard navigation. Until
+  // then, an ordinary wheel gesture continues scrolling the conversation.
+  if(svgNode&&event.deltaY!==0&&(viewMode!=='inline'||document.activeElement===viewport||event.ctrlKey||event.metaKey)){
+    event.preventDefault();zoom(event.deltaY<0?1.1:1/1.1,event.clientX,event.clientY);
+  }
+},{passive:false});
 viewport.addEventListener('keydown',event=>{
+  if(event.key==='Escape'&&viewMode==='inline'){
+    event.preventDefault();
+    cancelDrag();
+    releaseInlineWheel();return;
+  }
   if(!svgNode)return;
   if(['+','=','-','0','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key))event.preventDefault();
   if(event.key==='+'||event.key==='=')zoom(1.25);
@@ -248,13 +356,13 @@ viewport.addEventListener('keydown',event=>{
 });
 viewport.addEventListener('pointerdown',event=>{
   if(!svgNode||event.button!==0)return;
-  drag={id:event.pointerId,x:event.clientX,y:event.clientY,panX,panY};viewport.setPointerCapture?.(event.pointerId);viewport.classList.add('dragging');viewport.focus();
+  pointerOutside=false;drag={id:event.pointerId,x:event.clientX,y:event.clientY,panX,panY};viewport.setPointerCapture?.(event.pointerId);viewport.classList.add('dragging');viewport.focus({preventScroll:true});
 });
 viewport.addEventListener('pointermove',event=>{
   if(!drag||drag.id!==event.pointerId)return;
   panX=drag.panX+event.clientX-drag.x;panY=drag.panY+event.clientY-drag.y;applyTransform();
 });
-function stopDrag(event){if(drag?.id===event.pointerId){drag=null;viewport.classList.remove('dragging');}}
+function stopDrag(event){if(drag?.id===event.pointerId){drag=null;viewport.classList.remove('dragging');if(pointerOutside)releaseInlineWheel();}}
 viewport.addEventListener('pointerup',stopDrag);viewport.addEventListener('pointercancel',stopDrag);viewport.addEventListener('lostpointercapture',stopDrag);
 function closeMenu(focus=true){const wasOpen=!$('diagram-menu').hidden;$('diagram-menu').hidden=true;$('menu-toggle').setAttribute('aria-expanded','false');if(focus)$('menu-toggle').focus();if(wasOpen)resize();}
 $('menu-toggle').addEventListener('click',()=>{
@@ -287,7 +395,7 @@ const copyHeaderIcon=$('copy-header').querySelector('svg'),originalCopyIcon=[...
 let copyFeedbackTimer;
 function resetCopyFeedback(){
   clearTimeout(copyFeedbackTimer);copyHeaderIcon.replaceChildren(...originalCopyIcon.map(node=>node.cloneNode(true)));
-  $('copy-header').setAttribute('aria-label','Copy code');$('copy-header').title='Copy code';
+  $('copy-header').setAttribute('aria-label','Copy code');if(tooltipAnchor===$('copy-header'))positionControlTooltip();
   $('copy-source').textContent='Copy code';$('announcement').textContent='';
 }
 async function copySource(){
@@ -295,7 +403,7 @@ async function copySource(){
     await navigator.clipboard.writeText($('source').value);
     clearTimeout(copyFeedbackTimer);
     copyHeaderIcon.innerHTML='<path d="m5 12 4 4L19 6"/>';
-    $('copy-header').setAttribute('aria-label','Copied');$('copy-header').title='Copied';
+    $('copy-header').setAttribute('aria-label','Copied');if(tooltipAnchor===$('copy-header'))positionControlTooltip();
     $('copy-source').innerHTML='Copy code <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
     $('announcement').textContent='Code copied';
     copyFeedbackTimer=setTimeout(resetCopyFeedback,1800);
@@ -393,15 +501,29 @@ function connectToParent(){
     if(parentChannel!==channel||message?.channel!=='latex-islands'||message.id!==id)return;
     // Snapshot responses never cross the public window message channel. Only
     // the content script holding this document's transferred port can request them.
+    if(message.type==='document-ping'){
+      if(typeof message.requestId==='string'&&/^ping-\d{1,10}$/.test(message.requestId))channel.port1.postMessage({channel:'latex-islands',type:'document-pong',id,requestId:message.requestId});
+      return;
+    }
     if(message.type==='snapshot') {snapshotDiagram(message,channel);return;}
     if(message.type==='snapshot-cancel') {snapshotRequests.delete(message.requestId);return;}
+    if(message.type==='fix-error-result') {finishFixRequest(message);return;}
     receive(message,requestedParentOrigin);
   };
   parent.postMessage({channel:'latex-islands',type:'ready',id},requestedParentOrigin,[channel.port2]);
 }
 connectToParent();
 window.addEventListener('pagehide',()=>{
+  hideControlTooltip();
+  if(fixRequest)finishFixRequest({requestId:fixRequest.id,ok:false});
+  suspended=true;
+  // Runtime promises are not guaranteed to settle after a frozen document is
+  // restored. Cancel only our wait, leaving shared compiler work/cache intact.
+  if(renderAbort){const controller=renderAbort;renderAbort=null;version++;busy=false;controller.abort();}
   if(parentChannel){parentChannel.port1.postMessage({channel:'latex-islands',type:'snapshot-unavailable',id:current?.id||decodeURIComponent(location.hash.slice(1))});parentChannel.port1.close();}
   snapshotRequests.clear();parentChannel=null;
 });
-window.addEventListener('pageshow',event=>{if(event.persisted)connectToParent();});
+window.addEventListener('pageshow',event=>{
+  suspended=false;
+  if(event.persisted){connectToParent();if(!svgNode&&current?.autoRender!==false)render();}
+});

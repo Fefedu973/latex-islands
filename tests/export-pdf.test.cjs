@@ -3,6 +3,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const {JSDOM}=require(process.env.JSDOM_MODULE||'jsdom');
+const DOM_SCRIPT=fs.readFileSync(path.join(__dirname,'../chatgpt-dom.js'),'utf8');
 const SCRIPT=fs.readFileSync(path.join(__dirname,'../export-pdf.js'),'utf8');
 const SVG='<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300" viewBox="0 0 600 300"><style>@font-face{font-family:TeX;src:url(data:font/woff2;base64,AA==)}</style><text x="20" y="30">Edited diagram</text></svg>';
 function harness(t,html='<main><article data-message-author-role="user">Question</article><article data-message-author-role="assistant"><div class="markdown"><p>Answer</p></div></article></main>') {
@@ -12,7 +13,7 @@ function harness(t,html='<main><article data-message-author-role="user">Question
   w.HTMLImageElement.prototype.decode=async function(){};
   w.fetch=()=>{throw Error('PDF must not fetch conversation data');};
   const prints=[];w.print=()=>prints.push(doc.body.className);
-  w.eval(SCRIPT);t.after(()=>w.close());
+  w.eval(DOM_SCRIPT);w.eval(SCRIPT);t.after(()=>w.close());
   return {w,doc,prints,collect:options=>w.LatexIslandsPDF.collect(options),prepare:options=>w.LatexIslandsPDF.prepare(options),get:selector=>doc.querySelector(selector)};
 }
 
@@ -22,11 +23,19 @@ function fastCollection(h, virtualClock=false) {
   h.w.setTimeout=(callback,ms,...args)=>timer(()=>{if(virtualClock&&ms===120)now+=ms;callback(...args);},ms===120||ms===150?0:ms);
 }
 
-function scrollFixture(h,{height=1200,viewport=450,start=500,render=()=>{}}={}) {
+function scrollFixture(h,{height=1200,viewport=450,start=500,reverse=false,render=()=>{}}={}) {
   const scroller=h.get('#scroll');let top=start;const positions=[];
   Object.defineProperties(scroller,{scrollHeight:{configurable:true,get:()=>typeof height==='function'?height():height},clientHeight:{get:()=>viewport},scrollTop:{get:()=>top,set:value=>{top=value;}}});
-  scroller.scrollTo=({top:next})=>{top=Math.max(0,Math.min(next,scroller.scrollHeight-viewport));positions.push(top);render(top);};
+  scroller.scrollTo=({top:next})=>{const maximum=Math.max(0,scroller.scrollHeight-viewport);top=reverse?Math.max(-maximum,Math.min(next,0)):Math.max(0,Math.min(next,maximum));positions.push(top);render(top);};
   render(top);return {scroller,positions,get top(){return top;}};
+}
+
+function redesignedTurn(index,{prompt=`Prompt ${index}`,answer=`Answer ${index}`}={}) {
+  return `<div data-turn-key="u${index}"><div data-content-search-turn-key="fallback-turn-${index}">
+    <div data-chatgpt-search-unit-key="fallback-turn-${index}:user" data-chatgpt-search-message-ids="u${index}"><h4 class="sr-only" data-conversation-role="user">You said:</h4><div data-user-message-bubble>${prompt}</div><button>Edit message</button></div>
+    <div data-chatgpt-search-unit-key="fallback-turn-${index}:assistant" data-chatgpt-search-message-ids="a${index} a${index}"><h4 class="sr-only" data-conversation-role="assistant">ChatGPT said:</h4><div data-chatgpt-selection-message-id="a${index}"><div data-markdown-text-style="assistant-message">${answer}</div></div></div>
+    <div class="turn-action-controls"><button>Copy reply</button></div>
+  </div></div>`;
 }
 
 test('captures only current main messages in order without backend access or UI',async t=>{
@@ -102,6 +111,16 @@ test('a hidden outer code widget cannot hide a snapshot of its nested source',as
   const pdf=await h.prepare();t.after(pdf.dispose);const image=pdf.root.querySelector('.li-pdf-island-image');assert.ok(image);assert.equal(h.w.getComputedStyle(image.closest('pre')).display,'block');assert.doesNotMatch(pdf.root.textContent,/Source/);
 });
 
+test('live hydration hiding markers cannot hide PDF clones or silently omit an uncaptured diagram',async t=>{
+  const h=harness(t,'<style>[data-latex-islands-hidden="true"]{display:none!important}</style><main><article data-message-author-role="assistant"><div id="widget" data-latex-islands-hidden="true"><pre id="tex">Source</pre></div><div class="latex-islands-container"></div><code data-latex-islands-hidden="false">Visible fallback code</code></article></main>');
+  h.w.LatexIslandsDiagramExport={snapshot:async()=>[{sourceElement:h.get('#tex'),containerElement:h.get('.latex-islands-container'),svg:SVG,width:600,height:300}]};
+  const pdf=await h.prepare();t.after(pdf.dispose);
+  const image=pdf.root.querySelector('.li-pdf-island-image');assert.ok(image);assert.equal(h.w.getComputedStyle(image.closest('div')).display,'block');
+  assert.equal(pdf.root.querySelector('[data-latex-islands-hidden]'),null);assert.match(pdf.root.textContent,/Visible fallback code/);
+  assert.equal(h.get('#widget').getAttribute('data-latex-islands-hidden'),'true');assert.equal(h.w.getComputedStyle(h.get('#widget')).display,'none');
+  h.w.LatexIslandsDiagramExport.snapshot=async()=>[];await assert.rejects(h.prepare(),/not ready/);
+});
+
 test('streaming detection blocks only selected replies including the current stop-button reply',async t=>{
   const h=harness(t,'<main><article id="old" data-message-author-role="assistant">Complete</article><article id="new" data-message-author-role="assistant" data-is-streaming="true">Generating</article></main>');
   await assert.rejects(h.prepare(),/finish generating/);
@@ -112,7 +131,7 @@ test('streaming detection blocks only selected replies including the current sto
 });
 
 test('sanitization keeps safe links and selected loaded pictures without active content',async t=>{
-  const h=harness(t,`<main><article data-message-author-role="assistant"><p onclick="evil()">Text<script>evil()</script></p><a href="javascript:evil()" onmouseover="evil()">Bad</a><a href="/safe" ping="https://evil.test">Good</a><iframe src="https://evil.test"></iframe><object data="https://evil.test"></object><style>body{display:none}</style><img src="/small.png" srcset="/big.png 2x" onerror="evil()" loading="lazy"><span style="background-image:url(https://evil.test/private);vertical-align:1em">Styled</span><svg><foreignObject><script>evil()</script></foreignObject><path id="path" d="M0 0L1 1"></path><use href="#path"></use></svg></article></main>`);
+  const h=harness(t,`<main><article data-message-author-role="assistant"><p onclick="evil()">Text<script>evil()</script></p><a href="javascript:evil()" onmouseover="evil()">Bad</a><a href="/safe" ping="https://evil.test">Good</a><iframe src="https://evil.test"></iframe><object data="https://evil.test"></object><style>body{color:red}</style><img src="/small.png" srcset="/big.png 2x" onerror="evil()" loading="lazy"><span style="background-image:url(https://evil.test/private);vertical-align:1em">Styled</span><svg><foreignObject><script>evil()</script></foreignObject><path id="path" d="M0 0L1 1"></path><use href="#path"></use></svg></article></main>`);
   Object.defineProperty(h.get('img'),'currentSrc',{value:'https://chatgpt.com/rendered.png'});
   const pdf=await h.prepare();t.after(pdf.dispose);
   assert.equal(pdf.root.querySelector('script,iframe,object,style'),null);
@@ -167,6 +186,44 @@ test('code widgets retain actual code and CodeMirror newlines without their chro
   const pdf=await h.prepare();t.after(pdf.dispose);
   const code=pdf.root.querySelectorAll('pre code');assert.equal(code.length,2);assert.equal(code[0].textContent,'one\ntwo');assert.equal(code[1].textContent,'const x = 1;');assert.ok(code[1].querySelector('.token'));
   assert.doesNotMatch(pdf.root.textContent,/Copy code|python|javascript/);
+});
+
+test('redesigned messages preserve roles, plain code widgets and math without duplicate speaker headings',async t=>{
+  const code='<div data-markdown-copy="code-block"><header data-markdown-copy="exclude"><div>python</div><button>Copy code</button></header><div><code><span class="token">print</span>("first")\nprint("second")</code></div></div>';
+  const math='<span class="katex"><span class="katex-mathml"><math><mi>x</mi></math></span><span class="katex-html" aria-hidden="true">Rendered math</span></span>';
+  const h=harness(t,`<aside data-chatgpt-search-unit-key="outside:assistant">Sidebar secret</aside><main><div data-app-action-timeline-scroll><div data-chatgpt-conversation-selection-target>${redesignedTurn(0,{answer:'<p>Rich answer</p>'+code+math})}</div></div></main>`);
+  const pdf=await h.prepare();t.after(pdf.dispose);
+  assert.equal(pdf.count,2);assert.deepEqual([...pdf.root.querySelectorAll('.li-pdf-role')].map(node=>node.textContent),['You','ChatGPT']);
+  const copiedCode=pdf.root.querySelector('pre code');assert.equal(copiedCode.textContent,'print("first")\nprint("second")');assert.ok(copiedCode.querySelector('.token'));
+  assert.match(pdf.root.textContent,/Rendered math/);assert.doesNotMatch(pdf.root.textContent,/Sidebar secret|You said:|ChatGPT said:|Edit message|Copy reply|Copy code|python/);
+  const answers=await h.prepare({includeUser:false});t.after(answers.dispose);assert.equal(answers.count,1);assert.doesNotMatch(answers.root.textContent,/Prompt 0/);
+  const reply=await h.collect({replyElement:h.get('[data-markdown-text-style] p')});t.after(reply.dispose);assert.equal(reply.replyKey,'message:a0');assert.equal(reply.precedingPromptKey,'message:u0');
+});
+
+test('redesigned hidden code widgets are replaced by their rendered diagram without language chrome',async t=>{
+  const code='<div id="tex" data-markdown-copy="code-block" class="latex-islands-original-hidden" style="display:none"><header data-markdown-copy="exclude"><div>tikz</div></header><div><code>Original TeX</code></div></div><div class="latex-islands-container"><iframe></iframe></div>';
+  const h=harness(t,`<main>${redesignedTurn(0,{answer:'Before '+code+' After'})}</main>`);
+  h.w.LatexIslandsDiagramExport={snapshot:async source=>source.contains(h.get('#tex'))?[{sourceElement:h.get('#tex'),containerElement:h.get('.latex-islands-container'),svg:SVG,width:600,height:300}]:[]};
+  const pdf=await h.prepare();t.after(pdf.dispose);assert.ok(pdf.root.querySelector('.li-pdf-island-image'));assert.doesNotMatch(pdf.root.textContent,/Original TeX|tikz|ChatGPT said:/);assert.match(pdf.root.textContent,/Before.*After/);
+});
+
+test('redesigned image-only prompts remain selectable without a text bubble',async t=>{
+  const h=harness(t,'<main><div data-content-search-turn-key="fallback-turn-0"><div data-chatgpt-search-unit-key="fallback-turn-0:user" data-chatgpt-search-message-ids="image-prompt"><h4 data-conversation-role="user" class="sr-only">You said:</h4><button><img src="/uploaded.png" alt="Uploaded image"></button><button>Edit message</button></div></div></main>');fastCollection(h);
+  const capture=await h.collect();t.after(capture.dispose);assert.equal(capture.messages.length,1);assert.equal(capture.messages[0].key,'message:image-prompt');assert.equal(capture.messages[0].role,'user');
+  const pdf=await h.prepare({capture,roleMode:'prompts'});t.after(pdf.dispose);assert.equal(pdf.count,1);assert.equal(pdf.root.querySelector('img').src,'https://chatgpt.com/uploaded.png');assert.doesNotMatch(pdf.root.textContent,/You said:|Edit message/);
+});
+
+test('dark redesigned prompt bubbles and copied theme scopes use readable paper colors without changing SVG paint',async t=>{
+  const h=harness(t,`<style>:root,[data-theme="dark"]{--color-text-primary:#ededed;--color-text-secondary:#cdcdcd;--color-surface-elevated:#1b1b1b}[data-user-message-bubble]{background:#1b1b1b;color:#171717;border-radius:24px;padding:12px 20px}</style><main>${redesignedTurn(0,{answer:'<div data-theme="dark"><p>Answer in a theme scope</p><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path style="fill:rgb(20, 80, 200);stroke:rgb(200, 30, 50)" d="M0 0L20 20"/></svg></div>'})}</main>`);
+  h.doc.documentElement.dataset.theme='dark';
+  const sourceBubble=h.get('[data-user-message-bubble]'),sourceScope=h.get('main [data-theme]'),sourceSVG=h.get('svg path');
+  const sourcePaint={fill:h.w.getComputedStyle(sourceSVG).fill,stroke:h.w.getComputedStyle(sourceSVG).stroke};
+  const pdf=await h.prepare();t.after(pdf.dispose);
+  const bubble=pdf.root.querySelector('[data-user-message-bubble]'),css=h.w.getComputedStyle(bubble),scope=pdf.root.querySelector('[data-theme]');
+  assert.equal(css.color,'rgb(23, 23, 23)');assert.equal(css.backgroundColor,'rgb(245, 245, 245)');assert.equal(css.borderRadius,'24px');assert.equal(css.padding,'12px 20px');
+  assert.equal(scope.dataset.theme,'light');assert.equal(h.w.getComputedStyle(scope).getPropertyValue('--color-text-primary'),'#171717');assert.equal(h.w.getComputedStyle(pdf.root).getPropertyValue('--color-surface-elevated'),'#fff');
+  assert.equal(h.w.getComputedStyle(pdf.root.querySelector('svg path')).fill,sourcePaint.fill);assert.equal(h.w.getComputedStyle(pdf.root.querySelector('svg path')).stroke,sourcePaint.stroke);
+  assert.equal(sourceScope.dataset.theme,'dark');assert.equal(h.w.getComputedStyle(sourceBubble).backgroundColor,'rgb(27, 27, 27)','The live page theme is not changed');
 });
 
 test('asset failures and unsafe image URLs prevent incomplete PDFs',async t=>{
@@ -264,6 +321,28 @@ test('full capture traverses overlapping virtualized windows and restores the sc
   const pdf=await h.prepare({capture,selectedKeys:['message:m7','message:m0']});t.after(pdf.dispose);assert.deepEqual([...pdf.root.querySelectorAll('strong')].map(x=>x.textContent),['Message 0','Message 7']);assert.equal(progress.at(-1).phase,'ready');
 });
 
+test('redesigned reverse timeline captures virtualized messages in chronological order and restores negative scrollTop',async t=>{
+  const h=harness(t,'<aside id="sidebar" style="overflow-y:auto"></aside><main><div id="scroll" data-app-action-timeline-scroll style="display:flex;flex-direction:column-reverse;overflow-y:auto;scroll-behavior:smooth"><div data-chatgpt-conversation-selection-target></div></div></main>');fastCollection(h);
+  h.get('#sidebar').scrollTo=()=>assert.fail('The conversation exporter must not scroll the sidebar');
+  const fixture=scrollFixture(h,{reverse:true,start:-250,render:top=>{const first=Math.min(2,Math.floor((750+top)/300));h.get('[data-chatgpt-conversation-selection-target]').innerHTML=[first,first+1].map(index=>redesignedTurn(index)).join('');}});
+  const capture=await h.collect();t.after(capture.dispose);
+  assert.deepEqual(Array.from(capture.messages,message=>message.key),Array.from({length:4},(_,index)=>['message:u'+index,'message:a'+index]).flat());
+  assert.equal(fixture.top,-250);assert.equal(fixture.scroller.style.scrollBehavior,'smooth');assert.ok(fixture.positions.includes(-750));assert.ok(fixture.positions.includes(0));assert.equal(h.get('[data-chatgpt-search-message-ids="u0"]'),null);
+  const pdf=await h.prepare({capture,selectedKeys:['message:a3','message:u0']});t.after(pdf.dispose);assert.equal(pdf.count,2);assert.ok(pdf.root.textContent.indexOf('Prompt 0')<pdf.root.textContent.indexOf('Answer 3'));assert.doesNotMatch(pdf.root.textContent,/Prompt 1|Answer 0/);
+});
+
+test('reverse timeline recomputes its oldest negative offset when earlier history increases the height',async t=>{
+  const h=harness(t,'<main><div id="scroll" data-app-action-timeline-scroll style="display:flex;flex-direction:column-reverse;overflow-y:auto"><div data-chatgpt-conversation-selection-target></div></div></main>');fastCollection(h);let loaded=false,attempts=0;
+  const fixture=scrollFixture(h,{height:()=>loaded?1200:600,reverse:true,start:-50,render:top=>{if(top===-150&&++attempts>=4)loaded=true;const indices=loaded?[0,1,2]:[2];h.get('[data-chatgpt-conversation-selection-target]').innerHTML=indices.map(index=>redesignedTurn(index)).join('');}});
+  const capture=await h.collect();t.after(capture.dispose);assert.ok(attempts>=4);assert.ok(fixture.positions.includes(-750));assert.equal(fixture.top,-50);assert.equal(capture.messages.length,6);assert.equal(capture.messages[0].key,'message:u0');
+});
+
+test('cancelling a redesigned reverse capture restores the signed scroll position',async t=>{
+  const h=harness(t,`<main><div id="scroll" data-app-action-timeline-scroll style="display:flex;flex-direction:column-reverse;overflow-y:auto">${redesignedTurn(0)}</div></main>`);fastCollection(h);
+  const fixture=scrollFixture(h,{reverse:true,start:-350}),controller=new h.w.AbortController();
+  await assert.rejects(h.collect({signal:controller.signal,onProgress:()=>controller.abort()}),{name:'AbortError'});assert.equal(fixture.top,-350);assert.equal(fixture.scroller.style.scrollBehavior,'');
+});
+
 test('history loading keeps requesting the top until older numbered turns appear',async t=>{
   const h=harness(t,'<div id="scroll" style="overflow-y:auto"><main></main></div>');fastCollection(h);let attempts=0,loaded=false;
   const fixture=scrollFixture(h,{height:600,viewport:450,start:100,render:top=>{if(top===0&&++attempts>=5)loaded=true;const start=loaded?0:4;h.get('main').innerHTML=Array.from({length:2},(_,offset)=>`<section data-testid="conversation-turn-${start+offset}"><article data-message-id="m${start+offset}" data-message-author-role="${offset?'assistant':'user'}">Message ${start+offset}</article></section>`).join('');}});
@@ -326,6 +405,40 @@ test('capture waits for a newly mounted diagram before freezing its rendered sna
   h.w.LatexIslandsDiagramExport={snapshot:async()=>{if(++calls===1)throw Error('A diagram is still loading. Wait for it to render.');return [{sourceElement:h.get('#tex'),containerElement:h.get('.latex-islands-container'),svg:SVG,width:600,height:300}];}};
   const capture=await h.collect({replyElement:h.get('article')});t.after(capture.dispose);assert.equal(calls,2);assert.equal(capture.messages[0].error,'');
   const pdf=await h.prepare({capture});t.after(pdf.dispose);assert.ok(pdf.root.querySelector('.li-pdf-island-image'));
+});
+
+test('removing the host boot loader during snapshot readiness does not change the message fingerprint',async t=>{
+  const h=harness(t,'<main><article data-message-author-role="assistant" data-message-id="a1"><p>Actual answer</p><pre id="tex" class="latex-islands-original-hidden">TikZ source</pre><div class="latex-islands-container"><iframe></iframe><div class="latex-islands-boot"><span role="status">Rendering diagram…</span><button>Show code</button></div></div></article></main>');
+  fastCollection(h);let calls=0;
+  h.w.LatexIslandsDiagramExport={snapshot:async()=>{
+    if(++calls===1){h.get('.latex-islands-boot').remove();throw Error('The diagram is still rendering. Wait for it to finish, then export again.');}
+    return [{sourceElement:h.get('#tex'),containerElement:h.get('.latex-islands-container'),svg:SVG,width:600,height:300}];
+  }};
+  const capture=await h.collect({replyElement:h.get('article')});t.after(capture.dispose);
+  assert.equal(calls,2);assert.equal(capture.messages[0].error,'');
+  assert.match(capture.messages[0].preview,/Actual answer/);assert.doesNotMatch(capture.messages[0].preview,/Rendering diagram|Show code/);
+  const pdf=await h.prepare({capture});t.after(pdf.dispose);
+  assert.ok(pdf.root.querySelector('.li-pdf-island-image'));assert.match(pdf.root.textContent,/Actual answer/);assert.doesNotMatch(pdf.root.textContent,/Rendering diagram|Show code|TikZ source/);
+});
+
+test('capture revisits a transiently unavailable diagram after its first readiness budget expires without DOM changes',async t=>{
+  const h=harness(t,'<main><article data-message-id="a0" data-message-author-role="assistant"><pre id="tex">TeX</pre><div class="latex-islands-container"></div></article></main>');fastCollection(h);
+  let now=1000,calls=0;h.w.Date.now=()=>now;
+  const original=h.get('article').outerHTML;
+  h.w.LatexIslandsDiagramExport={snapshot:async()=>{if(++calls===1){now+=15001;throw Error('A diagram is still loading or streaming. Wait for it to render, then export again.');}return [{sourceElement:h.get('#tex'),containerElement:h.get('.latex-islands-container'),svg:SVG,width:600,height:300}];}};
+  const capture=await h.collect();t.after(capture.dispose);
+  assert.equal(calls,2);assert.equal(h.get('article').outerHTML,original);assert.equal(capture.messages[0].error,'');
+  const pdf=await h.prepare({capture});t.after(pdf.dispose);assert.ok(pdf.root.querySelector('.li-pdf-island-image'));assert.equal(pdf.count,1);
+});
+
+test('unchanged permanent diagram failures are not retried and transient rechecks are bounded',async t=>{
+  for(const transient of [false,true]){
+    const h=harness(t,'<div id="scroll" style="overflow-y:auto"><main><section data-testid="conversation-turn-0"><article data-message-id="a0" data-message-author-role="assistant"><pre>TeX</pre><div class="latex-islands-container"></div></article></section></main></div>');fastCollection(h);
+    const fixture=scrollFixture(h,{height:2400,viewport:450,start:100});let now=1000,calls=0;h.w.Date.now=()=>now;
+    h.w.LatexIslandsDiagramExport={snapshot:async()=>{calls++;if(transient&&calls===1)now+=15001;throw Error(transient?'A diagram is still loading. Wait for it to render.':'Rendering failed: invalid TeX');}};
+    const capture=await h.collect();t.after(capture.dispose);assert.equal(fixture.top,100);assert.ok(fixture.positions.length>5);assert.equal(calls,transient?3:1);
+    await assert.rejects(h.prepare({capture}),transient?/still loading/:/invalid TeX/);
+  }
 });
 
 test('preview mounts inside the dialog and returns to body before printing',async t=>{

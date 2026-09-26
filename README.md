@@ -8,13 +8,14 @@ LaTeX Islands turns supported LaTeX code blocks in ChatGPT replies into interact
 
 - TikZ, Circuitikz, PGFPlots, tikz-cd, Chemfig and TikZ-3DPlot support through a bundled WebAssembly TeX engine.
 - Automatic dependencies for common mathematical labels, scientific units and chemical formulae, with support for Unicode math characters. See [renderer support](docs/renderer-support.md).
-- An integrated preview with zoom, drag, fit, fullscreen editing and PNG/SVG downloads.
+- An integrated preview with zoom, drag, fit, fullscreen editing and PNG/SVG downloads. Click an inline diagram to activate wheel zoom; leave it to resume scrolling the conversation.
 - Early detection while ChatGPT streams a reply, with prewarming and cached compilations.
 - A standalone editor with examples and a monochrome interface. Follow ChatGPT's last observed theme, follow the system, or choose light/dark.
 - Theme-adapted diagram colors or original LaTeX colors on a white background, including exports.
-- Conversation export as Markdown, plain text or a complete JSON archive, with presets, individual content options and a Conversation/File preview.
+- Conversation export as Markdown, plain text or a complete JSON archive, with role filters, individual content options, preview and message selection.
 - Rich PDF export with rendered equations, tables, images and complete vector diagrams fitted to the page. The extension scrolls the conversation to load earlier messages before capturing them.
 - Select individual messages, export answers or prompts only, or save one reply with its optional preceding prompt. Check the result in the export preview before saving.
+- **Ask ChatGPT to fix** prepares a prompt containing the failed diagram and compiler error. It preserves your existing draft and waits for you to send it.
 
 Markdown, text and JSON exports request the current conversation's JSON pages from ChatGPT using your existing session. Markdown and text preserve code and TeX, apply your message selection and remove technical clutter by default. Their preview displays equations as TeX source. The complete JSON archive retains the original API pages without filtering. PDF captures ChatGPT's rendered page, including messages loaded by automatic scrolling, without requesting the conversation API itself. Preview the selected content, then use the browser's print dialog to save it as PDF. Attachment files are not downloaded.
 
