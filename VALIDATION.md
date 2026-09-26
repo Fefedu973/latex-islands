@@ -1,4 +1,4 @@
-# Validation — 1.5.4
+# Validation — 1.5.5
 
 This file describes reproducible checks and their scope. It does not claim Chrome Web Store or Mozilla approval. No private conversations, account exports, HAR captures or credentials are part of the public fixtures.
 
@@ -23,6 +23,14 @@ node tests/firefox-smoke.mjs
 The Firefox smoke test requires Firefox installed locally. Set `FIREFOX_BINARY` to its executable if it is not at the default location. It copies `dist/firefox` into a temporary directory, installs that copy into a new temporary profile, runs headless, then removes its own test directory. The test copy adds a localhost fixture origin and reporting instrumentation; the release package and personal browser profiles are not modified.
 
 The font regression test requires Chrome or Edge (`CHROME_BINARY` can override discovery). It opens an isolated headless profile, serves the production island with a synthetic cached compilation, and deliberately delays bundled WOFF2 responses. It verifies that the loading indicator remains until the required faces load, then compares diagram pixels before and after hover in dark, light and native color modes. Screenshots and a report remain in the temporary directory printed by the test; the browser profile is removed.
+
+## Version 1.5.5 PDF dark-theme text — 2026-09-26
+
+The previous fixtures checked prompt bubbles and diagram colors but did not assert the assistant's prose or formula color. A response wrapper with locally defined pale ink reproduced the reported defect in both the export preview and a real Chromium PDF: headings, paragraphs, fraction rules and native math glyphs had only 1.17:1 contrast on white paper.
+
+The capture now converts light neutral text paint to paper ink, including native math glyphs, while preserving colored text and standalone SVG diagrams. The original ChatGPT DOM remains unchanged. The regression fails before the fix and passes afterward: text contrast is 17.93:1, and the native navy diagram with a white label keeps its original paints. Chrome 154 produced the actual PDF through `Page.printToPDF`; the print and preview screenshots were also inspected visually. `node tests/pdf-print.browser.cjs --contrast-only` reproduces this check.
+
+All 365 unit/integration tests pass, including 49 PDF tests. The Chrome UI suite also passes with the updated fixture in dark, light and mobile layouts. Generated reports, screenshots and PDFs are local test artifacts and are excluded from the source package.
 
 ## Version 1.5.4 navigation diagnosis — 2026-09-26
 

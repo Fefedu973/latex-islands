@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Real Chromium print regression (Node.js 22+; no browser automation dependency).
- * Run: node tests/pdf-print.browser.cjs (or --ui-only / --navigation-only)
+ * Run: node tests/pdf-print.browser.cjs (or --ui-only / --navigation-only / --contrast-only)
  * Set CHROME_BINARY to override Chrome/Edge discovery. Uses an isolated profile.
  * Production content scripts, iframe, TeX worker and fonts are served unchanged.
  * Only extension storage/URL APIs and window.print are supplied by the fixture.
@@ -139,13 +139,19 @@ function modernFixture() {
   [data-app-action-timeline-scroll]{height:100%;display:flex;flex-direction:column-reverse;overflow-y:auto}
   [data-chatgpt-conversation-selection-target]{width:min(100%,740px);margin:auto;flex-shrink:0;padding:64px 24px}
   [data-chatgpt-search-unit-key]{margin:24px 0}[data-user-message-bubble]{margin-left:auto;width:fit-content;border-radius:24px;background:#1b1b1b;padding:12px 20px}
+  /* The real site colors the rich response itself, not just html/body. Its
+     retained selectors still match cloned messages inside the light PDF. */
+  html[data-theme="dark"] [data-markdown-text-style="assistant-message"]{--fixture-prose-text:#ededed;color:#ededed}
+  [data-pdf-color-test="heading"],[data-pdf-color-test="paragraph"],.fixture-native-math{color:var(--fixture-prose-text,inherit)}
+  .fixture-native-math{font:1.15em Georgia,serif}.fixture-native-math .katex-html{display:inline-flex;align-items:center;gap:8px}.fixture-native-math .katex-html svg{display:inline-block}
+  .fixture-native-math .frac{display:inline-flex;vertical-align:middle;flex-direction:column;line-height:1.2;text-align:center}.fixture-native-math .num{border-bottom:1px solid currentColor;padding:0 6px}
   [data-markdown-copy="code-block"]{border-radius:24px;background:#1b1b1b;overflow:hidden}[data-markdown-copy="exclude"]{display:flex;justify-content:space-between;padding:10px 20px}
   code{display:block;white-space:pre;overflow:auto;padding:20px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
   </style><script>window.testPrintCalls=0;window.testBridgeRequests=[];window.print=()=>{window.testPrintCalls++};window.addEventListener('message',e=>{if(e.data?.channel==='latex-islands-conversation-export-v1'&&e.data.type==='request')window.testBridgeRequests.push(e.data.path)});
   globalThis.chrome={runtime:{getURL:p=>location.origin+'/'+p,lastError:null},storage:{local:{get(d,c){const v={...d,autoRender:true};if(c)queueMicrotask(()=>c(v));return Promise.resolve(v)},set(v,c){if(c)queueMicrotask(c);return Promise.resolve()}},onChanged:{addListener(){}}}};
   </script></head><body><aside>ChatGPT<br>New chat</aside><main data-app-shell-main-surface="browser"><header><div data-app-shell-main-titlebar="true"><div data-app-shell-header-obstacle><div id="modern-actions"><span><button>Share</button></span><button>More</button></div></div></div></header>
   <div data-app-action-timeline-scroll><div data-chatgpt-conversation-selection-target><div data-content-search-turn-key="fallback-turn-0"><div data-chatgpt-search-unit-key="fallback-turn-0:0:user" data-chatgpt-search-message-ids="modern-prompt"><div data-user-message-bubble>Draw a rectangle in TikZ.</div></div>
-  <div data-chatgpt-search-unit-key="fallback-turn-0:2:assistant" data-chatgpt-search-message-ids="modern-answer modern-answer"><h4 class="sr-only" data-conversation-role="assistant">ChatGPT said:</h4><div data-chatgpt-selection-message-id="modern-answer"><div data-markdown-text-style="assistant-message"><p>Here is the diagram:</p><div><div data-markdown-copy="code-block"><div data-markdown-copy="exclude"><div>tikz</div><button>Copy code</button></div><div><code><span>${escapeHTML(diagrams[0])}</span></code></div></div></div><p>Its mathematical label is rendered locally.</p></div></div></div>
+  <div data-chatgpt-search-unit-key="fallback-turn-0:2:assistant" data-chatgpt-search-message-ids="modern-answer modern-answer"><h4 class="sr-only" data-conversation-role="assistant">ChatGPT said:</h4><div data-chatgpt-selection-message-id="modern-answer"><div data-markdown-text-style="assistant-message"><h3 data-pdf-color-test="heading">A readable scientific answer</h3><p data-pdf-color-test="paragraph">Here is the diagram. Its explanation must remain readable on white paper.</p><p><span class="katex fixture-native-math"><span class="katex-html" aria-hidden="true"><span data-pdf-color-test="math">∫₀¹ x² dx = </span><span class="frac"><span class="num" data-pdf-color-test="fraction">1</span><span>3</span></span><svg xmlns="http://www.w3.org/2000/svg" width="28" height="18" viewBox="0 0 28 18"><path data-pdf-color-test="math-glyph" fill="currentColor" d="M0 8H20V3L28 9L20 15V10H0Z"/></svg></span></span></p><div><div data-markdown-copy="code-block"><div data-markdown-copy="exclude"><div>tikz</div><button>Copy code</button></div><div><code><span>${escapeHTML(diagrams[0])}</span></code></div></div></div><p>Its mathematical label is rendered locally.</p><svg data-pdf-color-test="diagram" xmlns="http://www.w3.org/2000/svg" width="260" height="55" viewBox="0 0 260 55"><rect width="260" height="55" rx="8" fill="#123456"/><text x="20" y="34" fill="#fff" font-size="18">Preserve native SVG colors</text></svg></div></div></div>
   <div class="turn-action-controls"><button>Copy response</button><button>Share response</button></div></div></div></div></main>
   ${['core.js','export-core.js','export-preview-renderer.js','native-controls.js','chatgpt-dom.js','content.js','export-pdf.js','conversation-export.js'].map(name=>'<script src="/'+name+'"></script>').join('')}</body></html>`;
 }
@@ -195,6 +201,42 @@ async function main() {
     const browser = (await cdp.call('Browser.getVersion')).product;
     let shot;
     const openConversation = async () => cdp.evaluate(`(() => {document.querySelector('.li-export-toggle').click();const format=document.getElementById('li-export-format');format.value='pdf';format.dispatchEvent(new Event('change',{bubbles:true}));return !document.querySelector('.li-export-panel').hidden;})()`);
+    async function checkDarkPDFContrast(){
+      const sourceBefore=await cdp.evaluate(`(()=>{const paragraph=document.querySelector('[data-chatgpt-conversation-selection-target] [data-pdf-color-test="paragraph"]');return {text:getComputedStyle(paragraph).color,glyph:getComputedStyle(document.querySelector('[data-chatgpt-conversation-selection-target] [data-pdf-color-test="math-glyph"]')).fill}})()`);
+      assert.equal(sourceBefore.text,'rgb(237, 237, 237)','The fixture must exercise locally colored dark prose, not only inherited body color');
+      const paints=scope=>cdp.evaluate(`(()=>{
+        const root=document.querySelector(${JSON.stringify(scope)});
+        const rgb=value=>value.match(/[\\d.]+/g).slice(0,3).map(Number);
+        const luminance=color=>rgb(color).map(value=>{value/=255;return value<=.04045?value/12.92:Math.pow((value+.055)/1.055,2.4)}).reduce((sum,value,index)=>sum+value*[.2126,.7152,.0722][index],0);
+        const sample=(name,selector,property='color')=>{const node=root.querySelector(selector),css=getComputedStyle(node),paint=css[property],rect=node.getBoundingClientRect();return {name,paint,contrast:1.05/(luminance(paint)+.05),width:rect.width,height:rect.height}};
+        return {paper:getComputedStyle(root).backgroundColor,samples:[sample('export title','.li-pdf-title'),sample('speaker','.li-pdf-role'),...['heading','paragraph','math','fraction'].map(name=>sample(name,'[data-pdf-color-test="'+name+'"]')),sample('fraction rule','[data-pdf-color-test="fraction"]','borderBottomColor'),sample('math SVG glyph','[data-pdf-color-test="math-glyph"]','fill')],nativeSVG:{fill:getComputedStyle(root.querySelector('[data-pdf-color-test="diagram"] rect')).fill,label:getComputedStyle(root.querySelector('[data-pdf-color-test="diagram"] text')).fill},diagrams:root.querySelectorAll('.li-pdf-island-image').length,height:root.getBoundingClientRect().height};
+      })()`);
+      const preview=await paints('.li-export-pdf-preview .li-pdf-preview');
+      shot=await cdp.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,'pdf-dark-prose-preview.png'),Buffer.from(shot.data,'base64'));
+      const beforePrint=await cdp.evaluate('window.testPrintCalls');await cdp.evaluate(`document.querySelector('.li-export-save').click()`);
+      await until(()=>cdp.evaluate(`window.testPrintCalls===${beforePrint+1}`),'Dark prose PDF print invocation');
+      await cdp.call('Emulation.setDeviceMetricsOverride',{width:673,height:900,deviceScaleFactor:1,mobile:false});await cdp.call('Emulation.setEmulatedMedia',{media:'print'});
+      await cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      const printed=await paints('.li-pdf-active');
+      shot=await cdp.call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true,clip:{x:0,y:0,width:673,height:Math.ceil(printed.height),scale:1}});await fs.writeFile(path.join(output,'pdf-dark-prose-print.png'),Buffer.from(shot.data,'base64'));
+      const pdf=await cdp.call('Page.printToPDF',{preferCSSPageSize:true,printBackground:true,displayHeaderFooter:false});await fs.writeFile(path.join(output,'pdf-dark-prose.pdf'),Buffer.from(pdf.data,'base64'));
+      await cdp.evaluate(`window.dispatchEvent(new Event('afterprint'))`);await cdp.call('Emulation.setEmulatedMedia',{media:'screen'});await cdp.call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
+      const sourceAfter=await cdp.evaluate(`(()=>{const paragraph=document.querySelector('[data-chatgpt-conversation-selection-target] [data-pdf-color-test="paragraph"]');return {text:getComputedStyle(paragraph).color,glyph:getComputedStyle(document.querySelector('[data-chatgpt-conversation-selection-target] [data-pdf-color-test="math-glyph"]')).fill}})()`);
+      const report={case:'Dark assistant prose, headings, HTML math and SVG math retain print contrast',preview,printed,sourceBefore,sourceAfter,pdfBytes:Buffer.from(pdf.data,'base64').length};
+      await fs.writeFile(path.join(output,'pdf-dark-prose-contrast.json'),JSON.stringify(report,null,2));
+      for(const [stage,state] of [['preview',preview],['print',printed]]){
+        assert.equal(state.paper,'rgb(255, 255, 255)');assert.equal(state.diagrams,1);
+        for(const sample of state.samples){assert(sample.width>0&&sample.height>0,stage+' '+sample.name+' must be visible');assert(sample.contrast>=7,stage+' '+sample.name+' contrast '+sample.contrast.toFixed(2)+' is unreadable on white paper ('+sample.paint+')');}
+        assert.deepEqual(state.nativeSVG,{fill:'rgb(18, 52, 86)',label:'rgb(255, 255, 255)'},'Native colored SVGs must retain their own paint');
+      }
+      assert.deepEqual(sourceAfter,sourceBefore,'Export must not recolor the source conversation');reports.push(report);
+      await cdp.evaluate(`document.querySelector('.li-export-inspect').click()`);await until(()=>cdp.evaluate(`document.querySelector('.li-export-panel').getAttribute('aria-busy')==='false'&&document.querySelectorAll('.li-export-pdf-preview .li-pdf-message').length===2`),'PDF preview restored after contrast check');
+    }
+    if(process.argv.includes('--contrast-only')){
+      await cdp.call('Page.navigate',{url:origin+conversationPath+'?modern=1'});await until(()=>cdp.evaluate(`document.querySelector('.latex-islands-container iframe')?.contentDocument?.querySelector('.island')?.dataset.state==='ready'`),'Dark prose fixture real TeX render',90000);
+      await openConversation();await cdp.evaluate(`document.querySelector('.li-export-inspect').click()`);await until(()=>cdp.evaluate(`document.querySelector('.li-export-panel').getAttribute('aria-busy')==='false'&&document.querySelectorAll('.li-export-pdf-preview .li-pdf-message').length===2`),'Dark prose preview');
+      await checkDarkPDFContrast();assert.deepEqual(cdp.errors,[]);console.log(JSON.stringify({ok:true,browser,cases:reports},null,2));return;
+    }
     if(!process.argv.includes('--ui-only')&&!process.argv.includes('--navigation-only')) {
     await cdp.call('Page.navigate', {url:origin + conversationPath});
     await until(() => cdp.evaluate(`(() => {
@@ -602,6 +644,7 @@ async function main() {
     reports.push({case:'September 26 public layout real render and DOM PDF preview',...modernState});
 
     if(!process.argv.includes('--navigation-only')) {
+    await checkDarkPDFContrast();
     // Measure the production dialog under both site palettes and a narrow
     // viewport. These are layout assertions, not screenshot pixel baselines.
     const dialogLayouts=[];
