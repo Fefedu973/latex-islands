@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Real Chromium print regression (Node.js 22+; no browser automation dependency).
- * Run: node tests/pdf-print.browser.cjs
+ * Run: node tests/pdf-print.browser.cjs (or --ui-only / --navigation-only)
  * Set CHROME_BINARY to override Chrome/Edge discovery. Uses an isolated profile.
  * Production content scripts, iframe, TeX worker and fonts are served unchanged.
  * Only extension storage/URL APIs and window.print are supplied by the fixture.
@@ -130,6 +130,7 @@ function modernFixture() {
   return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8"><title>ChatGPT September layout</title><link rel="stylesheet" href="/content.css"><style>
   *{box-sizing:border-box}html,body{margin:0;height:100%;font:15px/1.6 system-ui;color:#ededed;background:#000}
   :root{--color-text-primary:#ededed;--color-text-secondary:#cdcdcd;--color-surface-elevated:#1b1b1b;--color-border-subtle:#ffffff0d;--radius-button-toolbar:9999px}
+  html[data-theme="light"],html[data-theme="light"] body{color:#171717;background:#fff;--color-text-primary:#171717;--color-text-secondary:#616161;--color-surface-elevated:#fff;--color-border-subtle:#0000001a}
   aside{position:fixed;inset:0 auto 0 0;width:180px;border-right:1px solid #ffffff26;padding:20px}main{margin-left:180px;height:100dvh}
   header{position:fixed;top:0;right:0;left:180px;height:52px;pointer-events:none;z-index:20;display:flex;justify-content:flex-end}
   [data-app-shell-header-obstacle]{display:flex;pointer-events:auto;padding:8px}[data-app-shell-header-obstacle]>div{display:flex;align-items:center}
@@ -191,6 +192,9 @@ async function main() {
     await cdp.call('Network.setCacheDisabled', {cacheDisabled:true});
     await cdp.call('Emulation.setDeviceMetricsOverride', {width:1000,height:900,deviceScaleFactor:1,mobile:false});
     const browser = (await cdp.call('Browser.getVersion')).product;
+    let shot;
+    const openConversation = async () => cdp.evaluate(`(() => {document.querySelector('.li-export-toggle').click();const format=document.getElementById('li-export-format');format.value='pdf';format.dispatchEvent(new Event('change',{bubbles:true}));return !document.querySelector('.li-export-panel').hidden;})()`);
+    if(!process.argv.includes('--ui-only')&&!process.argv.includes('--navigation-only')) {
     await cdp.call('Page.navigate', {url:origin + conversationPath});
     await until(() => cdp.evaluate(`(() => {
       const sources=${JSON.stringify(diagrams)},frames=[...document.querySelectorAll('.latex-islands-container iframe')];
@@ -219,7 +223,6 @@ async function main() {
     const transforms = await cdp.evaluate(`(() => [...document.querySelectorAll('.latex-islands-container iframe')].map(frame=>{const doc=frame.contentDocument;for(let i=0;i<3;i++)doc.getElementById('zoom-in').click();const output=doc.getElementById('output');output.style.transform+=' translate(71px, -29px)';return output.style.transform;}))()`);
     assert(transforms.every(value => value.includes('71px')), 'Pan/zoom fixture must exercise transformed previews');
 
-    const openConversation = async () => cdp.evaluate(`(() => {document.querySelector('.li-export-toggle').click();const format=document.getElementById('li-export-format');format.value='pdf';format.dispatchEvent(new Event('change',{bubbles:true}));return !document.querySelector('.li-export-panel').hidden;})()`);
     assert(await openConversation());
     // Hold the actual font embedding fetch, then cancel via the production UI.
     holdFonts = true;
@@ -235,7 +238,7 @@ async function main() {
     await cdp.evaluate(`document.querySelector('.li-export-inspect').click()`);
     await until(() => cdp.evaluate(`document.querySelector('.li-export-panel').getAttribute('aria-busy')==='false'&&!!document.querySelector('.li-export-pdf-preview .li-pdf-preview')`), 'Rich in-dialog preview');
     assert.equal(await cdp.evaluate('window.testPrintCalls'), 0);
-    let shot = await cdp.call('Page.captureScreenshot', {format:'png'});
+    shot = await cdp.call('Page.captureScreenshot', {format:'png'});
     await fs.writeFile(path.join(output, 'pdf-dialog-preview.png'), Buffer.from(shot.data, 'base64'));
     await cdp.evaluate(`document.querySelector('.li-export-choose-messages').click()`);
     await until(() => cdp.evaluate(`document.querySelectorAll('.li-export-message-choice input').length===3&&document.querySelector('.li-export-panel').getAttribute('aria-busy')==='false'`), 'Message selection');
@@ -346,6 +349,7 @@ async function main() {
     reports.push({case:'auto-scroll virtualized history and arbitrary selection',...lazy});
     assert.deepEqual(await cdp.evaluate('window.testBridgeRequests'), [], 'PDF export must not request the conversation backend');
     assert(!requests.some(request => request.includes('/backend-api/')));
+    }
     // The new public renderer has no <pre> or data-message-author-role, and
     // its scroll root lives inside main with negative scrollTop coordinates.
     holdIslands=true;
@@ -363,11 +367,133 @@ async function main() {
     const modernState=await cdp.evaluate(`(()=>{const frame=document.querySelector('.latex-islands-container iframe');return {messages:LatexIslandsChatGPT.getMessages().length,sourceHidden:document.querySelector('[data-markdown-copy="code-block"]').classList.contains('latex-islands-original-hidden'),header:!!document.querySelector('#modern-actions > .li-export'),reply:!!document.querySelector('.turn-action-controls > .li-export-reply'),theme:frame.contentDocument.documentElement.dataset.theme,oldRoles:document.querySelectorAll('[data-message-author-role]').length,oldPre:document.querySelectorAll('[data-chatgpt-conversation-selection-target] pre').length}})()`);
     assert.equal(modernState.messages,2);assert(modernState.sourceHidden);assert(modernState.header);assert(modernState.reply);assert.equal(modernState.oldRoles,0);assert.equal(modernState.oldPre,0);
     assert.equal(await cdp.evaluate(`getComputedStyle(document.querySelector('.li-export-toggle')).borderRadius`),'8px','header export must use the rounded-square control shape, even when toolbar token is fully round');
+    const hydration=await cdp.evaluate(`(async()=>{
+      let source=document.querySelector('[data-markdown-copy="code-block"]');
+      const frame=document.querySelector('.latex-islands-container iframe'),svg=frame.contentDocument.querySelector('#output svg'),samples=[];
+      source.className='host-hydrated-code';
+      for(let index=0;index<20;index++){
+        if(index===4){const fresh=source.cloneNode(true);fresh.className='host-rebuilt-code';fresh.removeAttribute('data-latex-islands-hidden');source.replaceWith(fresh);source=fresh;}
+        if(index===8)source.className='host-final-code';
+        await new Promise(resolve=>requestAnimationFrame(resolve));
+        samples.push({visible:getComputedStyle(source).display!=='none',sameFrame:document.querySelector('.latex-islands-container iframe')===frame,boot:!!document.querySelector('.latex-islands-boot')});
+      }
+      const sameSVG=frame.contentDocument?.querySelector('#output svg')===svg;
+      const fresh=source.cloneNode(true);fresh.className='host-new-code';fresh.removeAttribute('data-latex-islands-hidden');fresh.querySelector('code').textContent='\\\\begin{tikzpicture}\\\\node {Late diagram};\\\\end{tikzpicture}';source.parentElement.append(fresh);
+      const newSamples=[];for(let index=0;index<4;index++){await new Promise(resolve=>requestAnimationFrame(resolve));newSamples.push(getComputedStyle(fresh).display!=='none');}
+      fresh.remove();
+      return {frames:samples.length,visibleFrames:samples.filter(s=>s.visible).length,recreatedFrame:samples.some(s=>!s.sameFrame),restartedLoader:samples.some(s=>s.boot),sameSVG,newVisibleFrames:newSamples.filter(Boolean).length};
+    })()`);
+    assert.equal(hydration.visibleFrames,0,'Host class rewrites and widget replacement must never paint original code again');
+    assert.equal(hydration.recreatedFrame,false,'An adjacent unchanged diagram retains its connected frame during hydration');
+    assert.equal(hydration.restartedLoader,false);assert(hydration.sameSVG);assert.equal(hydration.newVisibleFrames,0,'A newly hydrated diagram must be concealed before its first frame');
+    await until(()=>cdp.evaluate(`document.querySelectorAll('.latex-islands-container iframe').length===1`),'Hydration test diagram cleanup');
+    reports.push({case:'No code flashes across host hydration animation frames',...hydration});
+
+    // ChatGPT navigation replaces message DOM while keeping content scripts
+    // alive. Visit another conversation, revisit this one, then leave during
+    // an unfinished iframe startup before returning for a real complete render.
+    // Retain only host markup: React does not recreate our injected containers.
+    holdIslands=true;
+    const leave=await cdp.evaluate(`(async()=>{
+      const root=document.querySelector('[data-chatgpt-conversation-selection-target]'),template=root.cloneNode(true);
+      template.querySelectorAll('.latex-islands-container,.li-export-reply').forEach(node=>node.remove());
+      template.querySelectorAll('.latex-islands-original-hidden,[data-latex-islands-hidden]').forEach(node=>{node.classList.remove('latex-islands-original-hidden');node.removeAttribute('data-latex-islands-hidden');});
+      window.spaNavigation={template,url:location.href,firstFrame:document.querySelector('.latex-islands-container iframe')};
+      history.pushState({},'', '/c/87654321-4321-4321-8321-cba987654321');
+      root.replaceChildren(Object.assign(document.createElement('p'),{textContent:'Another conversation is open.'}));
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      return {frames:document.querySelectorAll('.latex-islands-container iframe').length,oldConnected:window.spaNavigation.firstFrame.isConnected};
+    })()`);
+    assert.deepEqual(leave,{frames:0,oldConnected:false});
+    const returnAndSample=()=>cdp.evaluate(`(async()=>{
+      const navigation=window.spaNavigation,root=navigation.template.cloneNode(true);history.pushState({},'',navigation.url);
+      document.querySelector('[data-chatgpt-conversation-selection-target]').replaceWith(root);
+      const source=root.querySelector('[data-markdown-copy="code-block"]'),samples=[];
+      for(let i=0;i<10;i++){await new Promise(resolve=>requestAnimationFrame(resolve));samples.push({visible:getComputedStyle(source).display!=='none',frames:root.querySelectorAll('.latex-islands-container iframe').length});}
+      const frame=root.querySelector('.latex-islands-container iframe');navigation.currentFrame=frame;
+      return {sampledFrames:samples.length,visibleFrames:samples.filter(s=>s.visible).length,maxIslands:Math.max(...samples.map(s=>s.frames)),sameOriginalFrame:frame===navigation.firstFrame,boot:!!root.querySelector('.latex-islands-boot')};
+    })()`);
+    const pendingReturn=await returnAndSample();
+    await until(()=>heldIslands.size>0,'SPA revisit waiting for iframe startup');
+    assert.equal(pendingReturn.visibleFrames,0);assert.equal(pendingReturn.maxIslands,1);assert.equal(pendingReturn.sameOriginalFrame,false);assert.equal(pendingReturn.boot,true);
+    const abandoned=await cdp.evaluate(`(async()=>{
+      const frame=window.spaNavigation.currentFrame;history.pushState({},'', '/c/87654321-4321-4321-8321-cba987654321');
+      document.querySelector('[data-chatgpt-conversation-selection-target]').replaceChildren(Object.assign(document.createElement('p'),{textContent:'The loading conversation was left.'}));
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      return {frames:document.querySelectorAll('.latex-islands-container iframe').length,oldConnected:frame.isConnected};
+    })()`);
+    assert.deepEqual(abandoned,{frames:0,oldConnected:false});releaseIslands();
+    const finalReturn=await returnAndSample();assert.equal(finalReturn.visibleFrames,0);assert.equal(finalReturn.maxIslands,1);assert.equal(finalReturn.sameOriginalFrame,false);
+    await until(async()=>{
+      const state=await cdp.evaluate(`(()=>{const frame=document.querySelector('.latex-islands-container iframe'),doc=frame?.contentDocument;return {frames:document.querySelectorAll('.latex-islands-container iframe').length,state:doc?.querySelector('.island')?.dataset.state,error:doc?.getElementById('error')?.textContent,bootError:document.querySelector('.latex-islands-boot [role="alert"]')?.textContent,boot:!!document.querySelector('.latex-islands-boot'),source:doc?.getElementById('source')?.value,svg:!!doc?.querySelector('#output svg')}})()`);
+      if(state.state==='error'||state.bootError)throw Error('SPA navigation recovery failed: '+(state.bootError||state.error));
+      return state.frames===1&&state.state==='ready'&&!state.boot&&state.source===diagrams[0]&&state.svg;
+    },'SPA revisit real diagram recovery',90000);
+    const restored=await cdp.evaluate(`(async()=>{
+      const frame=window.spaNavigation.currentFrame,svg=frame.contentDocument.querySelector('#output svg'),source=document.querySelector('[data-markdown-copy="code-block"]');
+      for(let i=0;i<10;i++)await new Promise(resolve=>requestAnimationFrame(resolve));
+      return {frames:document.querySelectorAll('.latex-islands-container iframe').length,sameFrame:document.querySelector('.latex-islands-container iframe')===frame,sameSVG:frame.contentDocument.querySelector('#output svg')===svg,boot:!!document.querySelector('.latex-islands-boot'),sourceHidden:getComputedStyle(source).display==='none',messages:LatexIslandsChatGPT.getMessages().length};
+    })()`);
+    assert.deepEqual(restored,{frames:1,sameFrame:true,sameSVG:true,boot:false,sourceHidden:true,messages:2});
+    reports.push({case:'SPA leave and revisit, including an abandoned loading diagram',leave,pendingReturn,abandoned,finalReturn,restored});
+
+    const cachedNavigations=[];
+    for(const mode of ['cloned-cache','hidden-connected-cache']) {
+      const cached=await cdp.evaluate(`(async()=>{
+        const root=document.querySelector('[data-chatgpt-conversation-selection-target]'),frame=root.querySelector('.latex-islands-container iframe'),mode=${JSON.stringify(mode)};
+        const cached=mode==='cloned-cache'?root.cloneNode(true):root;
+        // A host cache can serialize iframe placeholders. This override belongs
+        // only to the detached clone: the live owned frame is never modified.
+        if(mode==='cloned-cache')cached.querySelectorAll('.latex-islands-container iframe').forEach(node=>node.setAttribute('srcdoc',''));
+        window.cachedNavigation={root,cached,frame,clonedFrame:cached.querySelector('.latex-islands-container iframe'),url:location.href};
+        history.pushState({},'', '/c/11223344-5566-4788-8999-aabbccddeeff');
+        const other=document.createElement('div');other.setAttribute('data-chatgpt-conversation-selection-target','');other.id='fixture-other-conversation';other.textContent='A different conversation is active.';
+        if(mode==='cloned-cache')root.replaceWith(other);else {root.hidden=true;root.inert=true;root.after(other);}
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        return {activeMessages:LatexIslandsChatGPT.getMessages().length,frames:document.querySelectorAll('.latex-islands-container iframe').length,liveOverride:frame.hasAttribute('srcdoc')};
+      })()`);
+      assert.equal(cached.activeMessages,0);assert.equal(cached.liveOverride,false);
+      await until(()=>cdp.evaluate(`document.querySelectorAll('.latex-islands-container iframe').length===0`),mode+' inactive frame cleanup');cached.frames=0;
+      const revisit=await cdp.evaluate(`(async()=>{
+        const cache=window.cachedNavigation;history.pushState({},'',cache.url);
+        if(${JSON.stringify(mode)}==='cloned-cache')document.getElementById('fixture-other-conversation').replaceWith(cache.cached);
+        else {document.getElementById('fixture-other-conversation').remove();cache.cached.hidden=false;cache.cached.inert=false;}
+        const source=cache.cached.querySelector('[data-markdown-copy="code-block"]'),samples=[];
+        for(let i=0;i<10;i++){await new Promise(resolve=>requestAnimationFrame(resolve));samples.push({visible:getComputedStyle(source).display!=='none',frames:cache.cached.querySelectorAll('.latex-islands-container iframe').length});}
+        return {visibleFrames:samples.filter(sample=>sample.visible).length,maxIslands:Math.max(...samples.map(sample=>sample.frames)),oldPlaceholderConnected:cache.clonedFrame.isConnected,overrides:cache.cached.querySelectorAll('iframe[srcdoc]').length};
+      })()`);
+      assert.equal(revisit.visibleFrames,0,mode+' must conceal restored code before paint');assert.equal(revisit.maxIslands,1,mode+' must not retain a stale island next to the new one');assert.equal(revisit.oldPlaceholderConnected,false);assert.equal(revisit.overrides,0);
+      await until(async()=>{
+        const state=await cdp.evaluate(`(()=>{const frames=[...document.querySelectorAll('.latex-islands-container iframe')],doc=frames[0]?.contentDocument;return {frames:frames.length,state:doc?.querySelector('.island')?.dataset.state,error:doc?.getElementById('error')?.textContent,alert:document.querySelector('.latex-islands-boot [role="alert"]')?.textContent,boot:!!document.querySelector('.latex-islands-boot'),svg:!!doc?.querySelector('#output svg')}})()`);
+        if(state.state==='error'||state.alert)throw Error('Cached DOM navigation failed: '+(state.alert||state.error));
+        return state.frames===1&&state.state==='ready'&&!state.boot&&state.svg;
+      },mode+' real render after returning',90000);
+      const snapshot=await cdp.evaluate(`(async()=>{const source=document.querySelector('[data-markdown-copy="code-block"]'),items=await LatexIslandsDiagramExport.snapshot(source);return {items:items.length,svg:items[0]?.svg.includes('<svg'),sourceMatches:items[0]?.sourceElement===source}})()`);
+      assert.deepEqual(snapshot,{items:1,svg:true,sourceMatches:true});
+      await until(()=>cdp.evaluate(`document.querySelectorAll('.li-export-reply').length===1&&document.querySelectorAll('.li-export-toggle').length===1`),mode+' live export controls without cached duplicates');
+      cachedNavigations.push({mode,cached,revisit,snapshot,replyButtons:1,headerButtons:1});
+    }
+    reports.push({case:'Restored cached conversation DOM, including stale iframe placeholders',navigations:cachedNavigations});
     shot=await cdp.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,'chatgpt-september-inline.png'),Buffer.from(shot.data,'base64'));
+    await cdp.call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
     await cdp.evaluate(`window.modernFrame=document.querySelector('.latex-islands-container iframe');window.modernFrame.contentDocument.getElementById('open-editor').click()`);
     await until(()=>cdp.evaluate(`!!document.querySelector('.latex-islands-is-editing')`),'September sidebar-aware editor');
     const editor=await cdp.evaluate(`(()=>{const r=document.querySelector('.latex-islands-is-editing').getBoundingClientRect(),s=document.querySelector('[data-app-action-timeline-scroll]').getBoundingClientRect();return {left:r.left,top:r.top,width:r.width,height:r.height,expectedLeft:s.left,expectedWidth:s.width,sameFrame:window.modernFrame===document.querySelector('.latex-islands-container iframe')};})()`);
     assert.equal(editor.left,180);assert.equal(editor.left,editor.expectedLeft);assert.equal(editor.width,editor.expectedWidth);assert(editor.sameFrame);
+    const copyPoint=await cdp.evaluate(`(()=>{const f=window.modernFrame.getBoundingClientRect(),b=window.modernFrame.contentDocument.getElementById('copy-header').getBoundingClientRect();return {x:f.left+b.left+b.width/2,y:f.top+b.top+b.height/2}})()`);
+    await cdp.call('Input.dispatchMouseEvent',{type:'mouseMoved',...copyPoint});
+    await until(()=>cdp.evaluate(`!window.modernFrame.contentDocument.getElementById('control-tooltip').hidden`),'Editor Copy code tooltip after pointer hover');
+    const editorControls=await cdp.evaluate(`(()=>{
+      const doc=window.modernFrame.contentDocument,view=doc.defaultView,tip=doc.getElementById('control-tooltip'),r=tip.getBoundingClientRect(),css=view.getComputedStyle(tip),command=doc.querySelector('#edit-hint svg'),bbox=command.querySelector('path').getBBox();
+      return {tooltip:{label:tip.textContent,left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height,font:css.fontSize,line:css.lineHeight,padding:css.padding,radius:css.borderRadius},viewport:{width:view.innerWidth,height:view.innerHeight},titles:doc.querySelectorAll('button[title]').length,
+        buttons:['close-editor','copy-header','png-header'].map(id=>{const button=doc.getElementById(id),r=button.getBoundingClientRect(),i=button.querySelector('svg').getBoundingClientRect();return {id,width:r.width,height:r.height,radius:view.getComputedStyle(button).borderRadius,iconWidth:i.width,iconHeight:i.height,centerX:Math.abs(r.left+r.width/2-i.left-i.width/2),centerY:Math.abs(r.top+r.height/2-i.top-i.height/2)}}),command:{width:command.getBoundingClientRect().width,height:command.getBoundingClientRect().height,pathAspect:bbox.width/bbox.height}};
+    })()`);
+    assert.equal(editorControls.titles,0);assert.equal(editorControls.tooltip.label,'Copy code');assert.equal(editorControls.tooltip.height,30);assert.equal(editorControls.tooltip.font,'14px');assert.equal(editorControls.tooltip.line,'18px');assert.equal(editorControls.tooltip.padding,'5px 12px');assert.equal(editorControls.tooltip.radius,'16px');
+    assert(editorControls.tooltip.left>=8&&editorControls.tooltip.top>=8&&editorControls.tooltip.right<=editorControls.viewport.width-8&&editorControls.tooltip.bottom<=editorControls.viewport.height-8);
+    for(const button of editorControls.buttons){assert.equal(button.width,36);assert.equal(button.height,36);assert.equal(button.radius,'8px');assert.equal(button.iconWidth,20);assert.equal(button.iconHeight,20);assert(button.centerX<.6&&button.centerY<.6);}
+    assert.equal(editorControls.command.width,14);assert.equal(editorControls.command.height,14);assert(Math.abs(editorControls.command.pathAspect-1)<.01);
+    shot=await cdp.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,'chatgpt-editor-controls-tooltip.png'),Buffer.from(shot.data,'base64'));reports.push({case:'Editor icon controls and native tooltip geometry',...editorControls});
+    await cdp.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:2,y:2});
     await cdp.evaluate(`window.modernFrame.contentDocument.getElementById('close-editor').click()`);
     await until(()=>cdp.evaluate(`!document.querySelector('.latex-islands-is-editing')`),'September editor close');
     await cdp.evaluate(`document.querySelector('.li-export-toggle').click();const f=document.getElementById('li-export-format');f.value='pdf';f.dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('.li-export-inspect').click()`);
@@ -377,6 +503,83 @@ async function main() {
     assert.deepEqual(await cdp.evaluate('window.testBridgeRequests'),[]);
     shot=await cdp.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,'chatgpt-september-export.png'),Buffer.from(shot.data,'base64'));
     reports.push({case:'September 26 public layout real render and DOM PDF preview',...modernState});
+
+    if(!process.argv.includes('--navigation-only')) {
+    // Measure the production dialog under both site palettes and a narrow
+    // viewport. These are layout assertions, not screenshot pixel baselines.
+    const dialogLayouts=[];
+    for(const [name,width,height,theme] of [['desktop-dark',1280,900,'dark'],['desktop-light',1280,900,'light'],['mobile-dark',390,844,'dark']]) {
+      await cdp.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+      await cdp.evaluate(`document.documentElement.dataset.theme=${JSON.stringify(theme)};new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+      const geometry=await cdp.evaluate(`(()=>{
+        const panel=document.querySelector('.li-export-panel'),close=panel.querySelector('.li-export-close'),icon=close.querySelector('svg'),preview=panel.querySelector('.li-export-pdf-preview');
+        const box=node=>{const r=node.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height}};
+        return {panel:box(panel),background:getComputedStyle(panel).backgroundColor,color:getComputedStyle(panel).color,close:box(close),icon:box(icon),preview:box(preview),messages:preview.querySelectorAll('.li-pdf-message').length,documentOverflow:document.documentElement.scrollWidth>innerWidth+1,
+          overflow:['.li-export-panel','.li-export-layout','.li-export-settings','.li-export-preview-pane','.li-export-pdf-preview'].map(selector=>{const node=document.querySelector(selector);return {selector,overflow:node.scrollWidth>node.clientWidth+1}})};
+      })()`);
+      assert.equal(geometry.documentOverflow,false,name+' must not overflow the page horizontally');
+      assert(geometry.overflow.every(item=>!item.overflow),name+' must not clip content in a horizontally scrolling dialog: '+JSON.stringify(geometry.overflow));
+      assert(geometry.panel.left>=0&&geometry.panel.right<=width+1&&geometry.panel.top>=0&&geometry.panel.bottom<=height+1);
+      assert.equal(geometry.close.width,36);assert.equal(geometry.close.height,36);assert.equal(geometry.icon.width,20);assert.equal(geometry.icon.height,20);
+      assert(Math.abs((geometry.close.left+18)-(geometry.icon.left+10))<.6&&Math.abs((geometry.close.top+18)-(geometry.icon.top+10))<.6,name+' close icon must remain centered');
+      assert(geometry.preview.width>100&&geometry.preview.height>100);assert.equal(geometry.messages,2);
+      assert.equal(geometry.background,theme==='dark'?'rgb(27, 27, 27)':'rgb(255, 255, 255)');
+      assert.equal(geometry.color,theme==='dark'?'rgb(237, 237, 237)':'rgb(23, 23, 23)');
+      shot=await cdp.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,'chatgpt-export-'+name+'.png'),Buffer.from(shot.data,'base64'));
+      dialogLayouts.push({name,width,height,theme,...geometry});
+    }
+    // On mobile, the settings/preview stack may scroll vertically; both message
+    // filtering and arbitrary selection must remain reachable and actionable.
+    await cdp.evaluate(`document.querySelector('.li-export-selection-mode').click()`);
+    await until(()=>cdp.evaluate(`document.querySelectorAll('.li-export-message-choice input').length===2&&!document.querySelector('.li-export-selection').hidden`),'Mobile message-selection view');
+    const selection=await cdp.evaluate(`(()=>{
+      const search=document.querySelector('.li-export-message-search');search.value='rectangle';search.dispatchEvent(new Event('input',{bubbles:true}));
+      const filtered=[...document.querySelectorAll('.li-export-message-choice')].filter(node=>!node.hidden).map(node=>node.textContent);search.value='';search.dispatchEvent(new Event('input',{bubbles:true}));
+      document.querySelector('.li-export-select-none').click();const choices=[...document.querySelectorAll('.li-export-message-choice input')];choices.at(-1).click();
+      document.querySelector('.li-export-selection').scrollIntoView({block:'nearest'});const panel=document.querySelector('.li-export-panel'),layout=document.querySelector('.li-export-layout'),list=document.querySelector('.li-export-message-list'),first=choices.at(-1).getBoundingClientRect(),p=panel.getBoundingClientRect();
+      return {filtered,selected:choices.filter(input=>input.checked).length,choices:choices.length,horizontalOverflow:panel.scrollWidth>panel.clientWidth+1||layout.scrollWidth>layout.clientWidth+1||list.scrollWidth>list.clientWidth+1,reachable:first.width>0&&first.height>0&&first.top>=p.top&&first.bottom<=p.bottom};
+    })()`);
+    assert.equal(selection.filtered.length,1);assert.match(selection.filtered[0],/Draw a rectangle/);assert.equal(selection.selected,1);assert.equal(selection.choices,2);assert.equal(selection.horizontalOverflow,false);assert.equal(selection.reachable,true);
+    shot=await cdp.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,'chatgpt-export-mobile-selection.png'),Buffer.from(shot.data,'base64'));
+    await cdp.evaluate(`document.querySelector('.li-export-dialogue-mode').click()`);
+    await until(()=>cdp.evaluate(`document.querySelectorAll('.li-export-pdf-preview .li-pdf-message').length===1&&!document.querySelector('.li-export-pdf-preview').hidden`),'Mobile selected reply preview');
+    await cdp.evaluate(`document.querySelector('.li-export-selection-mode').click();document.querySelector('.li-export-select-all').click();document.querySelector('.li-export-dialogue-mode').click()`);
+    await until(()=>cdp.evaluate(`document.querySelectorAll('.li-export-pdf-preview .li-pdf-message').length===2`),'Restore full PDF selection');
+    reports.push({case:'Dark, light and mobile export dialog geometry and message selection',layouts:dialogLayouts,selection});
+
+    await cdp.call('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
+    await cdp.evaluate(`document.querySelector('.li-export-close').click();document.querySelector('.li-export-toggle').blur()`);
+    const tooltipCases=[];
+    for(const [selector,label] of [['.li-export-toggle','Export conversation'],['.li-export-reply','Export reply as PDF']]) {
+      // Verify stable CSS metrics here; tooltip events have separate UI tests.
+      // Do not couple these geometry checks to focus timing after modal close.
+      await cdp.evaluate(`(async()=>{const anchor=document.querySelector(${JSON.stringify(selector)});anchor.scrollIntoView({block:'nearest'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));anchor.focus({preventScroll:true});})()`);
+      await sleep(350);
+      const geometry=await cdp.evaluate(`(()=>{const anchor=document.querySelector(${JSON.stringify(selector)}),tip=document.querySelector('.li-export-tooltip'),css=getComputedStyle(tip),a=anchor.getBoundingClientRect(),r=tip.getBoundingClientRect(),i=anchor.querySelector('svg').getBoundingClientRect();return {label:tip.textContent,anchor:{width:a.width,height:a.height,radius:getComputedStyle(anchor).borderRadius},icon:{width:i.width,height:i.height,centerX:Math.abs(a.left+a.width/2-i.left-i.width/2),centerY:Math.abs(a.top+a.height/2-i.top-i.height/2)},tooltip:{left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height,fontSize:css.fontSize,lineHeight:css.lineHeight,fontWeight:css.fontWeight,radius:css.borderRadius,padding:css.padding,border:css.borderTopWidth},expectedTop:Math.min(a.bottom+8,innerHeight-r.height-8)}})()`);
+      assert.equal(geometry.tooltip.fontSize,'14px');assert.equal(geometry.tooltip.lineHeight,'18px');assert.equal(geometry.tooltip.fontWeight,'600');assert.equal(geometry.tooltip.radius,'16px');assert.equal(geometry.tooltip.padding,'5px 12px');assert.equal(geometry.tooltip.border,'1px');
+      assert.equal(geometry.icon.width,20);assert.equal(geometry.icon.height,20);assert(geometry.icon.centerX<.6&&geometry.icon.centerY<.6);
+      if(selector==='.li-export-reply'){assert.equal(geometry.anchor.width,32);assert.equal(geometry.anchor.height,32);assert.equal(geometry.anchor.radius,'8px');}
+      if(geometry.tooltip.height>0){
+        assert.equal(geometry.label,label);assert.equal(geometry.tooltip.height,30);
+        // The production clamp uses integer offsetWidth; DOMRect retains the
+        // label's fractional text width, so permit its subpixel rounding error.
+        assert(geometry.tooltip.left>=7&&geometry.tooltip.right<=1273&&geometry.tooltip.bottom<=893,JSON.stringify(geometry.tooltip));
+        shot=await cdp.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,selector==='.li-export-reply'?'chatgpt-reply-tooltip.png':'chatgpt-header-tooltip.png'),Buffer.from(shot.data,'base64'));
+      }
+      tooltipCases.push({selector,expectedLabel:label,...geometry});
+      await cdp.evaluate(`document.querySelector(${JSON.stringify(selector)}).blur()`);
+    }
+    await cdp.evaluate(`(()=>{window.streamingReplyAction=document.querySelector('.li-export-reply');window.streamingReplyAction.focus();const composer=document.createElement('div');composer.id='fixture-streaming-composer';composer.setAttribute('data-chatgpt-composer','');composer.innerHTML='<div data-composer-footer-responsive><button aria-label="Arrêter">■</button></div>';document.body.append(composer);})()`);
+    await until(()=>cdp.evaluate(`window.streamingReplyAction.hidden&&getComputedStyle(window.streamingReplyAction).display==='none'&&document.querySelector('.li-export-tooltip').hidden`),'Reply export hidden while September composer is streaming');
+    await cdp.evaluate(`document.getElementById('fixture-streaming-composer').remove()`);
+    await until(()=>cdp.evaluate(`!window.streamingReplyAction.hidden&&getComputedStyle(window.streamingReplyAction).display!=='none'`),'Reply export restored after streaming');
+    assert.equal(await cdp.evaluate(`document.querySelector('.li-export-reply')===window.streamingReplyAction`),true);
+    reports.push({case:'Native export controls, compact tooltips and streaming visibility',tooltips:tooltipCases,hiddenDuringStreaming:true,sameReplyButton:true});
+    // Leave the expected open PDF dialog for the following virtualized-history
+    // scenario, with no synthetic transcript endpoint or backend requests.
+    await openConversation();await cdp.evaluate(`document.querySelector('.li-export-inspect').click()`);
+    await until(()=>cdp.evaluate(`document.querySelector('.li-export-panel').getAttribute('aria-busy')==='false'&&document.querySelectorAll('.li-export-pdf-preview .li-pdf-message').length===2`),'PDF preview restored after UI layout checks');
+    }
     await cdp.evaluate(`(()=>{document.querySelector('.li-export-close').click();const root=document.querySelector('[data-chatgpt-conversation-selection-target]'),scroll=document.querySelector('[data-app-action-timeline-scroll]');root.style.cssText='height:2400px;position:relative;margin:0;padding:0';window.negativeWindows=[];
       const paint=()=>{const distance=Math.max(0,scroll.scrollHeight-scroll.clientHeight+scroll.scrollTop),start=Math.max(0,Math.min(6,Math.floor(distance/200)-1));window.negativeWindows.push({start,top:scroll.scrollTop});root.replaceChildren(...Array.from({length:6},(_,offset)=>{const i=start+offset,n=document.createElement('div'),role=i%2?'assistant':'user';n.setAttribute('data-chatgpt-search-unit-key','fallback-turn-'+Math.floor(i/2)+':'+(i%2?2:0)+':'+role);n.setAttribute('data-chatgpt-search-message-ids','modern-'+i);n.style.cssText='position:absolute;top:'+(i*200)+'px;height:180px;margin:0';n.textContent='REVERSED_VISIBLE_MESSAGE_'+i;return n;}));};scroll.addEventListener('scroll',paint);paint();scroll.scrollTop=700-(scroll.scrollHeight-scroll.clientHeight);paint();window.negativeStart=scroll.scrollTop;})()`);
     const reversed=await cdp.evaluate(`(async()=>{const c=await LatexIslandsPDF.collect();const r={keys:c.messages.map(m=>m.key),positions:window.negativeWindows.map(w=>w.top),windows:[...new Set(window.negativeWindows.map(w=>w.start))],restored:document.querySelector('[data-app-action-timeline-scroll]').scrollTop,initial:window.negativeStart};c.dispose();return r;})()`);

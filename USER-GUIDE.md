@@ -1,6 +1,6 @@
 # LaTeX Islands — TikZ & Export for ChatGPT
 
-Chrome and Firefox desktop Manifest V3 extension · **Version 1.5.1** · English interface
+Chrome and Firefox desktop Manifest V3 extension · **Version 1.5.2** · English interface
 
 Render TikZ diagrams in ChatGPT replies with an interface inspired by its native diagrams: an integrated preview, zoom, drag and a fullscreen editor. ChatGPT continues to display formulas, Markdown and Mermaid. The popup and editor use a monochrome interface. Conversation export provides a configurable transcript and preview based on the site's JSON data.
 
@@ -10,7 +10,7 @@ The Chrome package requires Chrome 116 or newer. The Firefox package requires Fi
 
 ### First installation
 
-1. Fully extract the **Chrome v1.5.1** ZIP into a permanent folder.
+1. Fully extract the **Chrome v1.5.2** ZIP into a permanent folder.
 2. Open `chrome://extensions` and enable **Developer mode**.
 3. Click **Load unpacked**.
 4. Select the extracted folder that directly contains `manifest.json`.
@@ -73,13 +73,13 @@ The **Export conversation** button added to a saved conversation's header opens 
 - **Complete archive (.json)**: all retrieved API responses, their fields and metadata, plus a combined message list, without applying transcript filters.
 - **PDF (.pdf)**: capture the rendered page with equations, tables, images and LaTeX Islands. The extension scrolls the conversation to load earlier messages, keeping copies as they appear. Check the in-window **Preview**, then select **Save PDF** and **Save as PDF** in the browser dialog.
 
-Use **Choose messages** to select a single message or any combination in PDF, Markdown or plain text. **Conversation**, **Answers only** and **Prompts only** filter the roles available for export. The message list supports search, **All**, **None** and **Reload**; selected messages keep their conversation order. The **PDF** button below an assistant reply selects that reply directly, with an **Include prompt** option for its preceding user message.
+Use **Choose messages** to select a single message or any combination in PDF, Markdown or plain text. **Conversation**, **Answers only** and **Prompts only** filter the roles available for export. The message list supports search, **All**, **None** and **Reload**; selected messages keep their conversation order. The **Export reply as PDF** icon in an assistant reply's toolbar opens an automatic preview of that reply, with an **Include prompt** option for its preceding user message. The icon is hidden while the reply streams; printing still requires **Save PDF**.
 
 PDF keeps diagram proportions, embeds their fonts, and fits the complete vector drawing to the paper independently of preview zoom or pan. It includes successfully rendered local edits. Finish generating replies and apply pending diagram edits before exporting. PDF reports missing diagrams rather than omitting them. Automatic page loading can be cancelled and restores the scroll position afterward. It does not expand hidden tools or collapsed interactive content.
 
-Markdown and plain text also offer **Detailed context** and the six options under **Customize transcript**: your messages, attachments, sources and citations, timestamps, intermediate steps, and tool calls and results. Message selection and transcript options do not remove any data from the complete JSON archive.
+**Content** selects the roles to export. The five independent options under **Customize transcript** control attachment references, sources and citations, timestamps, progress updates, and tool calls and results. Changing the role filter preserves those options; changing an option leaves the role filter unchanged. Message selection and transcript options do not remove any data from the complete JSON archive.
 
-For Markdown and text, click **Preview** to retrieve the conversation. The **Conversation** view displays readable messages; **File** displays the exported content. Formulas remain TeX source in these views. The initial display contains up to 20 messages or 50,000 characters; **Show more** continues it. **Copy** and **Download** use the entire selected transcript. Options update the preview without fetching the conversation again; if it changes, refresh the preview.
+Opening the export dialog or selecting Markdown, text or JSON starts its preview automatically. The **Preview** view displays readable messages; **Source** displays the exported content. Formulas remain TeX source in these views. The initial display contains up to 20 messages or 50,000 characters; **Show more** continues it. **Copy** and **Download** use the entire selected transcript. Content options update the loaded preview without fetching the conversation again; if it changes, refresh the preview. Full-conversation PDF loading starts only when you select **Preview**, **Choose messages** or **Save PDF**.
 
 Markdown, text and JSON retrieve every conversation page from ChatGPT instead of copying the text visible on the page. Retrieval must succeed before a file is downloaded; errors and cancellations do not produce an export presented as complete. The default transcript omits internal context and technical messages while preserving references to generated images. PDF captures the page without directly requesting the conversation API; automatic scrolling can trigger ChatGPT's own requests to load older messages.
 
@@ -102,7 +102,7 @@ TikZ code must be present in the reply's accessible content. For a diagram writt
 ## Privacy and operation
 
 - **Compilation** stays on your device, using the bundled engine and fonts. It uses the extension's local resources and no remote compilation service.
-- **Markdown, text and JSON export**, triggered by an action such as **Preview**, **Choose messages**, **Copy** or **Download**, makes read requests to ChatGPT using the tab's session. Choosing a format or changing an option does not trigger a request. Any authentication token stays in memory and is neither saved nor included in the exported file. No transfer to a third-party service is added. **PDF** captures rendered content by scrolling the page; ChatGPT may load older messages and the browser may load existing image resources.
+- **Markdown, text and JSON export** makes read requests to ChatGPT using the tab's session. Opening the export dialog or selecting one of those formats starts its preview; **Preview**, **Choose messages**, **Copy**, **Download** and **Reload** can also retrieve missing or stale data. Content filters use the loaded data without another request. Any authentication token stays in memory and is neither saved nor included in the exported file. No transfer to a third-party service is added. **PDF** captures rendered content by scrolling the page; ChatGPT may load older messages and the browser may load existing image resources.
 - Conversation code, drafts and the cache are not stored in settings. Export preferences and the last observed ChatGPT theme are saved locally. The standalone editor saves its last source locally.
 - Diagrams are detected in assistant replies on `chatgpt.com` and `chat.openai.com`. The input field, user messages and already rendered formulas are not reprocessed.
 - `storage` saves preferences. Chrome also uses `offscreen` for the shared engine; Firefox uses its background page and `clipboardWrite` to finish copying after an asynchronous fetch, without reading the clipboard. Site access is limited to ChatGPT domains. Firefox declares the authentication and browsing activity data needed for export requests to ChatGPT.

@@ -5,10 +5,11 @@
   const core = globalThis.LatexIslandsCore, chatgpt = globalThis.LatexIslandsChatGPT;
   if (!core || !chatgpt || !globalThis.chrome?.runtime) return;
   globalThis.__latexIslandsContentLoaded = true;
-  const CHANNEL = 'latex-islands', MAX_SOURCE = 60000, SETTLE_MS = 180;
+  const CHANNEL = 'latex-islands', MAX_SOURCE = 60000, SETTLE_MS = 180, BOOT_TIMEOUT_MS = 15000;
   const EXTENSION_ORIGIN = chrome.runtime.getURL('').replace(/\/$/, '');
   const excludedSelector = 'textarea, input, [contenteditable="true"], [role="textbox"], #prompt-textarea, [data-testid="composer"]';
   const codeSelector = 'pre, .cm-content, [data-markdown-copy="code-block"]';
+  const HIDDEN_ATTRIBUTE = 'data-latex-islands-hidden';
   const states = new Map(), ids = new Map(), dirty = new Set();
   const snapshots = new Map(), MAX_SNAPSHOT = 10 * 1024 * 1024;
   let snapshotSequence = 0;
@@ -32,6 +33,17 @@
   }
   function assistantsWithin(root) {return chatgpt.getMessages(root).filter(message=>chatgpt.role(message)==='assistant' && !ownNode(message));}
   function printingPDF() {return document.body?.classList.contains('li-pdf-printing');}
+  function setSourceHidden(state,hidden) {
+    state.hideSource=state.type!=='raw' && hidden;
+    const el=state.element;
+    if(el.classList.contains('latex-islands-original-hidden')!==state.hideSource)el.classList.toggle('latex-islands-original-hidden',state.hideSource);
+    // React owns className and may rewrite it during hydration. This separate
+    // marker keeps the source hidden throughout that update, before any paint.
+    if(state.hideSource) {if(el.getAttribute(HIDDEN_ATTRIBUTE)!=='true')el.setAttribute(HIDDEN_ATTRIBUTE,'true');}
+    else if(el.hasAttribute(HIDDEN_ATTRIBUTE))el.removeAttribute(HIDDEN_ATTRIBUTE);
+    const toggle=state.boot?.querySelector('.latex-islands-boot-source');
+    if(toggle){toggle.textContent=state.hideSource?'Show code':'Hide code';toggle.setAttribute('aria-expanded',String(!state.hideSource));}
+  }
   function currentSource(el, type) {
     if (type === 'error') return [el.getAttribute('data-latex'), el.textContent, el.getAttribute('title')].find(v => v && core.detectKind(v)) || '';
     if(type === 'raw') return el.textContent || '';
@@ -85,10 +97,12 @@
       const color=getComputedStyle(parent).backgroundColor;
       if(color && color!=='transparent' && !/rgba\([^)]*,\s*0\)$/.test(color)) {background=color;break;}
     }
-    return {theme:dark?'dark':'light',colors:{background,text:css.color || (dark?'#ececec':'#0d0d0d'),surface:dark?'#2f2f2f':'#f4f4f4',border:dark?'#424242':'#e5e5e5'}};
+    const tooltip=Object.fromEntries(Object.entries({background:'--color-background-tooltip',text:'--color-text-tooltip',border:'--color-border-tooltip',shadow:'--shadow-tooltip'}).map(([key,name])=>[key,css.getPropertyValue(name).trim()]).filter(([,value])=>value));
+    const hover=css.getPropertyValue('--color-background-primary-ghost-hover').trim();
+    return {theme:dark?'dark':'light',colors:{background,text:css.color || (dark?'#ececec':'#0d0d0d'),surface:dark?'#2f2f2f':'#f4f4f4',border:dark?'#424242':'#e5e5e5',...(hover?{hover}:{})},...(Object.keys(tooltip).length?{tooltip}:{})};
   }
   function pageTheme() {return appearance(assistantsWithin()[0] || document.body);}
-  function themeKey(theme) {return JSON.stringify([theme?.theme,...['text','background','surface','border'].map(key=>theme?.colors?.[key])]);}
+  function themeKey(theme) {return JSON.stringify([theme?.theme,...['text','background','surface','border','hover'].map(key=>theme?.colors?.[key]),...['background','text','border','shadow'].map(key=>theme?.tooltip?.[key])]);}
   function sendView(state) {
     post(state,{type:'view',mode:editor?.state===state?'editor':'inline',renderColors:settings.renderColors,...appearance(state.element)});
   }
@@ -109,7 +123,7 @@
     return true;
   }
   function liveFrame(state) {
-    return ids.get(state.id)===state && state.element.isConnected && state.container?.isConnected && state.frame?.isConnected && state.frame.parentElement===state.container && state.frame.src===state.frameURL;
+    return ids.get(state.id)===state && !state.documentDetached && state.element.isConnected && state.container?.isConnected && state.frame?.isConnected && state.frame.parentElement===state.container && state.frame.src===state.frameURL;
   }
   function sourceForSnapshot(state) {
     const source=currentSource(state.element,state.type);
@@ -139,7 +153,7 @@
     if(state.port!==port || data?.channel!==CHANNEL || data.id!==state.id)return;
     if(data.type==='snapshot-unavailable') {
       cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');
-      state.ready=false;state.port.close();state.port=null;return;
+      state.ready=false;state.port.close();state.port=null;startBootWatchdog(state);return;
     }
     if(data.type!=='snapshot-result' || typeof data.requestId!=='string')return;
     const request=snapshots.get(data.requestId);
@@ -194,8 +208,8 @@
     const type=state.complete?'render':'prepare', key=type+'\0'+source+'\0'+settings.autoRender+'\0'+settings.scale;
     // Replace existing-chat code on the detection pass, before the iframe has
     // loaded. Errors and explicit manual rendering keep their original source.
-    if(state.type!=='raw' && state.failedSource!==source && !state.revealedSource && (!state.complete || settings.autoRender))state.element.classList.add('latex-islands-original-hidden');
-    if(state.boot) {
+    if(state.type!=='raw' && state.failedSource!==source && !state.revealedSource && (!state.complete || settings.autoRender))setSourceHidden(state,true);
+    if(state.boot && !state.bootFailed) {
       const status=state.boot.querySelector('[role="status"]'),text=!state.complete?'Writing diagram…':settings.autoRender?'Rendering diagram…':'Loading preview…';
       if(status.textContent!==text)status.textContent=text;
     }
@@ -208,24 +222,67 @@
   function finishBoot(state) {
     state.boot?.remove();state.boot=null;state.container.classList.remove('latex-islands-booting');
   }
-  function addIsland(el,state) {
-    const container=document.createElement('div');container.className='latex-islands-container latex-islands-booting';
-    container.setAttribute('role','region');container.setAttribute('aria-label','TikZ diagram');
+  function addBoot(state) {
+    if(state.boot)return;
     const boot=document.createElement('div');boot.className='latex-islands-boot';
     const spinner=document.createElement('span');spinner.className='latex-islands-boot-spinner';spinner.setAttribute('aria-hidden','true');
     const status=document.createElement('span');status.setAttribute('role','status');status.textContent='Loading diagram…';
-    const reveal=document.createElement('button');reveal.type='button';reveal.textContent='Show code';
-    reveal.addEventListener('click',()=>{state.revealedSource=true;el.classList.remove('latex-islands-original-hidden');reveal.disabled=true;reveal.textContent='Code shown';});
+    const actions=document.createElement('div');actions.className='latex-islands-boot-actions';
+    const reveal=document.createElement('button');reveal.type='button';reveal.className='latex-islands-boot-source';
+    reveal.textContent=state.hideSource?'Show code':'Hide code';reveal.setAttribute('aria-expanded',String(!state.hideSource));
+    reveal.addEventListener('click',()=>{const hidden=!state.hideSource;state.revealedSource=!hidden;setSourceHidden(state,hidden);});
     if(state.type==='raw')reveal.hidden=true;
-    boot.append(spinner,status,reveal);state.boot=boot;
+    const retry=document.createElement('button');retry.type='button';retry.textContent='Retry';retry.className='latex-islands-boot-retry';retry.hidden=true;
+    retry.addEventListener('click',()=>retryIsland(state));actions.append(reveal,retry);
+    boot.append(spinner,status,actions);state.boot=boot;state.container.append(boot);state.container.classList.add('latex-islands-booting');
+  }
+  function stopBootWatchdog(state) {clearTimeout(state.bootWatchdog);state.bootWatchdog=0;}
+  function resetBoot(state) {
+    state.bootFailed=false;
+    if(!state.boot)return;
+    const status=state.boot.querySelector('[role="status"], [role="alert"]');status.setAttribute('role','status');status.textContent='Connecting diagram…';
+    state.boot.querySelector('.latex-islands-boot-spinner').hidden=false;state.boot.querySelector('.latex-islands-boot-retry').hidden=true;
+  }
+  function startBootWatchdog(state) {
+    stopBootWatchdog(state);
+    if(!liveFrame(state) || state.ready)return;
+    addBoot(state);resetBoot(state);
+    state.bootWatchdog=setTimeout(()=>{
+      state.bootWatchdog=0;
+      if(!settings.enabled || state.ready || !liveFrame(state))return;
+      addBoot(state);state.bootFailed=true;
+      const status=state.boot.querySelector('[role="status"]');status.setAttribute('role','alert');
+      status.textContent=state.frame.hasAttribute('srcdoc')?'The diagram preview is unavailable. Reload the conversation or show the code.':'The diagram preview did not connect. Retry or show the code.';
+      state.boot.querySelector('.latex-islands-boot-spinner').hidden=true;
+      state.boot.querySelector('.latex-islands-boot-retry').hidden=state.frame.hasAttribute('srcdoc');
+    },BOOT_TIMEOUT_MS);
+  }
+  function retryIsland(state) {
+    // Never undo an external srcdoc override, or revive a document belonging to
+    // another conversation. Recovery is an explicit action in the current page.
+    if(!settings.enabled || !liveFrame(state) || state.frame.hasAttribute('srcdoc') || state.href!==location.href ||
+      assistantFor(state.element)!==state.message || chatgpt.messageId(state.message)!==state.messageId)return;
+    // A click can arrive before the next token scan. Refresh edited host source
+    // first so recovery cannot submit an obsolete diagram or an old local draft.
+    dirty.add(state.message);scan();if(!liveFrame(state))return;
+    stopBootWatchdog(state);cancelSnapshots(state,'The diagram is reconnecting. Wait for it to render, then export again.');
+    state.ready=false;state.port?.close();state.port=null;
+    if(editor?.state===state)closeEditor();
+    state.container.remove();state.boot=null;state.sentKey=null;state.sentSource=null;
+    addIsland(state.element,state);send(state);
+  }
+  function addIsland(el,state) {
+    stopBootWatchdog(state);state.boot=null;state.documentDetached=false;
+    const container=document.createElement('div');container.className='latex-islands-container latex-islands-booting';
+    container.setAttribute('role','region');container.setAttribute('aria-label','TikZ diagram');
     const frame=document.createElement('iframe');frame.title='TikZ diagram — preview, code and download';
     frame.style.height=(state.lastHeight || 222)+'px';
     frame.src=chrome.runtime.getURL('island.html')+'?parentOrigin='+encodeURIComponent(location.origin)+'#'+encodeURIComponent(state.id);
     state.frameURL=frame.src;state.generation=0;
-    frame.addEventListener('load',()=>{state.generation++;cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');});
+    frame.addEventListener('load',()=>{if(state.frame!==frame)return;state.generation++;cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');});
     frame.setAttribute('scrolling','no');frame.setAttribute('allow','clipboard-write');frame.referrerPolicy='no-referrer';
     state.container=container;state.frame=frame;ids.set(state.id,state);
-    container.append(frame,boot);el.insertAdjacentElement('afterend',container);
+    container.append(frame);addBoot(state);el.insertAdjacentElement('afterend',container);startBootWatchdog(state);
   }
   const editorBoundsProperties=['--li-editor-left','--li-editor-top','--li-editor-width','--li-editor-height'];
   function trackEditorBounds(active) {
@@ -259,6 +316,7 @@
     // ResizeObserver tracks the sidebar's width transition. Class/style changes
     // and transitionend also cover layouts which move without resizing a panel.
     const layoutObserver=new MutationObserver(mutations=>{
+      if(!globalThis.document?.documentElement){layoutObserver.disconnect();return;}
       if(editor!==active)return;
       if(!active.state.element.isConnected) {closeEditor();return;}
       if(mutations.some(mutation=>{
@@ -308,10 +366,37 @@
     sendView(state);state.frame.focus();
   }
   function removeState(el,state) {
+    stopBootWatchdog(state);
     cancelSnapshots(state,'The diagram was removed. Try exporting the current conversation again.');
     state.ready=false;state.port?.close();state.port=null;
     if(editor?.state===state) closeEditor();
-    el.classList.remove('latex-islands-original-hidden');state.container?.remove();ids.delete(state.id);states.delete(el);
+    setSourceHidden(state,false);state.container?.remove();ids.delete(state.id);states.delete(el);
+  }
+  function rebindHydratedSource(state) {
+    if(state.type!=='code' || state.documentDetached || state.element.isConnected || state.href!==location.href || !state.message?.isConnected ||
+      !state.container?.isConnected || !state.frame?.isConnected || state.frame.parentElement!==state.container || state.frame.src!==state.frameURL)return;
+    const replacement=state.container.previousElementSibling;
+    // Adjacency disambiguates repeated identical diagrams. Reuse only the live
+    // iframe left in place by a source-only replacement, never move its DOM.
+    if(!replacement || states.has(replacement) || replacement.closest(excludedSelector) || assistantFor(replacement)!==state.message ||
+      chatgpt.messageId(state.message)!==state.messageId || !chatgpt.getCodeBlocks(state.message).includes(replacement) ||
+      core.stripFence(currentSource(replacement,'code'))!==state.source)return;
+    cancelSnapshots(state,'The diagram source was replaced. Try exporting the PDF again.');
+    const previous=state.element,hidden=state.hideSource;
+    setSourceHidden(state,false);states.delete(previous);state.element=replacement;states.set(replacement,state);
+    setSourceHidden(state,hidden);dirty.add(state.message);
+  }
+  function removeCachedIslands(assistant) {
+    const owned=new Set([...states.values()].map(state=>state.container));
+    for(const container of assistant.querySelectorAll('.latex-islands-container')) {
+      if(owned.has(container))continue;
+      const frame=[...container.children].find(node=>node.localName==='iframe');if(!frame)continue;
+      let url;try{url=new URL(frame.getAttribute('src') || '',location.href);}catch{continue;}
+      if(url.protocol+'//'+url.host!==EXTENSION_ORIGIN || url.pathname!=='/island.html' || url.searchParams.get('parentOrigin')!==location.origin || !/^#li-/.test(url.hash))continue;
+      // A cached HTML clone has no document-bound port or runtime state. Never
+      // adopt its iframe: rebuild from the rediscovered source with a fresh ID.
+      container.remove();
+    }
   }
   function consider(el,type,sourceOverride) {
     if(el.closest(excludedSelector)) return;
@@ -319,8 +404,9 @@
     const kind=core.detectKind(source,type==='code'?chatgpt.language(el):'');
     if(source.length>MAX_SOURCE || !kind) {const old=states.get(el);if(old)removeState(el,old);return;}
     let state=states.get(el);
-    if(!state) {state={id:'li-'+Date.now().toString(36)+'-'+(++sequence),source,type,element:el,updated:Date.now(),complete:false,ready:false,sentSource:null};states.set(el,state);addIsland(el,state);}
-    else if(state.source!==source) {el.classList.remove('latex-islands-original-hidden');state.source=source;state.draftSource=null;state.failedSource=null;state.revealedSource=false;state.updated=Date.now();}
+    if(!state) {state={id:'li-'+Date.now().toString(36)+'-'+(++sequence),source,type,element:el,updated:Date.now(),complete:false,ready:false,sentSource:null};setSourceHidden(state,false);states.set(el,state);addIsland(el,state);}
+    else if(state.source!==source) {setSourceHidden(state,false);state.source=source;state.draftSource=null;state.failedSource=null;state.revealedSource=false;state.updated=Date.now();}
+    state.message=assistantFor(el);state.messageId=chatgpt.messageId(state.message);state.href=location.href;
     const streaming=chatgpt.isStreaming(el), settled=Date.now()-state.updated>=SETTLE_MS;
     state.complete=Boolean(source.trim()) && (!streaming || hasFollowingContent(el) || (settled && completeTeX(source)));
     if(!state.complete && source && !settled) {dirty.add(assistantFor(el));schedule(SETTLE_MS-(Date.now()-state.updated));}
@@ -331,6 +417,7 @@
     // Our print stylesheet temporarily hides the app. Its message visibility
     // says nothing about navigation; keep the ready documents and editor drafts.
     if(printingPDF()){fullScan=true;return;}
+    for(const state of [...states.values()])rebindHydratedSource(state);
     for(const [el,state]of states) {
       const assistant=assistantFor(el);
       if(!el.isConnected || !assistant || el.closest(excludedSelector)) removeState(el,state);
@@ -340,13 +427,14 @@
         cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');
         state.ready=false;state.port?.close();state.port=null;
         if(editor?.state===state)closeEditor();
-        el.classList.remove('latex-islands-original-hidden');state.container?.remove();
+        setSourceHidden(state,false);state.container?.remove();
         state.sentKey=null;state.sentSource=null;addIsland(el,state);dirty.add(assistant);
       }
     }
     const assistants=fullScan?assistantsWithin():[...dirty];fullScan=false;dirty.clear();
     for(const assistant of assistants) {
       if(!assistant?.isConnected || chatgpt.role(assistant)!=='assistant' || ownNode(assistant)) continue;
+      removeCachedIslands(assistant);
       for(const block of chatgpt.getCodeBlocks(assistant)) if(!ownNode(block) && !block.closest(excludedSelector)) consider(block,'code');
       for(const error of assistant.querySelectorAll('.katex-error, [data-latex]')) {
         if(ownNode(error) || error.closest(codeSelector) || (error.closest('.katex') && !error.classList.contains('katex-error'))) continue;
@@ -368,6 +456,7 @@
       const port=event.ports?.[0];if(!port) return;
       cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');
       state.port?.close();state.port=port;state.ready=true;state.generation++;
+      stopBootWatchdog(state);resetBoot(state);
       port.onmessage=message=>receiveSnapshot(state,port,message.data);port.start?.();send(state,true);
     }
     if(data.type==='resize' && Number.isFinite(data.height) && editor?.state!==state) {
@@ -385,7 +474,7 @@
       if(!state.complete || (typeof data.source==='string' && data.source!==state.sentSource) || state.sentSource!==(state.draftSource??state.source)) return;
       const success=data.ok===true || (typeof data.svg==='string' && data.svg.length>0 && !data.error);
       state.loading=false;state.failedSource=success?null:state.sentSource;state.revealedSource=false;finishBoot(state);
-      if(state.type!=='raw')state.element.classList.toggle('latex-islands-original-hidden',success);
+      setSourceHidden(state,success);
     }
   });
   document.addEventListener('keydown',event=>{if(event.key==='Escape' && editor) {event.preventDefault();closeEditor();}});
@@ -395,14 +484,21 @@
     // Snapshot validation above still catches real source edits and removals.
     // The body class removal schedules a complete scan after printing finishes.
     if(printingPDF()){fullScan=true;return;}
-    if(!settings.enabled) return;let changed=false;
+    if(!settings.enabled) return;let changed=false,urgent=false;
+    // Final connectedness misses detach/restore within one mutation batch.
+    // Removing an iframe's ancestor discards its document even if the host
+    // reattaches that same node from a conversation cache before this callback.
+    for(const state of states.values())if(mutations.some(mutation=>mutation.type==='childList' && [...mutation.removedNodes].some(node=>node===state.frame || node.contains?.(state.frame))))state.documentDetached=true;
     // Our own insertions are ignored below, but a host update removing an island
     // still needs a scan even if the mutation contains only extension nodes.
-    for(const state of states.values())if(!liveFrame(state)){dirty.add(assistantFor(state.element));changed=true;}
+    for(const state of states.values())if(!liveFrame(state)){dirty.add(assistantFor(state.element));changed=urgent=true;}
     for(const mutation of mutations) {
       if(ownNode(mutation.target)) continue;
       const el=mutation.target.nodeType===Node.ELEMENT_NODE?mutation.target:mutation.target.parentElement;
       if(mutation.type==='attributes') {
+        const state=states.get(el);
+        if(state && (mutation.attributeName==='class' || mutation.attributeName===HIDDEN_ATTRIBUTE))setSourceHidden(state,Boolean(state.hideSource));
+        if(mutation.attributeName===HIDDEN_ATTRIBUTE)continue;
         if(mutation.attributeName==='class') {
           const clean=value=>(value || '').replace(/\blatex-islands-[\w-]+\b/g,'').trim();
           if(clean(mutation.oldValue)===clean(el.className)) continue;
@@ -410,7 +506,11 @@
       }
       if(mutation.type==='childList' && [...mutation.addedNodes,...mutation.removedNodes].every(ownNode)) continue;
       const assistant=assistantFor(el);
-      if(assistant) dirty.add(assistant);
+      if(assistant) {
+        dirty.add(assistant);
+        const code=el.closest(codeSelector);
+        if(code && ![...states.keys()].some(source=>source.contains(code)))urgent=true;
+      }
       else {
         // Streaming markers may live above the assistant. Inspect affected
         // descendants even when a class has just been removed and no longer matches.
@@ -425,13 +525,20 @@
         // Let the adapter re-evaluate each pending diagram after those mutations.
         for(const state of states.values())if(!state.complete)dirty.add(assistantFor(state.element));
       }
+      // Structural hydration can expose a fresh code widget for one frame if it
+      // waits for the token throttle. Discover it in this observer microtask;
+      // ordinary text streaming still uses the bounded scheduled scan.
+      if(mutation.type==='childList' && [...mutation.addedNodes].some(node=>node.nodeType===Node.ELEMENT_NODE && !ownNode(node) && (node.matches(codeSelector) || node.querySelector(codeSelector))))urgent=true;
+      if(mutation.type==='attributes' && /^(?:data-message-author-role|data-chatgpt-search-unit-key|data-chatgpt-selection-message-id|data-conversation-role|data-markdown-text-style|data-markdown-copy|data-language)$/.test(mutation.attributeName))urgent=true;
+      if(mutation.type==='attributes' && ['hidden','inert','aria-hidden'].includes(mutation.attributeName))urgent=true;
+      if(mutation.type==='attributes' && ['style','class'].includes(mutation.attributeName) && assistantsWithin(el).some(message=>chatgpt.getCodeBlocks(message).some(code=>!states.has(code))))urgent=true;
       changed=true;
     }
-    if(changed) schedule();
+    if(changed) {if(urgent)scan();else schedule();}
   });
   window.addEventListener('pagehide',()=>cancelSnapshots(null,'The conversation closed. Try exporting the current conversation again.'));
   window.addEventListener('popstate',checkSnapshots);
-  observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeOldValue:true,attributeFilter:[...new Set([...chatgpt.observedAttributes,'class','data-theme','data-language'])]});
+  observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeOldValue:true,attributeFilter:[...new Set([...chatgpt.observedAttributes,'class','data-theme','data-language',HIDDEN_ATTRIBUTE])]});
   // Theme tracking is independent of diagram detection, including when islands
   // are disabled. One observer batch and palette comparison avoid storage writes
   // for every streamed token, every island, or our own fullscreen class changes.

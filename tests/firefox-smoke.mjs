@@ -21,6 +21,9 @@ const id='01234567-89ab-4cde-8f01-23456789abcd';
 const tikz=String.raw`\begin{tikzpicture}\draw[red] (0,0)--(1,1);\node at (0,1) {Firefox smoke};\end{tikzpicture}`;
 const reports=new Map(),events=[];let runtime,timeout,requests=0,resolveResults,rejectResults;
 const results=new Promise((resolve,reject)=>{resolveResults=resolve;rejectResults=reject;});
+// A fixture can fail while web-ext is still starting. Keep that rejection
+// handled until the await below reaches it and runs the profile cleanup.
+results.catch(()=>{});
 const escape=value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const modernMarkup='<main data-app-shell-main-surface="browser"><header><div data-app-shell-main-titlebar="true"><div data-app-shell-header-obstacle><div><button>Share</button><button>More</button></div></div></div></header><div data-app-action-timeline-scroll style="height:90vh;overflow-y:auto;display:flex;flex-direction:column-reverse"><div data-chatgpt-conversation-selection-target><div data-content-search-turn-key="fallback-turn-0"><div data-chatgpt-search-unit-key="fallback-turn-0:2:assistant" data-chatgpt-search-message-ids="answer"><h4 class="sr-only" data-conversation-role="assistant">ChatGPT said:</h4><div data-chatgpt-selection-message-id="answer"><div data-markdown-text-style="assistant-message"><div data-markdown-copy="code-block" id="diagram"><div data-markdown-copy="exclude"><div>tikz</div><button>Copy</button></div><div><code style="white-space:pre">'+escape(tikz)+'</code></div></div></div></div></div><div class="turn-action-controls"><button>Copy reply</button></div></div></div></div></main>';
 const server=http.createServer(async(req,res)=>{
@@ -29,7 +32,7 @@ const server=http.createServer(async(req,res)=>{
   if(req.url==='/event'&&req.method==='POST'){let data='';for await(const chunk of req)data+=chunk;try{events.push(JSON.parse(data));}catch{}res.end();return;}
   if(req.url==='/report'&&req.method==='POST'){
     let data='';for await(const chunk of req){data+=chunk;if(data.length>100000){res.statusCode=413;res.end();return;}}
-    try{const report=JSON.parse(data);reports.set(report.context,report);res.end('ok');if(reports.size===3)resolveResults([...reports.values()]);}
+    try{const report=JSON.parse(data);reports.set(report.context,report);res.end('ok');if(!report.ok)rejectResults(new Error('Firefox smoke failed in '+report.context+': '+JSON.stringify(report)));else if(reports.size===3)resolveResults([...reports.values()]);}
     catch(error){rejectResults(error);res.statusCode=400;res.end();}return;
   }
   if(req.url?.startsWith('/backend-api/')){

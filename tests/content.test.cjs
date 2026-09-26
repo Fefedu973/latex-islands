@@ -124,6 +124,15 @@ test('color preference updates existing island views without resending source or
   assert.equal(h.get('diagram').querySelector('code').textContent,SOURCE);
 });
 
+test('native tooltip and ghost-hover palette changes reach island views without recompiling',async t=>{
+  const h=harness({modern:true});t.after(h.close);const style=h.get('assistant').style;
+  style.setProperty('--color-background-tooltip','rgb(17, 18, 19)');style.setProperty('--color-text-tooltip','rgb(250, 250, 250)');style.setProperty('--color-border-tooltip','rgba(255, 255, 255, 0.12)');style.setProperty('--shadow-tooltip','0px 3px 12px rgba(0, 0, 0, 0.2)');style.setProperty('--color-background-primary-ghost-hover','rgb(41, 42, 43)');
+  await h.advance(0);const frame=h.frames()[0],sent=h.connect(frame);
+  assert.deepEqual(JSON.parse(JSON.stringify(sent[0].data.tooltip)),{background:'rgb(17, 18, 19)',text:'rgb(250, 250, 250)',border:'rgba(255, 255, 255, 0.12)',shadow:'0px 3px 12px rgba(0, 0, 0, 0.2)'});assert.equal(sent[0].data.colors.hover,'rgb(41, 42, 43)');
+  style.setProperty('--shadow-tooltip','0px 4px 16px rgba(0, 0, 0, 0.3)');style.setProperty('--color-background-primary-ghost-hover','rgb(51, 52, 53)');h.w.document.body.classList.add('palette-updated');await tick();
+  const view=sent.findLast(item=>item.data.type==='view');assert.equal(view.data.tooltip.shadow,'0px 4px 16px rgba(0, 0, 0, 0.3)');assert.equal(view.data.colors.hover,'rgb(51, 52, 53)');assert.equal(sent.filter(item=>item.data.type==='render').length,1);
+});
+
 test('saved native colors also reach a streaming prepare message',async t=>{
   const h=harness({streaming:true,source:'',saved:{renderColors:'native'}});t.after(h.close);h.get('ordinary').remove();await h.advance(60);
   const sent=h.connect(h.frames()[0]);assert.equal(sent[0].data.type,'prepare');assert.equal(sent[0].data.renderColors,'native');
@@ -274,6 +283,52 @@ test('navigation/removal cleans stale islands and new assistant responses can re
   const pre=h.w.document.createElement('pre');pre.textContent=SOURCE;h.get('assistant').append(pre);
   await h.advance(2100);assert.equal(h.frames().length,1);assert.notEqual(h.frames()[0],oldFrame);
   h.get('assistant').remove();await h.advance(1100);assert.equal(h.frames().length,0);
+});
+
+test('restored cached HTML discards unowned island clones and starts one fresh private connection',async t=>{
+  for(const manual of [false,true]){
+    const h=harness({modern:true});t.after(h.close);await h.advance(0);const original=h.frames()[0],first=h.connect(original);
+    h.message(original,{type:'result',ok:true,source:SOURCE});
+    const cached=h.get('assistant').cloneNode(true),cachedFrame=cached.querySelector('iframe');cachedFrame.setAttribute('srcdoc','');
+    h.get('assistant').remove();h.w.history.replaceState({},'', '/c/other');await h.advance(0);assert.equal(first.port.closed,true);
+    if(manual)h.settings({autoRender:false});
+    h.w.history.replaceState({},'', '/c/test');h.w.document.querySelector('main').append(cached);await tick();
+    const frame=h.frames()[0];assert.equal(h.frames().length,1);assert.notEqual(frame,cachedFrame);assert.equal(cachedFrame.isConnected,false);
+    assert.equal(cachedFrame.getAttribute('srcdoc'),'','the cached placeholder itself is never navigated');
+    assert.equal(frame.hasAttribute('srcdoc'),false);assert.equal(h.hidden('diagram'),!manual);
+    h.message(cachedFrame,{type:'ready'},EXT,cachedFrame.contentWindow,[{postMessage:()=>assert.fail('Stale clone must not receive source')}]);
+    const sent=h.connect(frame);assert.equal(sent[0].data.source,SOURCE);assert.equal(sent[0].data.autoRender,!manual);
+    h.message(frame,{type:'result',ok:true,source:SOURCE});await h.advance(15000);assert.equal(h.frames().length,1);assert.equal(frame.parentElement.querySelector('[role="alert"]'),null);
+  }
+});
+
+test('same-node detach and restore retires its discarded document even within one observer batch',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);const original=h.frames()[0],first=h.connect(original),draft=SOURCE.replace('(1,1)','(8,8)');
+  h.message(original,{type:'source-change',source:draft});h.message(original,{type:'result',ok:true,source:draft});
+  const assistant=h.get('assistant'),main=assistant.parentElement;assistant.remove();original.setAttribute('srcdoc','');main.append(assistant);await tick();
+  const replacement=h.frames()[0];assert.equal(h.frames().length,1);assert.notEqual(replacement,original);assert.equal(first.port.closed,true);
+  assert.equal(original.getAttribute('srcdoc'),'');assert.equal(replacement.hasAttribute('srcdoc'),false);assert.equal(h.hidden('diagram'),true);
+  const sent=h.connect(replacement);assert.equal(sent[0].data.source,draft);
+  const pending=h.w.LatexIslandsDiagramExport.snapshot(assistant);original.dispatchEvent(new h.w.Event('load'));sent.reply(snapshotReply(sent.at(-1).data));await pending;
+});
+
+test('connected inactive conversation views regain one fresh preview before paint when restored',async t=>{
+  for(const hiddenBy of ['hidden','inert','style']){
+    const h=harness({modern:true});t.after(h.close);await h.advance(0);const original=h.frames()[0],port=h.connect(original),assistant=h.get('assistant');h.message(original,{type:'result',ok:true,source:SOURCE});
+    h.w.history.replaceState({},'', '/c/other');
+    if(hiddenBy==='style')assistant.style.display='none';else assistant.setAttribute(hiddenBy,'');
+    await h.advance(60);assert.equal(original.isConnected,false);assert.equal(port.port.closed,true);assert.equal(assistant.isConnected,true);
+    h.w.history.replaceState({},'', '/c/test');
+    if(hiddenBy==='style')assistant.style.removeProperty('display');else assistant.removeAttribute(hiddenBy);
+    await tick();assert.equal(h.frames().length,1);assert.notEqual(h.frames()[0],original);assert.equal(h.hidden('diagram'),true,'restoration cannot expose raw code for the throttle interval');
+  }
+});
+
+test('cached cleanup preserves foreign containers and an actively owned srcdoc override',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);const owned=h.frames()[0];h.connect(owned);
+  const foreign=owned.parentElement.cloneNode(true);foreign.querySelector('iframe').src='chrome-extension://another-extension/island.html?parentOrigin=https%3A%2F%2Fchatgpt.com#li-foreign';h.get('assistant').append(foreign);
+  owned.setAttribute('srcdoc','');h.get('assistant').append(h.w.document.createTextNode('New token'));await h.advance(60);
+  assert.equal(foreign.isConnected,true);assert.equal(owned.isConnected,true);assert.equal(owned.getAttribute('srcdoc'),'');
 });
 
 test('resize and result messages require the correct extension origin, source window and island id',async t=>{
@@ -585,10 +640,23 @@ test('an empty streaming fence also has a visible host loader before the iframe 
 
 test('slow iframe startup keeps an explicit source fallback and render errors keep the source visible',async t=>{
   const h=harness({modern:true});t.after(h.close);await h.advance(0);const frame=h.frames()[0];
-  const fallback=frame.parentElement.querySelector('.latex-islands-boot button');fallback.click();assert.equal(h.hidden('diagram'),false);assert.equal(fallback.disabled,true);
+  const fallback=frame.parentElement.querySelector('.latex-islands-boot button');fallback.click();assert.equal(h.hidden('diagram'),false);assert.equal(fallback.disabled,false);assert.equal(fallback.textContent,'Hide code');
   await h.advance(2000);assert.equal(h.hidden('diagram'),false);h.connect(frame);assert.equal(h.hidden('diagram'),false);
   h.message(frame,{type:'result',ok:false,source:SOURCE,error:'Invalid drawing'});assert.equal(h.hidden('diagram'),false);assert.equal(frame.parentElement.querySelector('.latex-islands-boot'),null);
   h.get('assistant').append(h.w.document.createTextNode('Another token'));await h.advance(60);assert.equal(h.hidden('diagram'),false,'rescanning must not hide a compiler error again');
+});
+
+test('host code toggle stays reversible through connection loss, timeout and retry',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);const original=h.frames()[0];
+  const toggle=()=>h.frames()[0].parentElement.querySelector('.latex-islands-boot-source');
+  assert.equal(toggle().textContent,'Show code');toggle().click();assert.equal(h.hidden('diagram'),false);assert.equal(toggle().textContent,'Hide code');assert.equal(toggle().getAttribute('aria-expanded'),'true');
+  toggle().click();assert.equal(h.hidden('diagram'),true);assert.equal(toggle().textContent,'Show code');toggle().click();
+  const port=h.connect(original);h.message(original,{type:'resize',height:222});port.reply({type:'snapshot-unavailable'});
+  assert.equal(toggle().textContent,'Hide code');assert.equal(h.hidden('diagram'),false);
+  await h.advance(15000);assert.equal(toggle().textContent,'Hide code');toggle().click();assert.equal(h.hidden('diagram'),true);toggle().click();
+  original.parentElement.querySelector('.latex-islands-boot-retry').click();assert.notEqual(h.frames()[0],original);
+  assert.equal(toggle().textContent,'Hide code');assert.equal(h.hidden('diagram'),false);assert.equal(toggle().disabled,false);
+  h.connect(h.frames()[0]);assert.equal(toggle().textContent,'Hide code');toggle().click();assert.equal(h.hidden('diagram'),true);assert.equal(toggle().textContent,'Show code');
 });
 
 test('manual rendering keeps existing code visible while the preview connects',async t=>{
@@ -597,6 +665,148 @@ test('manual rendering keeps existing code visible while the preview connects',a
   const sent=h.connect(frame);assert.equal(sent[0].data.autoRender,false);h.message(frame,{type:'resize',height:222});assert.equal(h.hidden('diagram'),false);
   h.message(frame,{type:'result',ok:true,source:SOURCE});assert.equal(h.hidden('diagram'),true);
   h.settings({enabled:false});assert.equal(h.hidden('diagram'),false);assert.equal(h.frames().length,0);
+});
+
+test('host class hydration never exposes loading or rendered code, and marker removal is repaired before the next timer',async t=>{
+  for(const modern of [false,true]) {
+    const h=harness({modern});t.after(h.close);await h.advance(0);const frame=h.frames()[0];
+    h.get('diagram').className='host-code';assert.equal(h.hidden('diagram'),true,'the extension-owned attribute survives className hydration synchronously');
+    await tick();const sent=h.connect(frame);h.message(frame,{type:'result',ok:true,source:SOURCE});
+    h.get('diagram').className='host-code hydrated';assert.equal(h.hidden('diagram'),true);
+    h.get('diagram').removeAttribute('data-latex-islands-hidden');await tick();assert.equal(h.hidden('diagram'),true,'the observer restores intentional hiding without the 60 ms throttle');
+    assert.equal(h.frames()[0],frame);assert.equal(sent.filter(item=>item.data.type==='render').length,1);
+    await h.advance(1000);assert.equal(h.frames()[0],frame);assert.equal(sent.filter(item=>item.data.type==='render').length,1,'our own marker mutations do not create render loops');
+  }
+});
+
+test('source-only hydration preserves the live iframe, port, editor draft, height and snapshot binding',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);
+  const frame=h.frames()[0],container=frame.parentElement,sent=h.connect(frame),draft=SOURCE.replace('(1,1)','(4,4)');
+  h.message(frame,{type:'open-editor'});h.message(frame,{type:'source-change',source:draft});h.message(frame,{type:'result',ok:true,source:draft});
+  h.message(frame,{type:'close-editor'});h.message(frame,{type:'resize',height:480});
+  h.message(frame,{type:'open-editor'});
+  const original=h.get('diagram'),replacement=original.cloneNode(true);replacement.className='host-code';replacement.removeAttribute('data-latex-islands-hidden');original.replaceWith(replacement);
+  assert.equal(frame.isConnected,true,'the host replaced only its source widget');await tick();
+  assert.equal(h.hidden('diagram'),true);assert.equal(h.frames()[0],frame);assert.equal(frame.parentElement,container);assert.notEqual(sent.port.closed,true);
+  assert.equal(container.classList.contains('latex-islands-is-editing'),true,'source hydration does not close the active editor');
+  assert.equal(frame.style.height,'480px');assert.equal(container.querySelector('.latex-islands-boot'),null);assert.equal(sent.filter(item=>item.data.type==='render').length,1);
+  const pending=h.w.LatexIslandsDiagramExport.snapshot(replacement),request=sent.at(-1).data;assert.equal(request.type,'snapshot');assert.equal(request.source,draft);
+  sent.reply(snapshotReply(request));const result=await pending;assert.equal(result[0].sourceElement,replacement);assert.equal(result[0].containerElement,container);
+  await h.advance(1000);assert.equal(sent.filter(item=>item.data.type==='render').length,1);assert.equal(original.hasAttribute('data-latex-islands-hidden'),false);
+});
+
+test('identical replacement code in a different conversation identity never adopts an old draft',async t=>{
+  for(const changed of ['url','message-id']) {
+    const h=harness({modern:true});t.after(h.close);await h.advance(0);const frame=h.frames()[0],sent=h.connect(frame),draft=SOURCE.replace('(1,1)','(4,4)');
+    h.message(frame,{type:'source-change',source:draft});h.message(frame,{type:'result',ok:true,source:draft});
+    const replacement=h.get('diagram').cloneNode(true);replacement.className='';replacement.removeAttribute('data-latex-islands-hidden');
+    if(changed==='url')h.w.history.replaceState({},'', '/c/another-conversation');
+    else h.get('assistant').querySelector('[data-chatgpt-selection-message-id]').setAttribute('data-chatgpt-selection-message-id','another-message');
+    h.get('diagram').replaceWith(replacement);await tick();assert.equal(h.frames().length,1);assert.notEqual(h.frames()[0],frame);assert.equal(sent.port.closed,true);
+    assert.equal(h.hidden('diagram'),true);assert.equal(h.connect(h.frames()[0])[0].data.source,SOURCE);
+  }
+});
+
+test('source replacement cancels pending snapshots and a changed source never inherits the previous render',async t=>{
+  for(const changed of [false,true]) {
+    const h=harness({modern:true});t.after(h.close);await h.advance(0);const frame=h.frames()[0],sent=h.connect(frame);
+    h.message(frame,{type:'result',ok:true,source:SOURCE});
+    const rejected=assert.rejects(h.w.LatexIslandsDiagramExport.snapshot(h.get('diagram')),/changed|replaced|removed/);
+    const replacement=h.get('diagram').cloneNode(true);replacement.className='host-code';replacement.removeAttribute('data-latex-islands-hidden');
+    const next=SOURCE.replace('(1,1)','(8,8)');if(changed)replacement.querySelector('code').textContent=next;
+    h.get('diagram').replaceWith(replacement);await tick();await rejected;
+    assert.equal(h.hidden('diagram'),true);assert.equal(h.frames().length,1);
+    if(changed) {assert.notEqual(h.frames()[0],frame);assert.equal(sent.port.closed,true);assert.equal(h.connect(h.frames()[0])[0].data.source,next);}
+    else {assert.equal(h.frames()[0],frame);assert.notEqual(sent.port.closed,true);}
+  }
+});
+
+test('new widgets and hydrated semantic markers are concealed before the next scheduled scan',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);const initial=h.frames()[0];
+  const fresh=h.get('diagram').cloneNode(true);fresh.id='fresh-diagram';fresh.className='';fresh.removeAttribute('data-latex-islands-hidden');
+  h.get('assistant').querySelector('[data-markdown-text-style]').append(fresh);await tick();
+  assert.equal(h.hidden('fresh-diagram'),true);assert.equal(h.frames().length,2);assert.equal(h.frames()[0],initial,'connected duplicate diagrams remain separate');
+  const late=fresh.cloneNode(true);late.id='late-widget';late.className='';late.removeAttribute('data-latex-islands-hidden');late.removeAttribute('data-markdown-copy');
+  h.get('assistant').querySelector('[data-markdown-text-style]').append(late);await tick();assert.equal(h.frames().length,2);
+  late.setAttribute('data-markdown-copy','code-block');await tick();assert.equal(h.hidden('late-widget'),true);assert.equal(h.frames().length,3);
+  const message=h.w.document.createElement('section'),unclassified=fresh.cloneNode(true);unclassified.id='late-message';unclassified.className='';unclassified.removeAttribute('data-latex-islands-hidden');
+  message.append(unclassified);h.w.document.querySelector('main').append(message);await tick();assert.equal(h.frames().length,3);
+  message.setAttribute('data-message-author-role','assistant');await tick();assert.equal(h.hidden('late-message'),true);assert.equal(h.frames().length,4);
+});
+
+test('hydration respects manual rendering, Show code and compiler error source access',async t=>{
+  for(const mode of ['manual','revealed','failed']) {
+    const h=harness({modern:true,saved:{autoRender:mode!=='manual'}});t.after(h.close);await h.advance(0);const frame=h.frames()[0];
+    if(mode==='revealed')frame.parentElement.querySelector('.latex-islands-boot button').click();
+    if(mode==='failed') {h.connect(frame);h.message(frame,{type:'result',ok:false,source:SOURCE,error:'Invalid drawing'});}
+    const replacement=h.get('diagram').cloneNode(true);replacement.className='host-code';h.get('diagram').replaceWith(replacement);await tick();
+    assert.equal(h.frames()[0],frame);assert.equal(h.hidden('diagram'),false);assert.equal(replacement.hasAttribute('data-latex-islands-hidden'),false);
+    replacement.className='host-code hydrated';await tick();await h.advance(1000);assert.equal(h.hidden('diagram'),false);
+    if(mode==='manual') {h.connect(frame);h.message(frame,{type:'result',ok:true,source:SOURCE});replacement.className='host-code';assert.equal(h.hidden('diagram'),true);}
+  }
+});
+
+test('the boot source fallback follows an adopted replacement and hidden conversations are still cleaned up',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);const frame=h.frames()[0],replacement=h.get('diagram').cloneNode(true);
+  replacement.className='';replacement.removeAttribute('data-latex-islands-hidden');h.get('diagram').replaceWith(replacement);await tick();
+  assert.equal(h.frames()[0],frame);assert.equal(h.hidden('diagram'),true);frame.parentElement.querySelector('.latex-islands-boot button').click();assert.equal(h.hidden('diagram'),false);
+  h.get('assistant').hidden=true;await h.advance(60);assert.equal(h.frames().length,0);assert.equal(replacement.hasAttribute('data-latex-islands-hidden'),false);
+});
+
+test('a missing iframe handshake ends with an error and explicit retry can render successfully',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);const original=h.frames()[0];
+  await h.advance(14999);assert.equal(original.parentElement.querySelector('[role="alert"]'),null);
+  await h.advance(1);const container=original.parentElement,retry=container.querySelector('.latex-islands-boot-retry');
+  assert.match(container.querySelector('[role="alert"]').textContent,/did not connect/);assert.equal(container.querySelector('.latex-islands-boot-spinner').hidden,true);assert.equal(retry.hidden,false);
+  await h.advance(45000);assert.equal(h.frames()[0],original,'a failed connection never causes an automatic reload loop');
+  container.querySelector('.latex-islands-boot-actions button').click();assert.equal(h.hidden('diagram'),false);
+  retry.click();const replacement=h.frames()[0];assert.notEqual(replacement,original);assert.equal(h.frames().length,1);
+  const sent=h.connect(replacement);assert.equal(sent[0].data.source,SOURCE);h.message(replacement,{type:'result',ok:true,source:SOURCE});assert.equal(h.hidden('diagram'),true);
+  await h.advance(60000);assert.equal(h.frames()[0],replacement);assert.equal(replacement.parentElement.querySelector('.latex-islands-boot'),null);assert.equal(sent.filter(item=>item.data.type==='render').length,1);
+});
+
+test('a delayed handshake recovers the timeout overlay and normal streaming never hits a bootstrap deadline',async t=>{
+  for(const streaming of [false,true]) {
+    const h=harness({modern:true,streaming,source:streaming?'\\begin{tikzpicture}':SOURCE});t.after(h.close);if(streaming)h.get('ordinary').remove();
+    await h.advance(streaming?0:15000);const frame=h.frames()[0],sent=h.connect(frame);
+    h.message(frame,{type:'resize',height:222});await h.advance(120000);
+    assert.equal(h.frames()[0],frame);assert.equal(frame.parentElement.querySelector('[role="alert"]'),null);assert.equal(frame.parentElement.querySelector('.latex-islands-boot'),null);
+    assert.equal(sent[0].data.type,streaming?'prepare':'render');assert.equal(sent.length,1,'generation duration is independent of the connection deadline');
+  }
+});
+
+test('lost iframe connections get a bounded recovery overlay and a new port reuses the source draft',async t=>{
+  const h=harness({modern:true});t.after(h.close);await h.advance(0);const frame=h.frames()[0],first=h.connect(frame),draft=SOURCE.replace('(1,1)','(4,4)');
+  h.message(frame,{type:'source-change',source:draft});h.message(frame,{type:'result',ok:true,source:draft});assert.equal(frame.parentElement.querySelector('.latex-islands-boot'),null);
+  first.reply({type:'snapshot-unavailable'});assert.equal(first.port.closed,true);assert.ok(frame.parentElement.querySelector('.latex-islands-boot'));assert.equal(h.hidden('diagram'),true);
+  await h.advance(15000);assert.ok(frame.parentElement.querySelector('[role="alert"]'));assert.equal(h.frames()[0],frame);
+  const second=h.connect(frame);assert.equal(second[0].data.source,draft);h.message(frame,{type:'resize',height:222});assert.equal(frame.parentElement.querySelector('.latex-islands-boot'),null);
+  await h.advance(30000);assert.equal(h.frames()[0],frame);assert.notEqual(second.port.closed,true);
+});
+
+test('bootstrap deadlines are cancelled on removal, disabling and navigation',async t=>{
+  for(const action of ['remove','disable','navigate']) {
+    const h=harness({modern:true});t.after(h.close);await h.advance(0);const frame=h.frames()[0],container=frame.parentElement;
+    if(action==='remove')h.get('diagram').remove();
+    else if(action==='disable')h.settings({enabled:false});
+    else {h.w.history.replaceState({},'', '/c/another-conversation');h.get('assistant').remove();}
+    await tick();await h.advance(60000);assert.equal(h.frames().length,0);assert.equal(container.querySelector('[role="alert"]'),null);
+  }
+});
+
+test('bootstrap retry refuses srcdoc and changed conversation identity, and refreshes changed source',async t=>{
+  for(const changed of ['srcdoc','url','message-id','source']) {
+    const h=harness({modern:true});t.after(h.close);await h.advance(15000);const original=h.frames()[0],retry=original.parentElement.querySelector('.latex-islands-boot-retry');
+    const next=SOURCE.replace('(1,1)','(7,7)');
+    if(changed==='srcdoc')original.setAttribute('srcdoc','');
+    else if(changed==='url')h.w.history.replaceState({},'', '/c/another-conversation');
+    else if(changed==='message-id')h.get('assistant').querySelector('[data-chatgpt-selection-message-id]').setAttribute('data-chatgpt-selection-message-id','another-message');
+    else h.get('diagram').querySelector('code').textContent=next;
+    retry.click();
+    if(changed==='source') {assert.notEqual(h.frames()[0],original);assert.equal(h.connect(h.frames()[0])[0].data.source,next);}
+    else assert.equal(h.frames()[0],original,'retry never overrides a document outside its intended current context');
+    if(changed==='srcdoc')assert.equal(original.getAttribute('srcdoc'),'');
+  }
 });
 
 test('new compilation and iframe replacement retain the last height until the next result',async t=>{

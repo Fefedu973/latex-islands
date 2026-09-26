@@ -1,6 +1,6 @@
 # Export a ChatGPT conversation
 
-The **Export conversation** button in the header of a saved conversation opens a window with two panels: settings and preview. Markdown, text and JSON exports retrieve ChatGPT's saved data. PDF captures the rendered conversation after scrolling the page to load earlier messages.
+The **Export conversation** button in the header of a saved conversation opens a window with two panels: settings and preview. Markdown, text and JSON preview automatically when the window opens or one of those formats is selected, retrieving ChatGPT's saved data if needed. PDF captures the rendered conversation after an explicit action loads its history.
 
 ## Choose content and format
 
@@ -15,13 +15,13 @@ The **Export conversation** button in the header of a saved conversation opens a
 
 For PDF, Markdown and plain text, choose **Conversation**, **Answers only** or **Prompts only** under **Content**. Use **Choose messages** to load the message list, then check the messages you want to export. You can select a single message or any combination; the export keeps their conversation order. Search helps locate messages, and **All** and **None** make longer selections easier.
 
-The **Messages** view shows the selection. Switch back to **Preview** for PDF or **Conversation** for a transcript to review the result. **Reload** captures or retrieves the conversation again. Message selections stay in memory for the open export window; they are not saved as preferences.
+The **Messages** view shows the selection. Switch back to **Preview** to review the result. **Reload** captures or retrieves the conversation again. Message selections stay in memory for the open export window; they are not saved as preferences.
 
 The complete JSON archive is always unfiltered. Message selection and transcript options apply only to the other formats.
 
 ## Save a rich PDF
 
-Select **PDF (.pdf)**, choose the messages and click **Preview** to inspect the printable content in the export window. **Save PDF** opens the browser's print dialog; choose **Save as PDF** there. The **PDF** button below an assistant reply starts with that reply selected. Enable **Include prompt** to add its preceding user message.
+Select **PDF (.pdf)**, choose the messages and click **Preview** to inspect the printable content in the export window. **Save PDF** opens the browser's print dialog; choose **Save as PDF** there. The **Export reply as PDF** icon in an assistant reply's toolbar opens and previews that reply automatically. It is hidden while the reply is streaming; printing still requires **Save PDF**. Enable **Include prompt** to add its preceding user message.
 
 PDF uses ChatGPT's actual rendered content. The extension scrolls the conversation so ChatGPT can load and render earlier messages, captures each message as it becomes available, and restores the scroll position afterward. Captured messages remain available for selection even if ChatGPT removes them from the live page while scrolling. This can take longer for a large conversation and can be cancelled.
 
@@ -35,31 +35,30 @@ The browser loads the page's existing image resources as needed for the print co
 
 ## Transcript options
 
-Markdown and plain text also offer a **Detailed context** preset. Under **Customize transcript**, you can choose each option separately:
+**Content** filters roles: **Conversation**, **Answers only** or **Prompts only**. Expand **Customize transcript** to choose the independent content options:
 
-- **Include my messages**;
 - **Include attachment references**;
 - **Include sources and citations**;
 - **Show dates and times**, in UTC;
 - **Include progress updates** that can be displayed;
 - **Include tool calls and results**.
 
-By default, the transcript includes user messages and final replies, along with references to generated media. Internal context, system messages, hidden analysis and empty tool outputs are omitted. The detailed preset adds displayable progress updates and tools; it does not turn the transcript into a complete copy of every internal field. Those fields remain in the JSON archive.
+By default, the transcript includes user messages and final replies, along with references to generated media. Internal context, system messages, hidden analysis and empty tool outputs are omitted. The progress and tool switches add those details within the selected role filter; they do not turn the transcript into a complete copy of every internal field. Those fields remain in the JSON archive. Changing Content preserves the advanced switches, and changing a switch does not alter the role filter.
 
 Available structured sources become readable links. Citations with missing sources are flagged; no URLs are invented. Images and attachments are mentioned once when their content and metadata refer to the same file. A usable link is preserved when available; internal pointers become readable descriptions. **Binary files are neither downloaded nor embedded in the export.**
 
 ## Preview, copy and download
 
-1. Choose a format under **Format** and a preset under **Content**.
-2. Click **Preview** or **Choose messages** to retrieve the conversation.
+1. Choose a format under **Format** and the roles to include under **Content**.
+2. Review the automatic transcript preview. For a full-conversation PDF, click **Preview** or **Choose messages** to load the rendered history.
 3. Adjust the message selection and options, then check the result.
 4. Use **Copy** or **Download**.
 
-The **Conversation** view presents messages for reading; the **File** view shows the generated content. JSON uses the file view. Common Markdown is formatted in the conversation view; **equations remain TeX source**, without mathematical rendering. The file view and downloads preserve TeX and source code.
+The **Preview** view presents messages for reading; **Source** shows the generated file content. JSON uses Source. Common Markdown is formatted in Preview; **equations remain TeX source**, without mathematical rendering. Source and downloads preserve TeX and source code.
 
-To keep the preview manageable, it initially shows **20 messages** in conversation view or **50,000 characters** in file view. **Show more** displays the next messages or characters. **Copy** and **Download** always use the entire file, regardless of how much of the preview is visible.
+To keep the preview manageable, it initially shows **20 messages** in Preview or **50,000 characters** in Source. **Show more** displays the next messages or characters. **Copy** and **Download** always use the entire file, regardless of how much of the preview is visible.
 
-Changing options updates the loaded preview without making another request. If ChatGPT's messages change, the interface indicates that the preview needs refreshing; the next action retrieves the current version. Options are saved locally, while the retrieved conversation stays in memory. Selecting a format or changing an option does not itself trigger a conversation request.
+Changing content options updates the loaded preview without making another request. Opening the window or selecting Markdown, text or JSON starts a preview and retrieves the conversation if the cached data is missing or stale. If ChatGPT's messages change, the interface indicates that the preview needs refreshing; the next action retrieves the current version. Options are saved locally, while the retrieved conversation stays in memory. Full-conversation PDF loading remains explicit.
 
 Retrieval must finish before copying or downloading. An HTTP failure, unknown format, missing or repeated cursor, conversation change or cancellation stops the export. Closing the window cancels any retrieval in progress. A partial file is never presented as complete.
 

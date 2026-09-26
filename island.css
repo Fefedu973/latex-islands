@@ -21,7 +21,7 @@
 .island[data-mode="fullscreen"] #source-toggle,.island[data-mode="fullscreen"] .source-pane{display:none!important}
 #source:focus,#source:focus-visible{outline:none;box-shadow:none}
 #edit-hint{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
-#edit-hint svg{width:14px;height:14px;aspect-ratio:1;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+#edit-hint svg{width:14px;height:14px;min-width:14px;min-height:14px;aspect-ratio:1;flex:0 0 14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .source-actions #compile:not(:disabled):hover{background:var(--hover)}
 #copy-source{display:flex;align-items:center;justify-content:space-between;gap:8px}
 /* Keep errors together in the preview, including when its host fills the screen. */
@@ -49,3 +49,9 @@
   .island:not(.editor):not([data-mode="preview"]) .preview-pane:is(:hover,:has(:focus-visible),:has(#menu-toggle[aria-expanded="true"])) .floating-tools{opacity:1;pointer-events:auto}
 }
 @media(prefers-reduced-motion:reduce){.floating-tools{transition:none!important}}
+#control-tooltip{position:fixed;inset:auto;z-index:10;width:max-content;max-width:min(320px,calc(100vw - 16px));margin:0;padding:5px 12px;border:1px solid var(--tooltip-border,#ededed0d);border-radius:16px;background:var(--tooltip-background,#303030);color:var(--tooltip-text,#ededed);font-family:inherit;font-size:14px;line-height:18px;font-weight:600;letter-spacing:-.15px;text-align:center;pointer-events:none;box-shadow:var(--tooltip-shadow,0 8px 18px #0f172a33)}
+.editor-header .icon-button{width:36px;height:36px;flex:0 0 36px;padding:0;border-radius:8px}
+.editor-header .text-button{height:36px;padding:0 10px;border-radius:8px;line-height:20px}
+.editor-header button svg{width:20px;height:20px}
+:root{--hover:#0000000d;--tooltip-background:#fff;--tooltip-text:#0d0d0d;--tooltip-border:#0d0d0d0d}
+:root[data-theme="dark"]{--hover:#ffffff1a;--tooltip-background:#303030;--tooltip-text:#ededed;--tooltip-border:#ededed0d}

@@ -16,7 +16,7 @@
       const el = element(node);
       if (!el?.isConnected) return false;
       if (cache.has(el)) return cache.get(el);
-      const css = getComputedStyle(el), original = ignoreOriginal && el.classList.contains('latex-islands-original-hidden');
+      const css = getComputedStyle(el), original = ignoreOriginal && (el.classList.contains('latex-islands-original-hidden') || el.getAttribute('data-latex-islands-hidden') === 'true');
       const own = !el.matches('[hidden], [inert], [aria-hidden="true"]') && (original || css.display !== 'none') && css.visibility !== 'hidden' && css.visibility !== 'collapse';
       const result = own && (!el.parentElement || visible(el.parentElement));
       cache.set(el, result);

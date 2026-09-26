@@ -46,7 +46,7 @@
   function attributes(source, clone) {
     for (const {name, value} of [...clone.attributes]) {
       const lower = name.toLowerCase();
-      if (lower.startsWith('on') || ['srcdoc', 'srcset', 'sizes', 'autofocus', 'tabindex', 'contenteditable', 'nonce', 'integrity', 'ping', 'download', 'popover'].includes(lower)) clone.removeAttribute(name);
+      if (lower.startsWith('on') || ['srcdoc', 'srcset', 'sizes', 'autofocus', 'tabindex', 'contenteditable', 'nonce', 'integrity', 'ping', 'download', 'popover', 'data-latex-islands-hidden'].includes(lower)) clone.removeAttribute(name);
       else if (['href', 'xlink:href', 'src', 'poster', 'action', 'formaction', 'background'].includes(lower)) {
         const safe = url(value, lower === 'src' || lower === 'poster' || source.localName === 'image');
         if (safe) clone.setAttribute(name, safe); else clone.removeAttribute(name);

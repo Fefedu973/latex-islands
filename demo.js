@@ -60,6 +60,9 @@
       const color = followed && chatgptTheme.colors?.[key];
       if (typeof color === 'string' && /^(#[\da-f]{3,8}|rgba?\([\d\s.,%/]+\))$/i.test(color)) root.style.setProperty(property, color);
     }
+    root.style.removeProperty('--hover');
+    const hover = followed && chatgptTheme.colors?.hover;
+    if (typeof hover === 'string' && hover.length < 300 && globalThis.CSS?.supports('color', hover)) root.style.setProperty('--hover', hover);
     themeSelect.title = themeSelect.value !== 'chatgpt' ? 'Editor appearance' : followed ? 'Uses the last theme seen in ChatGPT' : 'System theme until a ChatGPT tab is opened';
     controls.get(themeSelect).sync();
     updateView();
@@ -90,7 +93,14 @@
   }
   function theme() {
     const css=getComputedStyle(document.documentElement),read=name=>css.getPropertyValue(name).trim();
-    return {theme:document.documentElement.dataset.theme || (systemTheme.matches ? 'dark' : 'light'),renderColors:colorSelect.value === 'native' ? 'native' : 'chatgpt',colors:{text:read('--ink'),background:read('--surface'),surface:read('--soft'),border:read('--line')}};
+    const tooltip = {};
+    if (themeSelect.value === 'chatgpt' && ['light', 'dark'].includes(chatgptTheme?.theme)) {
+      for (const key of ['background', 'text', 'border', 'shadow']) {
+        const value = chatgptTheme.tooltip?.[key], property = key === 'shadow' ? 'box-shadow' : 'color';
+        if (typeof value === 'string' && value.length < 300 && globalThis.CSS?.supports(property, value)) tooltip[key] = value;
+      }
+    }
+    return {theme:document.documentElement.dataset.theme || (systemTheme.matches ? 'dark' : 'light'),renderColors:colorSelect.value === 'native' ? 'native' : 'chatgpt',colors:{text:read('--ink'),background:read('--surface'),surface:read('--soft'),border:read('--line'),hover:read('--hover')},tooltip};
   }
   function sendView(mode) {
     if (frame?.contentWindow && currentRender) frame.contentWindow.postMessage({channel:'latex-islands',type:'view',id:currentRender.id,mode,...theme()},extensionOrigin);

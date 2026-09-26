@@ -111,6 +111,16 @@ test('a hidden outer code widget cannot hide a snapshot of its nested source',as
   const pdf=await h.prepare();t.after(pdf.dispose);const image=pdf.root.querySelector('.li-pdf-island-image');assert.ok(image);assert.equal(h.w.getComputedStyle(image.closest('pre')).display,'block');assert.doesNotMatch(pdf.root.textContent,/Source/);
 });
 
+test('live hydration hiding markers cannot hide PDF clones or silently omit an uncaptured diagram',async t=>{
+  const h=harness(t,'<style>[data-latex-islands-hidden="true"]{display:none!important}</style><main><article data-message-author-role="assistant"><div id="widget" data-latex-islands-hidden="true"><pre id="tex">Source</pre></div><div class="latex-islands-container"></div><code data-latex-islands-hidden="false">Visible fallback code</code></article></main>');
+  h.w.LatexIslandsDiagramExport={snapshot:async()=>[{sourceElement:h.get('#tex'),containerElement:h.get('.latex-islands-container'),svg:SVG,width:600,height:300}]};
+  const pdf=await h.prepare();t.after(pdf.dispose);
+  const image=pdf.root.querySelector('.li-pdf-island-image');assert.ok(image);assert.equal(h.w.getComputedStyle(image.closest('div')).display,'block');
+  assert.equal(pdf.root.querySelector('[data-latex-islands-hidden]'),null);assert.match(pdf.root.textContent,/Visible fallback code/);
+  assert.equal(h.get('#widget').getAttribute('data-latex-islands-hidden'),'true');assert.equal(h.w.getComputedStyle(h.get('#widget')).display,'none');
+  h.w.LatexIslandsDiagramExport.snapshot=async()=>[];await assert.rejects(h.prepare(),/not ready/);
+});
+
 test('streaming detection blocks only selected replies including the current stop-button reply',async t=>{
   const h=harness(t,'<main><article id="old" data-message-author-role="assistant">Complete</article><article id="new" data-message-author-role="assistant" data-is-streaming="true">Generating</article></main>');
   await assert.rejects(h.prepare(),/finish generating/);

@@ -34,6 +34,30 @@ function harness({firefox=false,fontLoad=async()=>[{}],url='chrome-extension://t
 }
 const svg=text=>`<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80"><text font-family="cmr10">${text}</text></svg>`;
 
+test('editor icon tooltips replace browser titles, stay inside the viewport and dismiss without activating controls',t=>{
+  const h=harness();t.after(h.close);const scheduled=[],timer=h.w.setTimeout.bind(h.w);
+  h.w.setTimeout=(callback,ms,...args)=>{if(ms===300)scheduled.push(()=>callback(...args));return timer(callback,ms,...args);};
+  const tooltip=h.el('control-tooltip');
+  Object.defineProperties(tooltip,{offsetWidth:{get:()=>140},offsetHeight:{get:()=>30}});
+  for(const id of ['close-editor','copy-header','png-header','zoom-in','zoom-out','menu-toggle']){
+    assert.equal(h.el(id).hasAttribute('title'),false);assert.equal(h.el(id).hasAttribute('aria-describedby'),false);
+    h.el(id).getBoundingClientRect=()=>({left:12,top:4,right:48,bottom:40,width:36,height:36});
+  }
+  h.send({autoRender:false,mode:'editor'});scheduled.at(-1)();
+  assert.equal(h.el('close-editor').getAttribute('aria-describedby'),tooltip.id);
+  assert.equal(tooltip.hidden,false);assert.equal(tooltip.textContent,'Close editor');assert.equal(tooltip.style.left,'8px');assert.equal(tooltip.style.top,'48px');
+  h.el('copy-header').focus();scheduled.at(-1)();assert.equal(tooltip.textContent,'Copy code');
+  h.el('copy-header').dispatchEvent(new h.w.Event('pointerleave'));assert.equal(tooltip.hidden,true);assert.equal(h.el('copy-header').hasAttribute('aria-describedby'),false);
+  h.el('zoom-in').disabled=false;h.el('zoom-in').closest('.zoom-controls').hidden=false;
+  h.el('zoom-in').getBoundingClientRect=()=>({left:990,top:726,right:1024,bottom:760,width:34,height:34});
+  h.el('zoom-in').dispatchEvent(new h.w.Event('pointerenter'));scheduled.at(-1)();
+  assert.equal(tooltip.style.left,'876px');assert.equal(tooltip.style.top,'688px');assert.equal(tooltip.textContent,'Zoom in');
+  h.w.document.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape'}));assert.equal(tooltip.hidden,true);
+  h.el('png-header').disabled=false;h.el('png-header').dispatchEvent(new h.w.Event('pointerenter'));h.el('png-header').disabled=true;scheduled.at(-1)();
+  assert.equal(tooltip.hidden,true,'a control disabled during the hover delay must not show a tooltip');
+  assert.equal(h.calls.length,0,'tooltips never compile or activate an editor action');
+});
+
 test('loaded island offers a document-bound port only to an allowed parent and accepts its matching diagram',async t=>{
   const h=harness({url:'chrome-extension://test-id/island.html?parentOrigin=https%3A%2F%2Fchatgpt.com#diagram-id'});t.after(h.close);
   assert.equal(h.sent.length,1);assert.equal(h.sent[0].data.type,'ready');assert.equal(h.sent[0].data.id,'diagram-id');
@@ -47,6 +71,7 @@ test('loaded island offers a document-bound port only to an allowed parent and a
   assert.equal(h.channels.length,2);assert.equal(h.sent.at(-1).data.type,'ready');
   h.channels[1].port1.onmessage({data:{channel:'latex-islands',type:'view',id:'diagram-id',mode:'editor'}});
   assert.equal(h.w.document.querySelector('.island').dataset.mode,'editor');
+  assert.equal(h.el('output').textContent,'port diagram','completed SVG remains visible after restoration');
   assert.equal(h.calls.length,1,'back/forward cache restores the channel without recompiling');
 });
 
@@ -55,6 +80,42 @@ test('island never offers a ready port to an arbitrary parent origin',t=>{
     const h=harness({url:'chrome-extension://test-id/island.html?parentOrigin='+encodeURIComponent(origin)+'#diagram-id'});t.after(h.close);
     assert.equal(h.sent.length,0);assert.equal(h.channels.length,0);
   }
+});
+
+test('back-forward restoration retries an orphaned runtime request without letting its old completion replace the successor',async t=>{
+  const h=harness({url:'chrome-extension://test-id/island.html?parentOrigin=https%3A%2F%2Fchatgpt.com#diagram-id'});t.after(h.close);
+  h.channels[0].port1.onmessage({data:{channel:'latex-islands',type:'render',id:'diagram-id',source:'restored diagram'}});
+  assert.equal(h.calls.length,1);assert.equal(h.el('compile').disabled,true);
+  h.w.dispatchEvent(new h.w.PageTransitionEvent('pagehide',{persisted:true}));
+  h.w.dispatchEvent(new h.w.PageTransitionEvent('pageshow',{persisted:true}));
+  assert.equal(h.channels.length,2);assert.equal(h.calls.length,2);
+  await tick();assert.equal(h.el('compile').disabled,true,'the old request finally must not unlock its successor');
+  h.calls[1].resolve({ok:true,svg:svg('restored result')});await tick();
+  assert.equal(h.el('output').textContent,'restored result');assert.equal(h.el('compile').disabled,false);
+  h.calls[0].resolve({ok:true,svg:svg('obsolete result')});await tick();
+  assert.equal(h.el('output').textContent,'restored result');assert.equal(h.calls.length,2);
+  assert.equal(h.sent.filter(event=>event.data.type==='result'&&event.data.ok).length,1);
+});
+
+test('an unanswered runtime request ends in a retryable error and ignores its late response',async t=>{
+  const h=harness();t.after(h.close);const timeouts=[],timer=h.w.setTimeout.bind(h.w);
+  h.w.setTimeout=(callback,ms,...args)=>{if(ms===120000)timeouts.push(()=>callback(...args));return timer(callback,ms,...args);};
+  h.send();assert.equal(timeouts.length,1);timeouts[0]();await tick();
+  assert.equal(h.el('spinner').hidden,true);assert.match(h.el('error').textContent,/renderer did not respond in time/i);assert.equal(h.el('retry').disabled,false);
+  h.el('retry').click();assert.equal(h.calls.length,2);
+  h.calls[1].resolve({ok:true,svg:svg('retry result')});await tick();
+  h.calls[0].resolve({ok:true,svg:svg('late result')});await tick();
+  assert.equal(h.el('output').textContent,'retry result');assert.equal(h.el('error').hidden,true);
+});
+
+test('stalled font loading reaches an error and retry without displaying the late font result',async t=>{
+  const loads=[],h=harness({fontLoad:()=>new Promise(resolve=>loads.push(resolve))});t.after(h.close);
+  const timeouts=[],timer=h.w.setTimeout.bind(h.w);
+  h.w.setTimeout=(callback,ms,...args)=>{if(ms===15000)timeouts.push(()=>callback(...args));return timer(callback,ms,...args);};
+  h.send();h.calls[0].resolve({ok:true,svg:svg('first')});await tick();assert.equal(timeouts.length,1);
+  timeouts[0]();await tick();assert.match(h.el('error').textContent,/Could not load diagram font/);assert.equal(h.el('spinner').hidden,true);assert.equal(h.el('retry').disabled,false);
+  h.el('retry').click();h.calls[1].resolve({ok:true,svg:svg('second')});await tick();loads[1]([{}]);await tick();
+  loads[0]([{}]);await tick();assert.equal(h.el('output').textContent,'second');assert.equal(h.el('error').hidden,true);
 });
 
 test('cached SVG stays behind the loader until all used TeX fonts finish loading',async t=>{

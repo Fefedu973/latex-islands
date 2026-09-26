@@ -186,6 +186,24 @@ test('editor sends the observed ChatGPT palette on first render and updates it w
   assert.equal(sent.filter(({data})=>data.type==='render').length,1);
 });
 
+test('editor forwards validated tooltip and hover appearance, then clears it for explicit themes',async t=>{
+  const tooltip={background:'#303030',text:'#ededed',border:'color-mix(in oklab, #ededed 5%, transparent)',shadow:'0 8px 18px #0f172a33'};
+  const observed={theme:'dark',colors:{text:'#ededed',background:'#000000',surface:'#202020',border:'#414141',hover:'#ffffff1a'},tooltip:{...tooltip,unknown:'ignored'}};
+  const h=harness('demo',{chatgptTheme:observed});t.after(h.close);
+  // JSDOM has no CSS.supports; exercise the browser validation boundary with
+  // these known valid colors and shadow, including the native color-mix border.
+  const colors=new Set([tooltip.background,tooltip.text,tooltip.border,observed.colors.hover]);
+  h.w.CSS={supports:(property,value)=>property==='color'?colors.has(value):property==='box-shadow'&&value===tooltip.shadow};
+  await tick();const {sent}=h.connect();
+  assert.deepEqual(JSON.parse(JSON.stringify(sent[0].data.tooltip)),tooltip);assert.equal(sent[0].data.colors.hover,observed.colors.hover);
+  h.el('expand-preview').click();assert.equal(sent.at(-1).data.mode,'fullscreen');assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1).data.tooltip)),tooltip);
+  h.storage({chatgptTheme:{...observed,colors:{...observed.colors,hover:'url(https://example.invalid)'},tooltip:{background:'url(https://example.invalid)',text:'x'.repeat(300),shadow:'invalid'}}});
+  assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1).data.tooltip)),{});assert.equal(h.w.document.documentElement.style.getPropertyValue('--hover'),'');
+  h.storage({chatgptTheme:observed});assert.equal(sent.at(-1).data.colors.hover,observed.colors.hover);
+  h.change('uiTheme','light');assert.equal(sent.at(-1).data.theme,'light');assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1).data.tooltip)),{});assert.equal(h.w.document.documentElement.style.getPropertyValue('--hover'),'');
+  assert.equal(sent.filter(({data})=>data.type==='render').length,1);
+});
+
 test('native color mode keeps dark UI, persists and updates an open fullscreen view without compiling',async t=>{
   const h=harness('demo',{uiTheme:'dark',renderColors:'native'});t.after(h.close);await tick();const {sent}=h.connect();
   assert.equal(sent[0].data.renderColors,'native');assert.equal(sent[0].data.theme,'dark');

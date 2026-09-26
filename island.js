@@ -4,6 +4,7 @@ const extensionAPI=globalThis.browser||globalThis.chrome;
 const $=id=>document.getElementById(id);
 const island=document.querySelector('.island'),viewport=$('viewport');
 let current=null,parentOrigin=null,version=0,svgNode=null,previewCompiler=null,busy=false,warmed=false;
+let renderAbort=null,suspended=false;
 let renderedSource=null;
 const snapshotRequests=new Map(),MAX_SNAPSHOT=10*1024*1024;
 let viewMode='inline',editor=false,zoomValue=1,fitScale=1,panX=0,panY=0,naturalWidth=500,naturalHeight=260,drag=null;
@@ -16,6 +17,44 @@ function resize() {
   send('resize',{height:Math.min(2400,Math.ceil(Math.max(document.body.getBoundingClientRect().height,menuBottom))+2)});
 }
 new ResizeObserver(resize).observe(document.body);
+
+// Native-looking tooltips live in the iframe's top layer so editor and preview
+// overflow cannot clip them. Labels follow each control's accessible name.
+const controlTooltip=document.createElement('div');
+controlTooltip.id='control-tooltip';controlTooltip.hidden=true;controlTooltip.setAttribute('role','tooltip');controlTooltip.setAttribute('popover','manual');document.body.append(controlTooltip);
+let tooltipAnchor=null,tooltipTimer=0;
+function hideControlTooltip(){
+  clearTimeout(tooltipTimer);tooltipTimer=0;tooltipAnchor?.removeAttribute('aria-describedby');tooltipAnchor=null;
+  try{controlTooltip.hidePopover?.();}catch{}
+  controlTooltip.hidden=true;
+}
+function positionControlTooltip(){
+  if(!tooltipAnchor?.isConnected||tooltipAnchor.disabled||tooltipAnchor.closest('[hidden]')){hideControlTooltip();return;}
+  const rect=tooltipAnchor.getBoundingClientRect();
+  if(!rect.width||!rect.height){hideControlTooltip();return;}
+  controlTooltip.textContent=tooltipAnchor.getAttribute('aria-label');
+  const width=controlTooltip.offsetWidth,height=controlTooltip.offsetHeight;
+  controlTooltip.style.left=Math.max(8,Math.min(rect.left+rect.width/2-width/2,innerWidth-width-8))+'px';
+  controlTooltip.style.top=Math.max(8,Math.min(rect.bottom+height+16<=innerHeight?rect.bottom+8:rect.top-height-8,innerHeight-height-8))+'px';
+}
+function showControlTooltip(anchor){
+  hideControlTooltip();if(anchor.disabled)return;tooltipAnchor=anchor;
+  tooltipTimer=setTimeout(()=>{
+    tooltipTimer=0;if(tooltipAnchor!==anchor||!anchor.isConnected||anchor.disabled||anchor.closest('[hidden]'))return;
+    controlTooltip.textContent=anchor.getAttribute('aria-label');controlTooltip.hidden=false;
+    anchor.setAttribute('aria-describedby',controlTooltip.id);
+    try{controlTooltip.showPopover?.();}catch{}
+    positionControlTooltip();
+  },300);
+}
+for(const anchor of document.querySelectorAll('button[title]')){
+  anchor.removeAttribute('title');
+  anchor.addEventListener('pointerenter',()=>showControlTooltip(anchor));anchor.addEventListener('focus',()=>showControlTooltip(anchor));
+  for(const event of ['pointerleave','blur','click'])anchor.addEventListener(event,hideControlTooltip);
+}
+window.addEventListener('resize',()=>{if(!controlTooltip.hidden)positionControlTooltip();});
+document.addEventListener('scroll',()=>{if(!controlTooltip.hidden)positionControlTooltip();},{capture:true,passive:true});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')hideControlTooltip();});
 
 function cleanSVG(markup) {
   let xml=new DOMParser().parseFromString(markup,'image/svg+xml');
@@ -51,6 +90,13 @@ function setTheme(message) {
     const value=message.colors?.[key];
     if(typeof value==='string'&&/^(?:#[\da-f]{3,8}|rgba?\([\d.,%\s/]+\)|hsla?\([\d.,%\s/]+\))$/i.test(value))document.documentElement.style.setProperty('--'+key,value);
   }
+  if(typeof message.colors?.hover==='string'&&message.colors.hover.length<300&&globalThis.CSS?.supports('color',message.colors.hover))document.documentElement.style.setProperty('--hover',message.colors.hover);
+  else if(message.theme==='dark'||message.theme==='light')document.documentElement.style.removeProperty('--hover');
+  for(const key of ['background','text','border','shadow']){
+    const value=message.tooltip?.[key],property=key==='shadow'?'box-shadow':'color';
+    if(typeof value==='string'&&value.length<300&&globalThis.CSS?.supports(property,value))document.documentElement.style.setProperty('--tooltip-'+key,value);
+    else if(message.theme==='dark'||message.theme==='light')document.documentElement.style.removeProperty('--tooltip-'+key);
+  }
 }
 function setSourceVisible(visible){
   if(viewMode==='preview'||viewMode==='fullscreen')visible=false;
@@ -61,11 +107,11 @@ function setSourceVisible(visible){
 function setView(mode){
   if(!['inline','editor','preview','fullscreen'].includes(mode)||viewMode===mode)return;
   viewMode=mode;editor=mode==='editor'||mode==='fullscreen';
+  hideControlTooltip();
   island.dataset.mode=mode;island.classList.toggle('editor',editor);
   $('source-toggle').hidden=mode==='fullscreen';
   $('open-editor').textContent=mode==='preview'?'Open full screen':'Open editor';
   $('close-editor').setAttribute('aria-label',mode==='fullscreen'?'Close full screen':'Close editor');
-  $('close-editor').title=mode==='fullscreen'?'Close full screen':'Close editor';
   if(mode!=='inline')viewport.style.removeProperty('height');
   setSourceVisible(mode==='editor');closeMenu(false);
   // Keep the user's pan and zoom when the host expands the existing iframe.
@@ -158,28 +204,42 @@ function svgFontFamilies(node){
   }
   return families;
 }
-async function loadSVGFonts(node){
+function awaitRender(work,signal,timeout,message){
+  return new Promise((resolve,reject)=>{
+    let settled=false,timer;
+    const finish=(callback,value)=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',cancel);callback(value);};
+    const cancel=()=>finish(reject,new DOMException('Rendering suspended.','AbortError'));
+    if(signal.aborted)cancel();
+    else {signal.addEventListener('abort',cancel,{once:true});timer=setTimeout(()=>finish(reject,new Error(message)),timeout);}
+    Promise.resolve(work).then(value=>finish(resolve,value),error=>finish(reject,error));
+  });
+}
+async function loadSVGFonts(node,signal){
   // TeX uses private-use glyphs: fallback fonts show squares or blank labels.
   // Load the used faces before inserting the SVG, including on compiler cache hits.
   await Promise.all([...svgFontFamilies(node)].map(async family=>{
     try{
-      const faces=await document.fonts.load('16px "'+family+'"',node.textContent||' ');
+      const faces=await awaitRender(document.fonts.load('16px "'+family+'"',node.textContent||' '),signal,15000,'Diagram fonts did not finish loading.');
       if(!faces.length)throw new Error('Missing font face');
     }catch{throw new Error('Could not load diagram font "'+family+'". Reload the page and try again.');}
   }));
 }
 async function render(){
-  if(!current||busy||current.streaming)return;
-  const mine=version,source=current.source;busy=true;clearError();$('warning').hidden=true;
+  if(!current||busy||current.streaming||suspended)return;
+  const mine=version,source=current.source,controller=new AbortController();renderAbort=controller;busy=true;clearError();$('warning').hidden=true;
   setState('loading','Rendering diagram…');
   try{
     let result;
-    if(extensionAPI?.runtime?.id)result=await extensionAPI.runtime.sendMessage({channel:'latex-islands',target:'background',source});
-    else {previewCompiler ||=new TikZCompiler();result=await previewCompiler.compile(source);}
+    let work;
+    if(extensionAPI?.runtime?.id)work=extensionAPI.runtime.sendMessage({channel:'latex-islands',target:'background',source});
+    else {previewCompiler ||=new TikZCompiler();work=previewCompiler.compile(source);}
+    // The shared compiler has its own work limit. Bound this document's wait as
+    // well: an extension runtime response can be lost during navigation.
+    result=await awaitRender(work,controller.signal,120000,'The renderer did not respond in time. Try again.');
     if(mine!==version)return;
     if(!result?.ok)throw new Error(result?.error||'Compiler unavailable. Reload the page after installation.');
     const rendered=cleanSVG(result.svg);
-    await loadSVGFonts(rendered);
+    await loadSVGFonts(rendered,controller.signal);
     if(mine!==version)return;
     svgNode=rendered;renderedSource=source;$('output').replaceChildren(svgNode);
     const size=dimensions(svgNode);naturalWidth=size.width;naturalHeight=size.height;
@@ -190,8 +250,10 @@ async function render(){
   }catch(e){
     if(mine===version){showError(e.message);send('result',{ok:false,error:e.message,source});}
   }finally{
-    busy=false;$('compile').disabled=current?.streaming===true;$('retry').disabled=current?.streaming===true;resize();
-    if(mine!==version&&current.autoRender!==false&&!current.streaming)render();
+    if(renderAbort===controller){
+      renderAbort=null;busy=false;$('compile').disabled=current?.streaming===true;$('retry').disabled=current?.streaming===true;resize();
+      if(!suspended&&mine!==version&&current.autoRender!==false&&!current.streaming)render();
+    }
   }
 }
 function receive(m,origin){
@@ -287,7 +349,7 @@ const copyHeaderIcon=$('copy-header').querySelector('svg'),originalCopyIcon=[...
 let copyFeedbackTimer;
 function resetCopyFeedback(){
   clearTimeout(copyFeedbackTimer);copyHeaderIcon.replaceChildren(...originalCopyIcon.map(node=>node.cloneNode(true)));
-  $('copy-header').setAttribute('aria-label','Copy code');$('copy-header').title='Copy code';
+  $('copy-header').setAttribute('aria-label','Copy code');if(tooltipAnchor===$('copy-header'))positionControlTooltip();
   $('copy-source').textContent='Copy code';$('announcement').textContent='';
 }
 async function copySource(){
@@ -295,7 +357,7 @@ async function copySource(){
     await navigator.clipboard.writeText($('source').value);
     clearTimeout(copyFeedbackTimer);
     copyHeaderIcon.innerHTML='<path d="m5 12 4 4L19 6"/>';
-    $('copy-header').setAttribute('aria-label','Copied');$('copy-header').title='Copied';
+    $('copy-header').setAttribute('aria-label','Copied');if(tooltipAnchor===$('copy-header'))positionControlTooltip();
     $('copy-source').innerHTML='Copy code <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
     $('announcement').textContent='Code copied';
     copyFeedbackTimer=setTimeout(resetCopyFeedback,1800);
@@ -401,7 +463,15 @@ function connectToParent(){
 }
 connectToParent();
 window.addEventListener('pagehide',()=>{
+  hideControlTooltip();
+  suspended=true;
+  // Runtime promises are not guaranteed to settle after a frozen document is
+  // restored. Cancel only our wait, leaving shared compiler work/cache intact.
+  if(renderAbort){const controller=renderAbort;renderAbort=null;version++;busy=false;controller.abort();}
   if(parentChannel){parentChannel.port1.postMessage({channel:'latex-islands',type:'snapshot-unavailable',id:current?.id||decodeURIComponent(location.hash.slice(1))});parentChannel.port1.close();}
   snapshotRequests.clear();parentChannel=null;
 });
-window.addEventListener('pageshow',event=>{if(event.persisted)connectToParent();});
+window.addEventListener('pageshow',event=>{
+  suspended=false;
+  if(event.persisted){connectToParent();if(!svgNode&&current?.autoRender!==false)render();}
+});
