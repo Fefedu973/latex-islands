@@ -1,6 +1,6 @@
 # LaTeX Islands — TikZ & Export for ChatGPT
 
-Chrome and Firefox desktop Manifest V3 extension · **Version 1.5.0** · English interface
+Chrome and Firefox desktop Manifest V3 extension · **Version 1.5.1** · English interface
 
 Render TikZ diagrams in ChatGPT replies with an interface inspired by its native diagrams: an integrated preview, zoom, drag and a fullscreen editor. ChatGPT continues to display formulas, Markdown and Mermaid. The popup and editor use a monochrome interface. Conversation export provides a configurable transcript and preview based on the site's JSON data.
 
@@ -10,7 +10,7 @@ The Chrome package requires Chrome 116 or newer. The Firefox package requires Fi
 
 ### First installation
 
-1. Fully extract the **Chrome v1.5.0** ZIP into a permanent folder.
+1. Fully extract the **Chrome v1.5.1** ZIP into a permanent folder.
 2. Open `chrome://extensions` and enable **Developer mode**.
 3. Click **Load unpacked**.
 4. Select the extracted folder that directly contains `manifest.json`.

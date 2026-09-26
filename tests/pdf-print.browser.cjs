@@ -121,21 +121,44 @@ function fixture() {
       </div></article>
       <article data-message-author-role="assistant" data-fixture-reply="second"><div class="markdown prose"><h2>SECOND_REPLY_ONLY: Tall diagram</h2><p>The complete diagram must fit vertically on a page.</p>${diagram(2)}<p>END_OF_SECOND_REPLY</p></div></article>
     </main><form data-testid="composer"><textarea>COMPOSER_CONTROL</textarea></form></div>
-    ${['core.js','export-core.js','export-preview-renderer.js','native-controls.js','content.js','export-pdf.js','conversation-export.js'].map(filename => '<script src="/' + filename + '"></script>').join('')}
+    ${['core.js','export-core.js','export-preview-renderer.js','native-controls.js','chatgpt-dom.js','content.js','export-pdf.js','conversation-export.js'].map(filename => '<script src="/' + filename + '"></script>').join('')}
     </body></html>`;
+}
+
+// Public ChatGPT layout observed on 2026-09-26; content is entirely synthetic.
+function modernFixture() {
+  return `<!doctype html><html data-theme="dark"><head><meta charset="utf-8"><title>ChatGPT September layout</title><link rel="stylesheet" href="/content.css"><style>
+  *{box-sizing:border-box}html,body{margin:0;height:100%;font:15px/1.6 system-ui;color:#ededed;background:#000}
+  :root{--color-text-primary:#ededed;--color-text-secondary:#cdcdcd;--color-surface-elevated:#1b1b1b;--color-border-subtle:#ffffff0d;--radius-button-toolbar:9999px}
+  aside{position:fixed;inset:0 auto 0 0;width:180px;border-right:1px solid #ffffff26;padding:20px}main{margin-left:180px;height:100dvh}
+  header{position:fixed;top:0;right:0;left:180px;height:52px;pointer-events:none;z-index:20;display:flex;justify-content:flex-end}
+  [data-app-shell-header-obstacle]{display:flex;pointer-events:auto;padding:8px}[data-app-shell-header-obstacle]>div{display:flex;align-items:center}
+  button{font:inherit;color:inherit;border:0;background:transparent;padding:8px;border-radius:999px}
+  [data-app-action-timeline-scroll]{height:100%;display:flex;flex-direction:column-reverse;overflow-y:auto}
+  [data-chatgpt-conversation-selection-target]{width:min(100%,740px);margin:auto;flex-shrink:0;padding:64px 24px}
+  [data-chatgpt-search-unit-key]{margin:24px 0}[data-user-message-bubble]{margin-left:auto;width:fit-content;border-radius:24px;background:#1b1b1b;padding:12px 20px}
+  [data-markdown-copy="code-block"]{border-radius:24px;background:#1b1b1b;overflow:hidden}[data-markdown-copy="exclude"]{display:flex;justify-content:space-between;padding:10px 20px}
+  code{display:block;white-space:pre;overflow:auto;padding:20px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+  </style><script>window.testPrintCalls=0;window.testBridgeRequests=[];window.print=()=>{window.testPrintCalls++};window.addEventListener('message',e=>{if(e.data?.channel==='latex-islands-conversation-export-v1'&&e.data.type==='request')window.testBridgeRequests.push(e.data.path)});
+  globalThis.chrome={runtime:{getURL:p=>location.origin+'/'+p,lastError:null},storage:{local:{get(d,c){const v={...d,autoRender:true};if(c)queueMicrotask(()=>c(v));return Promise.resolve(v)},set(v,c){if(c)queueMicrotask(c);return Promise.resolve()}},onChanged:{addListener(){}}}};
+  </script></head><body><aside>ChatGPT<br>New chat</aside><main data-app-shell-main-surface="browser"><header><div data-app-shell-main-titlebar="true"><div data-app-shell-header-obstacle><div id="modern-actions"><span><button>Share</button></span><button>More</button></div></div></div></header>
+  <div data-app-action-timeline-scroll><div data-chatgpt-conversation-selection-target><div data-content-search-turn-key="fallback-turn-0"><div data-chatgpt-search-unit-key="fallback-turn-0:0:user" data-chatgpt-search-message-ids="modern-prompt"><div data-user-message-bubble>Draw a rectangle in TikZ.</div></div>
+  <div data-chatgpt-search-unit-key="fallback-turn-0:2:assistant" data-chatgpt-search-message-ids="modern-answer modern-answer"><h4 class="sr-only" data-conversation-role="assistant">ChatGPT said:</h4><div data-chatgpt-selection-message-id="modern-answer"><div data-markdown-text-style="assistant-message"><p>Here is the diagram:</p><div><div data-markdown-copy="code-block"><div data-markdown-copy="exclude"><div>tikz</div><button>Copy code</button></div><div><code><span>${escapeHTML(diagrams[0])}</span></code></div></div></div><p>Its mathematical label is rendered locally.</p></div></div></div>
+  <div class="turn-action-controls"><button>Copy response</button><button>Share response</button></div></div></div></div></main>
+  ${['core.js','export-core.js','export-preview-renderer.js','native-controls.js','chatgpt-dom.js','content.js','export-pdf.js','conversation-export.js'].map(name=>'<script src="/'+name+'"></script>').join('')}</body></html>`;
 }
 
 async function main() {
   await fs.mkdir(output, {recursive:true});
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'latex-islands-pdf-print-'));
   const profile = path.join(temporary, 'profile'); await fs.mkdir(profile);
-  const requests = [], heldFonts = new Set(), reports = [];
-  let holdFonts = false, child, cdp, stderr = '';
+  const requests = [], heldFonts = new Set(), heldIslands = new Set(), reports = [];
+  let holdFonts = false, holdIslands = false, child, cdp, stderr = '';
   const server = http.createServer(async (request, response) => {
     try {
       const pathname = new URL(request.url, 'http://localhost').pathname;
       requests.push(pathname); response.setHeader('Cache-Control', 'no-store');
-      if (pathname === conversationPath) { response.setHeader('Content-Type', 'text/html;charset=utf-8'); response.end(fixture()); return; }
+      if (pathname === conversationPath) { response.setHeader('Content-Type', 'text/html;charset=utf-8'); response.end(new URL(request.url,'http://localhost').searchParams.has('modern') ? modernFixture() : fixture()); return; }
       if (pathname === '/favicon.ico') { response.writeHead(204); response.end(); return; }
       const target = path.resolve(root, '.' + pathname);
       if (!target.startsWith(root + path.sep)) { response.writeHead(403); response.end(); return; }
@@ -144,6 +167,7 @@ async function main() {
       response.setHeader('Content-Type', mime[path.extname(target)] || 'application/octet-stream');
       // The initial HTML already says "idle"; delay the script to exercise the
       // source/channel handshake instead of accidentally clicking before setup.
+      if (pathname === '/island.js' && holdIslands) { heldIslands.add({response, data}); return; }
       if (pathname === '/island.js') await sleep(200);
       if (holdFonts && pathname.endsWith('.woff2')) { heldFonts.add({response, data}); return; }
       response.end(data);
@@ -152,6 +176,7 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = 'http://127.0.0.1:' + server.address().port;
   const releaseFonts = () => { holdFonts = false; for (const {response, data} of heldFonts) response.end(data); heldFonts.clear(); };
+  const releaseIslands = () => { holdIslands = false; for (const {response, data} of heldIslands) response.end(data); heldIslands.clear(); };
   try {
     child = spawn(browserBinary(), ['--headless=new','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-sync','--disable-extensions','--disable-component-update','--remote-debugging-address=127.0.0.1','--remote-debugging-port=0','--user-data-dir=' + profile,'--window-size=1000,900','--force-device-scale-factor=1','about:blank'], {windowsHide:true, stdio:['ignore','ignore','pipe']});
     let spawnError; child.on('error', error => { spawnError = error; }); child.stderr.on('data', data => { stderr = (stderr + data).slice(-6000); });
@@ -321,6 +346,42 @@ async function main() {
     reports.push({case:'auto-scroll virtualized history and arbitrary selection',...lazy});
     assert.deepEqual(await cdp.evaluate('window.testBridgeRequests'), [], 'PDF export must not request the conversation backend');
     assert(!requests.some(request => request.includes('/backend-api/')));
+    // The new public renderer has no <pre> or data-message-author-role, and
+    // its scroll root lives inside main with negative scrollTop coordinates.
+    holdIslands=true;
+    await cdp.call('Page.navigate',{url:origin+conversationPath+'?modern=1'});
+    await until(()=>heldIslands.size>0,'Delayed existing-chat diagram bootstrap');
+    const boot=await cdp.evaluate(`(()=>{const frame=document.querySelector('.latex-islands-container iframe'),loader=document.querySelector('.latex-islands-boot'),source=document.querySelector('[data-markdown-copy="code-block"]');return {sourceDisplay:getComputedStyle(source).display,frameVisibility:getComputedStyle(frame).visibility,height:frame.getBoundingClientRect().height,loaderHeight:loader.getBoundingClientRect().height,label:loader.querySelector('[role="status"]').textContent}})()`);
+    assert.equal(boot.sourceDisplay,'none','Existing code must be replaced before the renderer handshake');
+    assert.equal(boot.frameVisibility,'hidden','Do not flash an uninitialized iframe');
+    assert.equal(boot.height,222);assert.equal(boot.loaderHeight,boot.height);assert.match(boot.label,/Rendering diagram/);
+    shot=await cdp.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,'chatgpt-september-loading.png'),Buffer.from(shot.data,'base64'));
+    releaseIslands();
+    await until(()=>cdp.evaluate(`document.querySelector('.latex-islands-container iframe')?.contentDocument?.querySelector('.island')?.dataset.state==='ready'`),'September layout real TeX render',90000);
+    assert.equal(await cdp.evaluate(`document.querySelectorAll('.latex-islands-boot').length`),0,'The bootstrap loader leaves after the iframe is ready');
+    reports.push({case:'Existing-chat loader before renderer initialization',...boot});
+    const modernState=await cdp.evaluate(`(()=>{const frame=document.querySelector('.latex-islands-container iframe');return {messages:LatexIslandsChatGPT.getMessages().length,sourceHidden:document.querySelector('[data-markdown-copy="code-block"]').classList.contains('latex-islands-original-hidden'),header:!!document.querySelector('#modern-actions > .li-export'),reply:!!document.querySelector('.turn-action-controls > .li-export-reply'),theme:frame.contentDocument.documentElement.dataset.theme,oldRoles:document.querySelectorAll('[data-message-author-role]').length,oldPre:document.querySelectorAll('[data-chatgpt-conversation-selection-target] pre').length}})()`);
+    assert.equal(modernState.messages,2);assert(modernState.sourceHidden);assert(modernState.header);assert(modernState.reply);assert.equal(modernState.oldRoles,0);assert.equal(modernState.oldPre,0);
+    assert.equal(await cdp.evaluate(`getComputedStyle(document.querySelector('.li-export-toggle')).borderRadius`),'8px','header export must use the rounded-square control shape, even when toolbar token is fully round');
+    shot=await cdp.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,'chatgpt-september-inline.png'),Buffer.from(shot.data,'base64'));
+    await cdp.evaluate(`window.modernFrame=document.querySelector('.latex-islands-container iframe');window.modernFrame.contentDocument.getElementById('open-editor').click()`);
+    await until(()=>cdp.evaluate(`!!document.querySelector('.latex-islands-is-editing')`),'September sidebar-aware editor');
+    const editor=await cdp.evaluate(`(()=>{const r=document.querySelector('.latex-islands-is-editing').getBoundingClientRect(),s=document.querySelector('[data-app-action-timeline-scroll]').getBoundingClientRect();return {left:r.left,top:r.top,width:r.width,height:r.height,expectedLeft:s.left,expectedWidth:s.width,sameFrame:window.modernFrame===document.querySelector('.latex-islands-container iframe')};})()`);
+    assert.equal(editor.left,180);assert.equal(editor.left,editor.expectedLeft);assert.equal(editor.width,editor.expectedWidth);assert(editor.sameFrame);
+    await cdp.evaluate(`window.modernFrame.contentDocument.getElementById('close-editor').click()`);
+    await until(()=>cdp.evaluate(`!document.querySelector('.latex-islands-is-editing')`),'September editor close');
+    await cdp.evaluate(`document.querySelector('.li-export-toggle').click();const f=document.getElementById('li-export-format');f.value='pdf';f.dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('.li-export-inspect').click()`);
+    await until(()=>cdp.evaluate(`document.querySelectorAll('.li-export-pdf-preview .li-pdf-message').length===2&&document.querySelector('.li-export-panel').getAttribute('aria-busy')==='false'`),'September layout DOM PDF preview');
+    assert.equal(await cdp.evaluate(`document.querySelectorAll('.li-export-pdf-preview .li-pdf-island-image').length`),1);
+    assert.deepEqual(await cdp.evaluate(`(()=>{const b=document.querySelector('.li-export-pdf-preview [data-user-message-bubble]'),s=getComputedStyle(b);return {color:s.color,background:s.backgroundColor}})()`),{color:'rgb(23, 23, 23)',background:'rgb(245, 245, 245)'});
+    assert.deepEqual(await cdp.evaluate('window.testBridgeRequests'),[]);
+    shot=await cdp.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(output,'chatgpt-september-export.png'),Buffer.from(shot.data,'base64'));
+    reports.push({case:'September 26 public layout real render and DOM PDF preview',...modernState});
+    await cdp.evaluate(`(()=>{document.querySelector('.li-export-close').click();const root=document.querySelector('[data-chatgpt-conversation-selection-target]'),scroll=document.querySelector('[data-app-action-timeline-scroll]');root.style.cssText='height:2400px;position:relative;margin:0;padding:0';window.negativeWindows=[];
+      const paint=()=>{const distance=Math.max(0,scroll.scrollHeight-scroll.clientHeight+scroll.scrollTop),start=Math.max(0,Math.min(6,Math.floor(distance/200)-1));window.negativeWindows.push({start,top:scroll.scrollTop});root.replaceChildren(...Array.from({length:6},(_,offset)=>{const i=start+offset,n=document.createElement('div'),role=i%2?'assistant':'user';n.setAttribute('data-chatgpt-search-unit-key','fallback-turn-'+Math.floor(i/2)+':'+(i%2?2:0)+':'+role);n.setAttribute('data-chatgpt-search-message-ids','modern-'+i);n.style.cssText='position:absolute;top:'+(i*200)+'px;height:180px;margin:0';n.textContent='REVERSED_VISIBLE_MESSAGE_'+i;return n;}));};scroll.addEventListener('scroll',paint);paint();scroll.scrollTop=700-(scroll.scrollHeight-scroll.clientHeight);paint();window.negativeStart=scroll.scrollTop;})()`);
+    const reversed=await cdp.evaluate(`(async()=>{const c=await LatexIslandsPDF.collect();const r={keys:c.messages.map(m=>m.key),positions:window.negativeWindows.map(w=>w.top),windows:[...new Set(window.negativeWindows.map(w=>w.start))],restored:document.querySelector('[data-app-action-timeline-scroll]').scrollTop,initial:window.negativeStart};c.dispose();return r;})()`);
+    assert.deepEqual(reversed.keys,Array.from({length:12},(_,i)=>'message:modern-'+i));assert(reversed.windows.length>3);assert(reversed.positions.some(top=>top<0));assert.equal(reversed.restored,reversed.initial);
+    reports.push({case:'September reversed browser scroll and virtualized history',...reversed,editor});
     assert.deepEqual(cdp.errors, [], 'No browser exceptions');
     const report = {ok:true,browser,productionEngine:true,backendRequests:0,artifacts:output,cases:reports};
     await fs.writeFile(path.join(output, 'pdf-print-report.json'), JSON.stringify(report, null, 2));
@@ -329,7 +390,7 @@ async function main() {
     console.error(JSON.stringify({browserErrors:cdp?.errors,requests:requests.slice(-15),stderr}, null, 2));
     throw error;
   } finally {
-    releaseFonts();
+    releaseFonts();releaseIslands();
     if (cdp) { try { await cdp.call('Browser.close'); } catch {} cdp.socket.close(); }
     if (child && child.exitCode === null) { await Promise.race([new Promise(resolve => child.once('exit', resolve)), sleep(3000)]); if (child.exitCode === null) child.kill(); }
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

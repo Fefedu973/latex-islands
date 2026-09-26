@@ -1,4 +1,4 @@
-# Validation — 1.5.0
+# Validation — 1.5.1
 
 This file describes reproducible checks and their scope. It does not claim Chrome Web Store or Mozilla approval. No private conversations, account exports, HAR captures or credentials are part of the public fixtures.
 
@@ -22,6 +22,20 @@ node tests/firefox-smoke.mjs
 The Firefox smoke test requires Firefox installed locally. Set `FIREFOX_BINARY` to its executable if it is not at the default location. It copies `dist/firefox` into a temporary directory, installs that copy into a new temporary profile, runs headless, then removes its own test directory. The test copy adds a localhost fixture origin and reporting instrumentation; the release package and personal browser profiles are not modified.
 
 The font regression test requires Chrome or Edge (`CHROME_BINARY` can override discovery). It opens an isolated headless profile, serves the production island with a synthetic cached compilation, and deliberately delays bundled WOFF2 responses. It verifies that the loading indicator remains until the required faces load, then compares diagram pixels before and after hover in dark, light and native color modes. Screenshots and a report remain in the temporary directory printed by the test; the browser profile is removed.
+
+## Version 1.5.1 integration validation — 2026-09-26
+
+Read-only inspection of the current authenticated public ChatGPT page confirmed the new search-unit message attributes, code widgets without `<pre>`, `data-theme` palette, native titlebar actions and an inner timeline scroller using `flex-direction: column-reverse` with negative `scrollTop`. Temporary test conversations also confirmed that the composer stop button remains present during code streaming after the old streaming attributes disappear. The original conversation was reopened afterward.
+
+- All 309 unit/integration tests passed. The added cases cover the September markup and previous layouts, late hydration, hidden header clones and messages, remounting removed controls, streaming through the new composer, print lifecycle, reversed scrolling, message identity, PDF contrast and bounded recovery from temporary diagram-readiness failures. Loader tests cover immediate code replacement, source access on failure, manual rendering and stable height during re-rendering. Visual-only message changes retain the transcript cache and selection.
+- Chrome 154.0.8037.57 passed the browser regression using production scripts and the real TeX engine. Both conversation and single-reply PDFs still print; the new-layout fixture renders inline, mounts header/reply actions, follows the dark theme, opens the editor beside a 180 px sidebar and previews the captured diagram in the export dialog.
+- A real reversed browser scroller captured all twelve messages from overlapping virtualized windows, in chronological order, and restored `scrollTop` to -800. The older positive-scroll fixture also passed. Neither PDF fixture fetched a conversation API endpoint.
+- PDF preview screenshots were inspected. The new prompt bubble keeps readable dark text on a light background; copied SVG colors and embedded diagram fonts remain intact.
+- A delayed iframe-script browser test confirms that existing code is already hidden and a 222 px host loader is visible before the renderer connects. The initialized renderer then replaces that loader and compiles the diagram successfully.
+- Firefox 156.0 passed the temporary-extension smoke with the new message/code/header markup, real rendering, shared worker, live colors, popup and synthetic API export. Its real private-port PDF snapshot embeds fonts, the DOM preview image decodes, and mocked native-print cleanup preserves the iframe and permits a second snapshot. PDF adds no API request. Firefox package lint returned zero errors, zero notices and the existing Android-only compatibility warning.
+- After the user reloaded the unpacked build, the authenticated ChatGPT page contained nine rendered diagrams, one correctly mounted conversation export button and three native-toolbar reply PDF actions. The live Markdown preview loaded successfully and showed six messages.
+
+The long-history virtualization cases are synthetic and do not establish behavior for every ChatGPT rollout. Automated PDF verification on the authenticated Chrome page was inconclusive: the browser controller intermittently refused extension-frame access, and an empty `srcdoc` frame was observed before export. The extension does not set that attribute; no workaround strips it or weakens the frame checks. The production-script Chromium and real-extension Firefox tests above are separate from this live-browser limitation. No private conversation content, account identifiers or authentication data is included in the committed fixtures. Store approval remains separate from these checks.
 
 ## Version 1.5.0 release validation — 2026-09-24
 

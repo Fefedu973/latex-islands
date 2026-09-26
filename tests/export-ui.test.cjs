@@ -5,8 +5,9 @@ const path=require('node:path');
 const {JSDOM}=require(process.env.JSDOM_MODULE||'jsdom');
 const ROOT=path.resolve(__dirname,'..'),ID='01234567-89ab-4cde-8f01-23456789abcd',CHANNEL='latex-islands-conversation-export-v1';
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
-function harness(respond,pathname='/c/'+ID,saved={}){
-  const dom=new JSDOM('<!doctype html><header id="page-header"><div id="conversation-header-actions"><button id="native">Share</button></div></header><main><article data-message-author-role="assistant">A DOM message that must never be scraped.</article></main>',{url:'https://chatgpt.com'+pathname,runScripts:'outside-only'});
+const DEFAULT_PAGE='<header id="page-header"><div id="conversation-header-actions"><button id="native">Share</button></div></header><main><article data-message-author-role="assistant">A DOM message that must never be scraped.</article></main>';
+function harness(respond,pathname='/c/'+ID,saved={},html=DEFAULT_PAGE){
+  const dom=new JSDOM('<!doctype html>'+html,{url:'https://chatgpt.com'+pathname,runScripts:'outside-only'});
   const w=dom.window,sent=[],downloads=[],blobs=[],copied=[],stored=[];
   w.URL.createObjectURL=blob=>{blobs.push(blob);return 'blob:synthetic-'+blobs.length;};w.URL.revokeObjectURL=()=>{};
   w.HTMLAnchorElement.prototype.click=function(){downloads.push({name:this.download,url:this.href});};
@@ -14,13 +15,14 @@ function harness(respond,pathname='/c/'+ID,saved={}){
   w.chrome={storage:{local:{get:async defaults=>({...defaults,...saved}),set:async value=>stored.push(value)}}};
   function reply(request,data,overrides={}){w.dispatchEvent(new w.MessageEvent('message',{source:w,origin:w.location.origin,data:{channel:CHANNEL,type:'response',requestId:request.requestId,...data},...overrides}));}
   w.postMessage=(data,origin)=>{sent.push({data,origin});if(data.type==='request'&&respond)queueMicrotask(async()=>{const result=await respond(data,sent.filter(item=>item.data.type==='request').length);if(result)reply(data,result);});};
-  for(const file of ['export-core.js','export-preview-renderer.js','native-controls.js','conversation-export.js'])w.eval(fs.readFileSync(path.join(ROOT,file),'utf8'));
+  for(const file of ['chatgpt-dom.js','export-core.js','export-preview-renderer.js','native-controls.js','conversation-export.js'])w.eval(fs.readFileSync(path.join(ROOT,file),'utf8'));
   const get=selector=>w.document.querySelector(selector);
   function format(value){get('#li-export-format').value=value;get('#li-export-format').dispatchEvent(new w.Event('change',{bubbles:true}));}
   function change(selector,value){const input=get(selector);if(input.type==='checkbox')input.checked=value;else input.value=value;input.dispatchEvent(new w.Event('change',{bubbles:true}));}
   async function settle(){for(let i=0;i<10;i++)await tick();}
+  async function remount(){await new Promise(resolve=>setTimeout(resolve,280));await settle();}
   async function text(blob){return new Promise((resolve,reject)=>{const reader=new w.FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsText(blob);});}
-  return {w,sent,downloads,blobs,copied,stored,get,format,change,reply,settle,text,close:()=>w.close()};
+  return {w,sent,downloads,blobs,copied,stored,get,format,change,reply,settle,remount,text,close:()=>w.close()};
 }
 function apiPage(messages=[],has_previous_page=false,extra={}){return {messages,page_info:{has_previous_page,has_next_page:false,start_cursor:'before-1'},...extra};}
 const message=(id,role,text,extra={})=>({id,author:{role},content:{content_type:'text',parts:[text]},...extra});
@@ -53,6 +55,110 @@ test('header control is idempotent and option selection makes no request before 
   assert.equal(h.get('.li-export-toggle').getAttribute('aria-expanded'),'true');
   h.w.eval(fs.readFileSync(path.join(ROOT,'conversation-export.js'),'utf8'));assert.equal(h.w.document.querySelectorAll('.li-export').length,1);
   h.w.document.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(h.get('.li-export-panel').hidden,true);
+});
+
+function modernTitlebar(id,hidden=false){return `<div data-app-shell-main-titlebar="true" aria-hidden="${hidden}" data-testid="app-shell-header-context-menu-surface"><div data-app-shell-header-obstacle="true"><div class="pointer-events-auto" style="pointer-events:auto"><div id="${id}" class="flex items-center gap-toolbar-action"><span><button aria-label="Share">Share</button></span><button aria-label="More">More</button></div></div></div></div>`;}
+const MODERN_PAGE=`<header hidden><div id="conversation-header-actions"></div></header><main data-app-shell-main-surface="browser"><header data-app-shell-titlebar="true" style="pointer-events:none">${modernTitlebar('inactive-actions',true)}${modernTitlebar('active-actions')}<div data-app-shell-header-slot="end"></div></header><div data-content-search-turn-key="turn-user"><div id="modern-user" data-chatgpt-search-unit-key="turn-user:user"><div data-user-message-bubble>Current prompt</div></div></div><div data-content-search-turn-key="turn-answer"><div id="modern-reply" data-chatgpt-search-unit-key="turn-answer:assistant"><h4 data-conversation-role="assistant">ChatGPT</h4><div data-chatgpt-selection-message-id="modern-answer"><div data-markdown-text-style="assistant-message"><p id="modern-prose">Modern DOM answer</p></div></div></div><div id="native-reply-actions" class="turn-action-controls"><button aria-label="Copy">Copy</button><button aria-label="More">More</button></div></div></main>`;
+
+test('September app shell mounts in the active header and adds one PDF action to the native reply toolbar',async t=>{
+  const h=harness(null,'/c/'+ID,{},MODERN_PAGE);t.after(h.close);const pdf=installPDF(h);
+  assert.equal(h.get('.li-export').parentElement.id,'active-actions');assert.equal(h.get('.li-export').closest('[aria-hidden="true"],[hidden]'),null);
+  assert.equal(h.w.document.querySelectorAll('.li-export-reply').length,1);assert.equal(h.get('.li-export-reply').parentElement.id,'native-reply-actions');assert.equal(h.get('#modern-user .li-export-reply'),null);
+  h.get('.li-export-reply').click();h.get('.li-export-inspect').click();await h.settle();assert.equal(pdf.collects[0].replyElement,h.get('#modern-reply'));assert.equal(h.sent.filter(item=>item.data.type==='request').length,0);
+  await h.remount();assert.equal(h.w.document.querySelectorAll('.li-export-reply').length,1);
+});
+
+test('header visibility switches and replacement preserve the export dialog and its chosen options',async t=>{
+  const h=harness(null,'/c/'+ID,{},MODERN_PAGE);t.after(h.close);
+  const original=h.get('.li-export');h.get('.li-export-toggle').click();h.change('#li-export-preset','answers');
+  h.get('#active-actions').closest('[data-app-shell-main-titlebar]').setAttribute('aria-hidden','true');h.get('#inactive-actions').closest('[data-app-shell-main-titlebar]').setAttribute('aria-hidden','false');await h.remount();
+  assert.equal(original.parentElement.id,'inactive-actions');assert.equal(h.get('.li-export-panel').hidden,false);assert.equal(h.get('#li-export-preset').value,'answers');
+  h.get('main header').innerHTML=modernTitlebar('replacement-actions');await h.remount();
+  assert.equal(h.get('.li-export'),original);assert.equal(original.parentElement.id,'replacement-actions');assert.equal(h.get('.li-export-panel').hidden,false);
+  assert.equal(h.w.document.querySelectorAll('.li-export-toggle').length,1);assert.equal(h.sent.length,0);
+});
+
+test('role-only hydration mounts PDF actions and removing the assistant role removes them',async t=>{
+  const page='<header id="conversation-header-actions"></header><main><article id="late">A late message</article><div id="new-late">Another late message</div></main>';
+  const h=harness(null,'/c/'+ID,{},page);t.after(h.close);assert.equal(h.get('.li-export-reply'),null);
+  h.get('#late').setAttribute('data-message-author-role','assistant');h.get('#new-late').setAttribute('data-chatgpt-search-unit-key','hydrated:assistant');await h.remount();
+  assert.equal(h.w.document.querySelectorAll('.li-export-reply').length,2);
+  h.get('#late').setAttribute('data-message-author-role','user');h.get('#new-late').setAttribute('data-chatgpt-search-unit-key','hydrated:user');await h.remount();assert.equal(h.get('.li-export-reply'),null);
+});
+
+test('a detached native reply toolbar is replaced without losing or duplicating its PDF action',async t=>{
+  const h=harness(null,'/c/'+ID,{},MODERN_PAGE);t.after(h.close);const original=h.get('.li-export-reply');
+  const toolbar=h.get('#native-reply-actions'),next=h.w.document.createElement('div');next.id='next-reply-actions';next.className='turn-action-controls';next.innerHTML='<button aria-label="Copy">Copy</button>';toolbar.replaceWith(next);await h.remount();
+  assert.equal(h.get('.li-export-reply'),original);assert.equal(original.parentElement,next);assert.equal(h.w.document.querySelectorAll('.li-export-reply').length,1);
+});
+
+test('removing only injected controls restores their original nodes without duplicates',async t=>{
+  const h=harness(null,'/c/'+ID,{},MODERN_PAGE);t.after(h.close);
+  const root=h.get('.li-export'),action=h.get('.li-export-reply');
+  root.remove();action.remove();await h.remount();
+  assert.equal(h.get('#active-actions > .li-export'),root);assert.equal(h.get('#native-reply-actions > .li-export-reply'),action);
+  await h.remount();assert.equal(h.w.document.querySelectorAll('.li-export').length,1);assert.equal(h.w.document.querySelectorAll('.li-export-reply').length,1);
+  h.w.history.pushState({},'','/');h.w.dispatchEvent(new h.w.PopStateEvent('popstate'));await h.remount();
+  assert.equal(h.get('.li-export'),null);assert.equal(h.get('.li-export-reply'),null);
+});
+
+test('new message content and identity mutations invalidate the API snapshot without scraping its displayed text',async t=>{
+  const h=harness(async()=>({ok:true,payload:apiPage([message('a','assistant','Server answer')])}),'/c/'+ID,{},MODERN_PAGE);t.after(h.close);
+  h.get('.li-export-inspect').click();await h.settle();assert.equal(h.sent.filter(item=>item.data.type==='request').length,1);
+  h.get('#modern-prose').firstChild.data+=' changed';await h.settle();assert.match(h.get('.li-export-status').textContent,/conversation has changed/);
+  h.get('.li-export-save').click();await h.settle();assert.equal(h.sent.filter(item=>item.data.type==='request').length,2);assert.doesNotMatch(await h.text(h.blobs.at(-1)),/Modern DOM answer/);
+  h.get('[data-chatgpt-selection-message-id]').setAttribute('data-chatgpt-selection-message-id','regenerated-answer');await h.settle();assert.match(h.get('.li-export-status').textContent,/conversation has changed/);
+});
+
+test('visual class and style changes keep the API snapshot and explicit message selection',async t=>{
+  const h=harness(async()=>({ok:true,payload:apiPage([message('q','user','Server prompt'),message('a','assistant','Server answer')])}),'/c/'+ID,{},MODERN_PAGE);t.after(h.close);
+  h.get('.li-export-toggle').click();h.get('.li-export-choose-messages').click();await h.settle();h.get('.li-export-select-none').click();choose(h,'a');
+  h.get('#modern-prose').style.opacity='.95';h.get('#modern-prose').classList.add('hovered');h.get('#modern-reply').style.color='red';await h.remount();
+  assert.equal(h.get('.li-export-status').dataset.state,'success');assert.equal(h.get('.li-export-status').textContent,'');assert.equal(h.get('.li-export-selection-count').textContent,'1 / 2');
+  h.get('.li-export-save').click();await h.settle();assert.equal(h.sent.filter(item=>item.data.type==='request').length,1);
+  const file=await h.text(h.blobs[0]);assert.match(file,/Server answer/);assert.doesNotMatch(file,/Server prompt/);
+});
+
+test('styles that hide a message still invalidate the API snapshot',async t=>{
+  const h=harness(async()=>({ok:true,payload:apiPage([message('a','assistant','Server answer')])}),'/c/'+ID,{},MODERN_PAGE);t.after(h.close);
+  h.get('.li-export-inspect').click();await h.settle();h.get('#modern-reply').style.display='none';await h.settle();
+  assert.equal(h.get('.li-export-status').dataset.state,'stale');h.get('.li-export-save').click();await h.settle();assert.equal(h.sent.filter(item=>item.data.type==='request').length,2);
+});
+
+test('a legacy streaming class transition still invalidates the API snapshot',async t=>{
+  const h=harness(async()=>({ok:true,payload:apiPage([message('a','assistant','Server answer')])}));t.after(h.close);
+  h.get('main article').classList.add('result-streaming');await h.remount();h.get('.li-export-inspect').click();await h.settle();
+  h.get('main article').classList.remove('result-streaming');await h.settle();assert.equal(h.get('.li-export-status').dataset.state,'stale');
+});
+
+test('the fallback stays accessible when its former header becomes hidden',async t=>{
+  const h=harness();t.after(h.close);h.get('#page-header').hidden=true;await h.remount();
+  assert.equal(h.get('.li-export').parentElement,h.w.document.body);assert.equal(h.get('.li-export').classList.contains('li-export-fallback'),true);
+});
+
+test('PDF print visibility keeps the export controls, dialog and message selection in place',async t=>{
+  const h=harness(null,'/c/'+ID,{},MODERN_PAGE);t.after(h.close);const pdf=installPDF(h);
+  h.get('.li-export-toggle').click();h.format('pdf');h.get('.li-export-choose-messages').click();await h.settle();
+  h.get('.li-export-select-none').click();choose(h,'a2');await h.settle();
+  const root=h.get('.li-export'),parent=root.parentElement,action=h.get('.li-export-reply'),panel=h.get('.li-export-panel');
+  const style=h.w.document.createElement('style');style.textContent='body.li-pdf-printing > :not(.li-pdf-active) { display:none !important; }';h.w.document.head.append(style);
+  h.w.document.body.classList.add('li-pdf-printing');await h.remount();
+  assert.equal(h.w.LatexIslandsChatGPT.getMessages().length,0);
+  assert.equal(root.parentElement,parent);assert.equal(h.get('.li-export-reply'),action);assert.equal(action.isConnected,true);
+  assert.equal(panel.hidden,false);assert.equal(h.get('.li-export-message-choice input[data-message-key="a2"]').checked,true);assert.equal(pdf.captures[0].disposed,false);
+  h.w.document.body.classList.remove('li-pdf-printing');await h.remount();
+  assert.equal(root.parentElement,parent);assert.equal(h.get('.li-export-reply'),action);assert.equal(panel.hidden,false);assert.equal(pdf.collects.length,1);
+  assert.equal(h.get('.li-export-selection-count').textContent,'1 / 4');
+});
+
+test('navigation during PDF printing is cleaned up when print visibility ends',async t=>{
+  const h=harness();t.after(h.close);const pdf=installPDF(h);
+  h.get('.li-export-toggle').click();h.format('pdf');h.get('.li-export-inspect').click();await h.settle();
+  const root=h.get('.li-export'),panel=h.get('.li-export-panel');
+  h.w.document.body.classList.add('li-pdf-printing');h.w.history.pushState({},'','/');h.w.dispatchEvent(new h.w.PopStateEvent('popstate'));await h.remount();
+  assert.equal(root.isConnected,true);assert.equal(panel.hidden,false);assert.equal(pdf.captures[0].disposed,false);
+  h.w.document.body.classList.remove('li-pdf-printing');await h.remount();
+  assert.equal(root.isConnected,false);assert.equal(panel.hidden,true);assert.equal(pdf.captures[0].disposed,true);assert.equal(h.get('.li-export-reply'),null);
 });
 
 test('JSON ignores transcript filters and downloads the complete API archive after all pages finish',async t=>{

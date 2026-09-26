@@ -2,12 +2,13 @@
 (() => {
   'use strict';
   if (globalThis.LatexIslandsPDF) return;
-  const MESSAGE = '[data-message-author-role="user"], [data-message-author-role="assistant"]';
+  const chatgpt = globalThis.LatexIslandsChatGPT;
   const OWN = '.li-export, .li-export-reply, .latex-islands-editor';
-  const STREAMING = '[data-is-streaming="true"], .result-streaming, .streaming-animation, [aria-busy="true"]';
-  const OMIT = 'script, style, link, meta, base, iframe, object, embed, form, input, textarea, select, button, dialog, nav, [role="button"], [role="toolbar"], [role="menu"], [contenteditable="true"], [data-testid="composer"], .li-export, .li-export-reply, .latex-islands-editor, animate, animateMotion, animateTransform, set';
+  const OMIT = 'script, style, link, meta, base, iframe, object, embed, form, input, textarea, select, button, dialog, nav, [role="button"], [role="toolbar"], [role="menu"], [contenteditable="true"], [data-testid="composer"], [data-markdown-copy="exclude"], h4[data-conversation-role], .li-export, .li-export-reply, .latex-islands-editor, animate, animateMotion, animateTransform, set';
   const ASSET_TIMEOUT = 15000;
   const HISTORY_TIMEOUT = 600000, MAX_SCROLL_STEPS = 2000;
+  const MAX_CAPTURE_RETRIES = 2;
+  const transientCaptureError = message => /still loading|still rendering|not ready|wait for .*render|finish rendering|did not finish loading|diagram is unavailable/i.test(message || '');
   const captures = new WeakMap(), elementKeys = new WeakMap(), copyVersions = new WeakMap();
   let sequence = 0, activePrint = null;
   const make = (tag, className, text) => { const node = document.createElement(tag); if (className) node.className = className; if (text) node.textContent = text; return node; };
@@ -56,6 +57,9 @@
       const value = clone.style.getPropertyValue(property).replace(/url\(\s*['"]?#[\w:.-]+['"]?\s*\)/g, '');
       if (/url\s*\(|expression\s*\(|@import|behavior|javascript:/i.test(value)) clone.style.removeProperty(property);
     }
+    // A copied HTML theme boundary must not reintroduce dark paper surfaces.
+    // SVG paint is captured from the live source separately and stays intact.
+    if (source.namespaceURI === 'http://www.w3.org/1999/xhtml' && /^(dark|light|system)$/.test(clone.getAttribute('data-theme') || '')) clone.setAttribute('data-theme', 'light');
     if (clone.localName === 'a') { clone.setAttribute('rel', 'noopener noreferrer'); clone.removeAttribute('target'); }
     if (clone.localName === 'img') {
       const src = url(source.currentSrc || source.getAttribute('src'), true);
@@ -127,7 +131,7 @@
   function cloneContent(element, replacements, removed) {
     if (element.nodeType === Node.TEXT_NODE) return document.createTextNode(element.data);
     if (element.nodeType !== Node.ELEMENT_NODE) return null;
-    if (replacements.has(element)) return element.matches('pre, code, .katex-error') ? diagramImage(replacements.get(element)) : rawDiagram(element, replacements.get(element));
+    if (replacements.has(element)) return element.matches('pre, code, .katex-error, [data-markdown-copy="code-block"]') ? diagramImage(replacements.get(element)) : rawDiagram(element, replacements.get(element));
     const containsDiagram = [...replacements.keys()].some(source => element.contains(source));
     if (element.matches('button, [role="button"]') && !element.closest('[role="toolbar"], nav, ' + OWN) && visible(element) && !removed.has(element)) {
       // Generated pictures open a viewer through a button-shaped card. Preserve
@@ -146,9 +150,9 @@
       try { image.src = element.toDataURL('image/png'); } catch { throw Error('A canvas in this reply cannot be read for PDF export.'); }
       image.alt = element.getAttribute('aria-label') || 'Chart'; image.width = element.width; image.height = element.height; return image;
     }
-    // ChatGPT code widgets contain copy/download controls and nested <pre>s.
+    // ChatGPT code widgets may use nested <pre>s or a plain <code> in a div.
     // Retain the actual highlighted code and CodeMirror line boundaries only.
-    if (element.localName === 'pre' && !containsDiagram && !element.closest('pre pre')) {
+    if (element.matches('pre, [data-markdown-copy="code-block"]') && !containsDiagram && !element.closest('pre pre')) {
       const content = element.querySelector('.cm-content, code');
       if (content) {
         const pre = make('pre'), code = make('code');
@@ -206,10 +210,12 @@
     return `
 #${id} { display:none !important; }
 #${id} { --text-primary:#171717; --text-secondary:#555; --text-tertiary:#666; --bg-primary:#fff; --bg-secondary:#f5f5f5; --border-light:#ddd; --border-default:#ccc; --tw-prose-body:#171717; --tw-prose-headings:#171717; --tw-prose-bold:#171717; --tw-prose-code:#171717; --tw-prose-links:#171717; color-scheme:light; color:#171717; background:#fff; font:11pt/1.55 system-ui,sans-serif; text-align:left; }
+#${id}, #${id} .li-pdf-content [data-theme]:not(svg *) { --color-text-primary:#171717; --color-text-secondary:#555; --color-text-tertiary:#666; --color-surface-base:#fff; --color-surface-primary:#fff; --color-surface-secondary:#f5f5f5; --color-surface-tertiary:#eee; --color-surface-elevated:#fff; --color-surface-elevated-secondary:#f5f5f5; --color-surface-hover:#eee; --color-token-main-surface-primary:#fff; --color-border-subtle:#ddd; --color-border-default:#ccc; color-scheme:light; }
 #${id} .li-pdf-title { font-size:20pt; line-height:1.25; margin:0 0 18pt; font-weight:650; }
 #${id} .li-pdf-message { margin:0 0 20pt; padding:0; break-inside:auto; }
 #${id} .li-pdf-role { font-size:9pt; font-weight:650; color:#555; margin:0 0 7pt; padding-top:10pt; border-top:1px solid #ddd; break-after:avoid; }
 #${id} .li-pdf-content { font-size:11pt; line-height:1.55; }
+#${id} .li-pdf-content [data-user-message-bubble]:not(svg *) { color:#171717 !important; background:#f5f5f5 !important; border-color:#ddd !important; }
 #${id} .li-pdf-content :is(div, section, article):not(svg *) { max-width:100% !important; max-height:none !important; height:auto !important; overflow:visible !important; position:static !important; }
 #${id} .li-pdf-content :is(p, ul, ol, blockquote, pre, table) { margin-top:8pt; margin-bottom:8pt; }
 #${id} .li-pdf-content :is(h1,h2,h3,h4,h5,h6) { break-after:avoid; }
@@ -246,16 +252,10 @@
     return Boolean(core && [...element.querySelectorAll('pre, code, .katex-error')].some(node => core.detectKind(node.getAttribute('data-latex') || node.textContent)));
   }
   function pageMessages() {
-    const main = document.querySelector('main, [role="main"]');
-    return [...main?.querySelectorAll(MESSAGE) || []].filter(element => {
-      if (element.closest(OWN) || element.parentElement?.closest(MESSAGE)) return false;
-      for (let parent = element; parent && parent !== main; parent = parent.parentElement) if (!visible(parent)) return false;
-      return true;
-    });
+    return chatgpt.getMessages().filter(element => !element.closest(OWN));
   }
   function messageKey(element) {
-    const owner = element.closest('[data-message-id]') || element.querySelector('[data-message-id]');
-    const id = owner?.getAttribute('data-message-id');
+    const id = chatgpt.messageId(element);
     if (id) return 'message:' + id;
     if (!elementKeys.has(element)) elementKeys.set(element, 'dom:' + (++sequence));
     return elementKeys.get(element);
@@ -266,18 +266,18 @@
   function messageText(element) {
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     let node, text = '';
-    while ((node = walker.nextNode())) if (!node.parentElement?.closest(OMIT + ', ' + OWN)) text += node.data;
+    // The host loader changes while the iframe connects; it is extension UI,
+    // not a streamed change to the user's actual message or source code.
+    while ((node = walker.nextNode())) if (!node.parentElement?.closest(OMIT + ', ' + OWN + ', .latex-islands-container')) text += node.data;
     return text;
   }
   function turnIndex(element) {
-    const match = element.closest('[data-testid^="conversation-turn-"]')?.getAttribute('data-testid').match(/^conversation-turn-(\d+)$/);
-    return match ? Number(match[1]) : null;
+    return chatgpt.turnIndex(element);
   }
   const conversationURL = () => location.origin + location.pathname;
   const conversationTitle = () => (document.title || '').replace(/\s*[-–|]\s*ChatGPT\s*$/i, '').trim() || 'ChatGPT conversation';
-  function assertFinished(selected, messages = pageMessages()) {
-    const lastAssistant = messages.filter(element => element.getAttribute('data-message-author-role') === 'assistant').at(-1);
-    if (selected.some(element => element.closest(STREAMING) || element.querySelector(STREAMING) || (element === lastAssistant && document.querySelector('[data-testid="stop-button"]')))) throw Error('Wait for the selected reply to finish generating before exporting to PDF.');
+  function assertFinished(selected) {
+    if (selected.some(element => chatgpt.isStreaming(element))) throw Error('Wait for the selected reply to finish generating before exporting to PDF.');
   }
   function pause(ms, signal) {
     check(signal);
@@ -310,7 +310,7 @@
         if (waitForDiagram && hasIsland(source) && !snapshots.length) throw Error('A LaTeX Island is not ready.');
         break;
       } catch (error) {
-        if (!waitForDiagram || Date.now() >= deadline || !/still loading|still rendering|not ready|wait for .*render|finish rendering|diagram is unavailable/i.test(error.message)) throw error;
+        if (!waitForDiagram || Date.now() >= deadline || !transientCaptureError(error.message)) throw error;
         await pause(150, signal);
       }
     }
@@ -322,7 +322,7 @@
       if (snapshot.containerElement) removed.add(snapshot.containerElement);
     }
     const copiedMedia = mediaSignature(source);
-    const section = make('section', 'li-pdf-message'), role = source.getAttribute('data-message-author-role');
+    const section = make('section', 'li-pdf-message'), role = chatgpt.role(source);
     section.append(make('h2', 'li-pdf-role', role === 'user' ? 'You' : 'ChatGPT'));
     const content = make('div', 'li-pdf-content'), copy = cloneContent(source, replacements, removed);
     if (copy) content.append(copy);
@@ -337,15 +337,9 @@
     copyVersions.set(section, {text:originalText, media:copiedMedia});
     return section;
   }
-  function scrollRoot(main, messages) {
-    for (let node = messages[0]?.parentElement || main; node && node !== document.body; node = node.parentElement) {
-      if (node.scrollHeight > node.clientHeight + 2 && /^(auto|scroll)$/.test(getComputedStyle(node).overflowY)) return node;
-    }
-    return document.scrollingElement || document.documentElement;
-  }
   function loadingHistory(main, scroller) {
     const scope = scroller === document.documentElement || scroller === document.body ? document.body : scroller;
-    return [...scope.querySelectorAll('[aria-busy="true"], [role="progressbar"], [data-testid*="loading"], [data-testid*="spinner"]')].some(node => !node.closest(MESSAGE + ', ' + OWN) && visible(node)) || main?.getAttribute('aria-busy') === 'true';
+    return [...scope.querySelectorAll('[aria-busy="true"], [role="progressbar"], [data-testid*="loading"], [data-testid*="spinner"]')].some(node => !node.closest(OWN) && !chatgpt.getMessage(node) && visible(node)) || main?.getAttribute('aria-busy') === 'true';
   }
   async function settleHistory(main, scroller, signal, sourceURL) {
     const deadline = Date.now() + ASSET_TIMEOUT;
@@ -362,14 +356,14 @@
     throw Error('The conversation history did not finish loading. Wait for ChatGPT and try again.');
   }
   function replySelection(replyElement, messages, includePrecedingPrompt) {
-    const reply = replyElement.closest?.('[data-message-author-role="assistant"]') || replyElement.querySelector?.('[data-message-author-role="assistant"]');
-    if (!reply || !messages.includes(reply)) throw Error('This reply is no longer on the page. Open it again before exporting.');
-    const prompt = includePrecedingPrompt ? messages.slice(0, messages.indexOf(reply)).findLast(element => element.getAttribute('data-message-author-role') === 'user') : null;
+    const reply = chatgpt.getMessage(replyElement) || chatgpt.getMessages(replyElement).find(element => chatgpt.role(element) === 'assistant');
+    if (!reply || chatgpt.role(reply) !== 'assistant' || !messages.includes(reply)) throw Error('This reply is no longer on the page. Open it again before exporting.');
+    const prompt = includePrecedingPrompt ? messages.slice(0, messages.indexOf(reply)).findLast(element => chatgpt.role(element) === 'user') : null;
     return prompt ? [prompt, reply] : [reply];
   }
   async function collect({replyElement = null, includePrecedingPrompt = true, signal, onProgress = () => {}} = {}) {
     check(signal);
-    const sourceURL = conversationURL(), title = conversationTitle(), main = document.querySelector('main, [role="main"]'), collectionDeadline = Date.now() + HISTORY_TIMEOUT;
+    const sourceURL = conversationURL(), title = conversationTitle(), main = chatgpt.getConversationRoot(), collectionDeadline = Date.now() + HISTORY_TIMEOUT;
     if (!main) throw Error('There are no rendered messages to export on this page.');
     let messages = pageMessages();
     const records = new Map(), order = [], initialReply = replyElement ? replySelection(replyElement, messages, includePrecedingPrompt) : null;
@@ -384,41 +378,53 @@
       for (const element of windowMessages) {
         check(signal);
         if (Date.now() > collectionDeadline) throw Error('The conversation is too long to capture safely in one pass. Try again.');
-        const key = messageKey(element), old = records.get(key);
+        const key = messageKey(element), old = records.get(key), currentMedia = mediaSignature(element);
+        const unchangedMedia = old?.mediaSignature === currentMedia;
         if (old) {
           if (old.originalText !== messageText(element)) throw Error('The conversation changed while loading its history. Try again.');
-          if (old.mediaSignature === mediaSignature(element)) continue;
+          if (unchangedMedia && (!old.error || !transientCaptureError(old.error) || old.retryCount >= MAX_CAPTURE_RETRIES)) continue;
         }
         let content = null, error = '';
-        try { assertFinished([element]); content = await copyMessage(element, signal, true); }
+        const retryCount = old?.error && unchangedMedia ? old.retryCount + 1 : 0;
+        // An iframe can become ready without changing its parent's DOM. Retry
+        // transient failures when revisiting it, but do not repeat a full
+        // readiness wait at every viewport or keep retrying invalid TeX.
+        const messageDeadline = Math.min(collectionDeadline, Date.now() + (retryCount ? 0 : ASSET_TIMEOUT));
+        try { assertFinished([element]); content = await copyMessage(element, signal, true, messageDeadline); }
         catch (failure) {
           if (failure.name === 'AbortError' || /conversation changed|diagram or conversation changed/i.test(failure.message) || !element.isConnected || sourceURL !== conversationURL()) throw failure;
           error = failure.message || 'This message could not be captured for PDF export.';
         }
-        const role = element.getAttribute('data-message-author-role');
+        const role = chatgpt.role(element);
         const copiedVersion = content && copyVersions.get(content);
-        records.set(key, {key, role, content, error, originalText:copiedVersion?.text ?? messageText(element), turnIndex:turnIndex(element), mediaSignature:copiedVersion?.media ?? mediaSignature(element), preview:(content?.querySelector('.li-pdf-content').textContent || messageText(element)).replace(/\s+/g, ' ').trim().slice(0, 180)});
+        records.set(key, {key, role, content, error, retryCount, originalText:copiedVersion?.text ?? messageText(element), turnIndex:turnIndex(element), mediaSignature:copiedVersion?.media ?? mediaSignature(element), preview:(content?.querySelector('.li-pdf-content').textContent || messageText(element)).replace(/\s+/g, ' ').trim().slice(0, 180)});
         if (!old) order.push(key); onProgress({phase:'messages', completed:order.length, total:null});
       }
     }
     if (initialReply) await captureWindow(initialReply);
     else {
-      const scroller = scrollRoot(main, messages), originalTop = scroller.scrollTop, originalLeft = scroller.scrollLeft;
+      const scroller = chatgpt.getScrollRoot(messages[0] || main), originalTop = scroller.scrollTop, originalLeft = scroller.scrollLeft;
       const oldBehavior = scroller.style.getPropertyValue('scroll-behavior'), oldPriority = scroller.style.getPropertyPriority('scroll-behavior');
       const deadline = collectionDeadline;
+      const reverse = getComputedStyle(scroller).flexDirection === 'column-reverse';
+      const maximum = () => Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      // Reverse flex scrollers use negative scrollTop for older history and
+      // zero at the newest messages. Traverse in chronological coordinates.
+      const position = () => Math.max(0, Math.min(maximum(), reverse ? maximum() + scroller.scrollTop : scroller.scrollTop));
       scroller.style.setProperty('scroll-behavior', 'auto', 'important');
-      const move = top => { if (typeof scroller.scrollTo === 'function') scroller.scrollTo({top, left:originalLeft, behavior:'instant'}); else scroller.scrollTop = top; };
+      const moveRaw = top => { if (typeof scroller.scrollTo === 'function') scroller.scrollTo({top, left:originalLeft, behavior:'instant'}); else scroller.scrollTop = top; };
+      const move = top => moveRaw(reverse ? top - maximum() : top);
       try {
         onProgress({phase:'history', completed:0, total:null});
-        // Staying at zero allows ChatGPT's own lazy-loading to prepend older
-        // turns. Require a stable top before beginning the downward traversal.
+        // Recompute the oldest position after each load because adding turns
+        // changes the negative limit of a reverse scroller.
         let topStable = 0, topSignature = '';
         for (let attempt = 0; attempt < 30 && topStable < 2; attempt++) {
           if (Date.now() > deadline) throw Error('The conversation is too long to capture safely in one pass. Try again.');
           move(0); messages = await settleHistory(main, scroller, signal, sourceURL);
           const signature = scroller.scrollHeight + ':' + messages.map(messageKey).join('|');
           const firstTurn = messages.length ? turnIndex(messages[0]) : null;
-          topStable = scroller.scrollTop <= 2 && (firstTurn === null || firstTurn === 0) && signature === topSignature ? topStable + 1 : 0; topSignature = signature;
+          topStable = position() <= 2 && (firstTurn === null || firstTurn === 0) && signature === topSignature ? topStable + 1 : 0; topSignature = signature;
         }
         if (topStable < 2) throw Error('Could not reach the beginning of the conversation. Load the earlier messages and try again.');
         if ([...main.querySelectorAll('button')].some(button => visible(button) && /(?:load|show) (?:older|earlier|previous|more) messages|charger .*messages|afficher .*messages précédents/i.test(button.textContent))) throw Error('ChatGPT is asking to load earlier messages. Load them first, then try exporting again.');
@@ -428,12 +434,12 @@
           messages = await settleHistory(main, scroller, signal, sourceURL);
           if (!messages.length) throw Error('ChatGPT has not loaded this part of the conversation. Try again.');
           await captureWindow(messages);
-          const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight), atBottom = scroller.scrollTop >= maximum - 2;
-          const signature = maximum + ':' + messages.map(messageKey).join('|');
+          const limit = maximum(), current = position(), atBottom = current >= limit - 2;
+          const signature = limit + ':' + messages.map(messageKey).join('|');
           bottomStable = atBottom && signature === lastBottom ? bottomStable + 1 : 0; lastBottom = signature;
           if (bottomStable >= 2) { finished = true; break; }
-          const next = atBottom ? maximum : Math.min(maximum, scroller.scrollTop + Math.max(1, scroller.clientHeight * .6));
-          if (!atBottom && (scroller.clientHeight <= 0 || next <= scroller.scrollTop)) throw Error('Could not scroll through the complete conversation. Try again.');
+          const next = atBottom ? limit : Math.min(limit, current + Math.max(1, scroller.clientHeight * .6));
+          if (!atBottom && (scroller.clientHeight <= 0 || next <= current)) throw Error('Could not scroll through the complete conversation. Try again.');
           move(next);
         }
         if (!finished) throw Error('Could not reach the end of the conversation safely. Try again.');
@@ -443,7 +449,7 @@
           if (unique[0] !== 0 || unique.some((index, position) => position && index !== unique[position - 1] + 1)) throw Error('Some conversation turns are missing from the rendered history. Load the conversation again before exporting.');
         }
       } finally {
-        if (scroller.isConnected && sourceURL === conversationURL()) { move(originalTop); scroller.scrollLeft = originalLeft; }
+        if (scroller.isConnected && sourceURL === conversationURL()) { moveRaw(originalTop); scroller.scrollLeft = originalLeft; }
         if (oldBehavior) scroller.style.setProperty('scroll-behavior', oldBehavior, oldPriority); else scroller.style.removeProperty('scroll-behavior');
       }
     }
@@ -470,8 +476,8 @@
     if (stored) selected = stored.order.filter(key => (!wanted || wanted.has(key)) && acceptsRole(stored.records.get(key).role));
     else {
       selected = replyElement ? replySelection(replyElement, messages, includePrecedingPrompt) : messages;
-      selected = selected.filter(element => (!wanted || wanted.has(messageKey(element))) && acceptsRole(element.getAttribute('data-message-author-role')));
-      assertFinished(selected, messages);
+      selected = selected.filter(element => (!wanted || wanted.has(messageKey(element))) && acceptsRole(chatgpt.role(element)));
+      assertFinished(selected);
     }
     if (!selected.length) throw Error('There are no rendered messages to export on this page.');
     if (stored) for (const key of selected) if (stored.records.get(key).error) throw Error(stored.records.get(key).error);

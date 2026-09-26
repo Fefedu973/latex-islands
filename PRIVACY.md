@@ -1,6 +1,6 @@
 # Privacy policy
 
-Applies to LaTeX Islands 1.5.0. Last updated: 2026-09-24.
+Applies to LaTeX Islands 1.5.1. Last updated: 2026-09-26.
 
 LaTeX Islands is an independent browser extension maintained through [Fefedu973/latex-islands](https://github.com/Fefedu973/latex-islands). It provides local diagram rendering and user-requested export of the current ChatGPT conversation.
 

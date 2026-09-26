@@ -2,14 +2,13 @@
 (() => {
   'use strict';
   if (globalThis.__latexIslandsContentLoaded) return;
+  const core = globalThis.LatexIslandsCore, chatgpt = globalThis.LatexIslandsChatGPT;
+  if (!core || !chatgpt || !globalThis.chrome?.runtime) return;
   globalThis.__latexIslandsContentLoaded = true;
-  const core = globalThis.LatexIslandsCore;
-  if (!core || !globalThis.chrome?.runtime) return;
   const CHANNEL = 'latex-islands', MAX_SOURCE = 60000, SETTLE_MS = 180;
   const EXTENSION_ORIGIN = chrome.runtime.getURL('').replace(/\/$/, '');
-  const assistantSelector = '[data-message-author-role="assistant"]';
   const excludedSelector = 'textarea, input, [contenteditable="true"], [role="textbox"], #prompt-textarea, [data-testid="composer"]';
-  const streamingSelector = '[data-is-streaming="true"], .result-streaming, .streaming-animation, [aria-busy="true"]';
+  const codeSelector = 'pre, .cm-content, [data-markdown-copy="code-block"]';
   const states = new Map(), ids = new Map(), dirty = new Set();
   const snapshots = new Map(), MAX_SNAPSHOT = 10 * 1024 * 1024;
   let snapshotSequence = 0;
@@ -27,45 +26,27 @@
     const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
     return Boolean(el?.closest('.latex-islands-container, .latex-islands-editor, .li-export, .li-export-reply, .li-pdf-root'));
   }
+  function assistantFor(node) {
+    const message=chatgpt.getMessage(node);
+    return message && chatgpt.role(message)==='assistant'?message:null;
+  }
+  function assistantsWithin(root) {return chatgpt.getMessages(root).filter(message=>chatgpt.role(message)==='assistant' && !ownNode(message));}
+  function printingPDF() {return document.body?.classList.contains('li-pdf-printing');}
   function currentSource(el, type) {
     if (type === 'error') return [el.getAttribute('data-latex'), el.textContent, el.getAttribute('title')].find(v => v && core.detectKind(v)) || '';
     if(type === 'raw') return el.textContent || '';
-    const content=el.querySelector('code') || (el.matches('.cm-content')?el:el.querySelector('.cm-content')) || el;
-    const lines=content.querySelectorAll('.cm-line');
-    // CodeMirror can represent newlines as block elements. textContent would join
-    // them and let a TeX % comment swallow the remainder of the diagram.
-    return lines.length?[...lines].map(line=>line.textContent || '').join('\n'):content.textContent || '';
-  }
-  function language(el) {
-    const code = el.querySelector('code') || el;
-    const value = String(code.className || '').match(/(?:^|\s)language-([^\s]+)/);
-    if (value) return value[1];
-    const explicit = code.getAttribute('data-language') || el.getAttribute('data-language');
-    if (explicit) return explicit;
-    // Current ChatGPT has a language header outside its nested CodeMirror <pre>.
-    for (const label of el.querySelectorAll('.font-medium, [data-testid="code-block-language"]')) {
-      if (!label.closest('code, .cm-content, button, [role="button"]') && /^[a-z][a-z0-9#+_.-]{0,30}$/i.test(label.textContent.trim())) return label.textContent.trim();
-    }
-    return '';
-  }
-  function isStreaming(el) {
-    const assistant = el.closest(assistantSelector);
-    if (!assistant) return false;
-    if (assistant.closest(streamingSelector) || assistant.querySelector(streamingSelector)) return true;
-    if (!document.querySelector('[data-testid="stop-button"]')) return false;
-    const assistants = document.querySelectorAll(assistantSelector);
-    return assistant === assistants[assistants.length - 1];
+    return chatgpt.source(el);
   }
   function hasFollowingContent(el) {
-    const assistant = el.closest(assistantSelector);
-    const boundary=el.closest('.markdown, .prose, li, blockquote') || assistant;
+    const assistant = assistantFor(el);
+    const boundary=el.closest('[data-markdown-text-style="assistant-message"], .markdown, .prose, li, blockquote') || assistant;
     // Only another Markdown block proves that the code fence has closed. A copy
     // button or footer inside the code widget can already exist during streaming.
     let block=el;
     while(block && block.parentElement!==boundary) block=block.parentElement;
     if(!block) return false;
-    const content='p, pre, ul, ol, blockquote, table, h1, h2, h3, h4, h5, h6, hr, .katex-display';
-    const controls='button, [role="button"], [role="toolbar"], [aria-hidden="true"]';
+    const content='p, '+codeSelector+', ul, ol, blockquote, table, h1, h2, h3, h4, h5, h6, hr, .katex-display';
+    const controls='button, [role="button"], [role="toolbar"], [aria-hidden="true"], [data-markdown-copy="exclude"]';
     for(let next=block.nextElementSibling;next;next=next.nextElementSibling) {
       if(ownNode(next) || next.matches(controls)) continue;
       const candidates=next.matches(content)?[next]:next.querySelectorAll(content);
@@ -97,7 +78,7 @@
     return /\\(?:tikz|draw|node|path|fill|coordinate|shade)\b/.test(text) && /[;}]$/.test(text);
   }
   function appearance(el) {
-    const root=document.documentElement, css=getComputedStyle(el?.closest(assistantSelector) || document.body);
+    const root=document.documentElement, css=getComputedStyle(assistantFor(el) || document.body);
     const dark=root.classList.contains('dark') || root.dataset.theme==='dark' || (!root.classList.contains('light') && css.colorScheme==='dark');
     let background=dark?'#212121':'#ffffff';
     for(let parent=el?.parentElement || document.body;parent;parent=parent.parentElement) {
@@ -106,12 +87,13 @@
     }
     return {theme:dark?'dark':'light',colors:{background,text:css.color || (dark?'#ececec':'#0d0d0d'),surface:dark?'#2f2f2f':'#f4f4f4',border:dark?'#424242':'#e5e5e5'}};
   }
-  function pageTheme() {return appearance(document.querySelector(assistantSelector) || document.body);}
+  function pageTheme() {return appearance(assistantsWithin()[0] || document.body);}
   function themeKey(theme) {return JSON.stringify([theme?.theme,...['text','background','surface','border'].map(key=>theme?.colors?.[key])]);}
   function sendView(state) {
     post(state,{type:'view',mode:editor?.state===state?'editor':'inline',renderColors:settings.renderColors,...appearance(state.element)});
   }
   function syncPageTheme() {
+    if(!globalThis.document?.body || printingPDF())return;
     const theme=pageTheme(),key=themeKey(theme);
     if(key!==pageThemeKey) {pageThemeKey=key;for(const state of states.values())sendView(state);}
     if(themeStorageReady && key!==storedThemeKey) {
@@ -135,8 +117,17 @@
   }
   function snapshotCurrent(request) {
     const {state,port,source,hostSource,href,generation}=request;
-    return location.href===href && liveFrame(state) && state.ready && state.port===port && state.generation===generation && state.complete &&
+    return location.href===href && liveFrame(state) && !state.frame.hasAttribute('srcdoc') && state.ready && state.port===port && state.generation===generation && state.complete &&
       state.sentSource===source && (state.draftSource??state.source)===source && state.source===hostSource && sourceForSnapshot(state)===hostSource;
+  }
+  function snapshotUnavailableMessage(request) {
+    const {state,source,hostSource}=request;
+    if(!liveFrame(state) || state.frame.hasAttribute('srcdoc'))return 'The diagram is unavailable. Reload the conversation and try again.';
+    if(!state.ready || !state.port)return 'The diagram connection is still loading. Wait for it to finish, then export again.';
+    if(!state.complete)return 'The diagram code is still streaming. Wait for it to finish rendering, then export again.';
+    if(state.sentSource!==source)return 'The latest diagram code has not been sent for rendering. Wait for it to render, then export again.';
+    if(sourceForSnapshot(state)!==hostSource)return 'The diagram source changed before export. Wait for the latest code to render, then export again.';
+    return 'The diagram or conversation changed. Try exporting the PDF again.';
   }
   function cancelSnapshots(state,message) {
     for(const request of snapshots.values())if(!state || request.state===state)request.finish(new Error(message));
@@ -175,7 +166,7 @@
         } else resolve(value);
       };
       if(signal?.aborted) {abort();return;}
-      if(!snapshotCurrent(request)) {request.finish(new Error('A diagram is still loading or streaming. Wait for it to render, then export again.'));return;}
+      if(!snapshotCurrent(request)) {request.finish(new Error(snapshotUnavailableMessage(request)));return;}
       snapshots.set(requestId,request);signal?.addEventListener('abort',abort,{once:true});
       timeout=setTimeout(()=>request.finish(new Error('The diagram export timed out. Render the diagram again and retry the PDF export.')),10000);
       try {if(!post(state,{type:'snapshot',requestId,source}))request.finish(new Error('The diagram is unavailable. Reload it and try exporting again.'));}
@@ -201,36 +192,42 @@
   function send(state,force=false) {
     const source=state.complete && state.draftSource!=null?state.draftSource:state.source;
     const type=state.complete?'render':'prepare', key=type+'\0'+source+'\0'+settings.autoRender+'\0'+settings.scale;
+    // Replace existing-chat code on the detection pass, before the iframe has
+    // loaded. Errors and explicit manual rendering keep their original source.
+    if(state.type!=='raw' && state.failedSource!==source && !state.revealedSource && (!state.complete || settings.autoRender))state.element.classList.add('latex-islands-original-hidden');
+    if(state.boot) {
+      const status=state.boot.querySelector('[role="status"]'),text=!state.complete?'Writing diagram…':settings.autoRender?'Rendering diagram…':'Loading preview…';
+      if(status.textContent!==text)status.textContent=text;
+    }
     if(!state.ready || (!force && state.sentKey===key)) return;
+    state.loading=!state.complete || (settings.autoRender && (force || state.sentSource!==source));
+    state.heightFloor=Number.parseFloat(state.frame.style.height) || 222;
     if(!post(state,{type,source,kind:'tikz',streaming:!state.complete,autoRender:settings.autoRender,scale:settings.scale,renderColors:settings.renderColors,mode:editor?.state===state?'editor':'inline',...appearance(state.element)})) return;
     state.sentKey=key;state.sentSource=state.complete?source:null;
-    if(!state.complete && state.type!=='raw') state.element.classList.add('latex-islands-original-hidden');
+  }
+  function finishBoot(state) {
+    state.boot?.remove();state.boot=null;state.container.classList.remove('latex-islands-booting');
   }
   function addIsland(el,state) {
-    const container=document.createElement('div');container.className='latex-islands-container';
+    const container=document.createElement('div');container.className='latex-islands-container latex-islands-booting';
     container.setAttribute('role','region');container.setAttribute('aria-label','TikZ diagram');
+    const boot=document.createElement('div');boot.className='latex-islands-boot';
+    const spinner=document.createElement('span');spinner.className='latex-islands-boot-spinner';spinner.setAttribute('aria-hidden','true');
+    const status=document.createElement('span');status.setAttribute('role','status');status.textContent='Loading diagram…';
+    const reveal=document.createElement('button');reveal.type='button';reveal.textContent='Show code';
+    reveal.addEventListener('click',()=>{state.revealedSource=true;el.classList.remove('latex-islands-original-hidden');reveal.disabled=true;reveal.textContent='Code shown';});
+    if(state.type==='raw')reveal.hidden=true;
+    boot.append(spinner,status,reveal);state.boot=boot;
     const frame=document.createElement('iframe');frame.title='TikZ diagram — preview, code and download';
+    frame.style.height=(state.lastHeight || 222)+'px';
     frame.src=chrome.runtime.getURL('island.html')+'?parentOrigin='+encodeURIComponent(location.origin)+'#'+encodeURIComponent(state.id);
     state.frameURL=frame.src;state.generation=0;
     frame.addEventListener('load',()=>{state.generation++;cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');});
     frame.setAttribute('scrolling','no');frame.setAttribute('allow','clipboard-write');frame.referrerPolicy='no-referrer';
     state.container=container;state.frame=frame;ids.set(state.id,state);
-    container.append(frame);el.insertAdjacentElement('afterend',container);
+    container.append(frame,boot);el.insertAdjacentElement('afterend',container);
   }
   const editorBoundsProperties=['--li-editor-left','--li-editor-top','--li-editor-width','--li-editor-height'];
-  function conversationViewport(element) {
-    // ChatGPT's <main> is the moving message content, sometimes thousands of
-    // pixels above the screen. The scroll-root is the stationary conversation
-    // viewport and, like the native Mermaid editor, excludes the sidebar.
-    const annotated=element.closest('[data-scroll-root], [class~="group/scroll-root"]') || element.closest('[class~="@container/main"]');
-    if(annotated)return annotated;
-    const main=element.closest('main, [role="main"]');
-    for(let ancestor=main?.parentElement;ancestor && ancestor!==document.body;ancestor=ancestor.parentElement) {
-      const css=getComputedStyle(ancestor),rect=ancestor.getBoundingClientRect();
-      if(/^(auto|scroll)$/.test(css.overflowY) && rect.width>0 && rect.height>0)return ancestor;
-    }
-    return main;
-  }
   function trackEditorBounds(active) {
     let pending=0,region;
     const request=window.requestAnimationFrame?.bind(window) || (callback=>setTimeout(callback,16));
@@ -240,7 +237,7 @@
       pending=0;
       if(editor!==active)return;
       if(!active.state.element.isConnected) {closeEditor();return;}
-      const next=conversationViewport(active.state.element);
+      const next=chatgpt.getViewport(active.state.element);
       if(next!==region) {
         region=next;resizeObserver?.disconnect();
         for(let ancestor=region || document.body;ancestor;ancestor=ancestor.parentElement)resizeObserver?.observe(ancestor);
@@ -266,7 +263,7 @@
       if(!active.state.element.isConnected) {closeEditor();return;}
       if(mutations.some(mutation=>{
         const target=mutation.target.nodeType===Node.ELEMENT_NODE?mutation.target:mutation.target.parentElement;
-        return !ownNode(target) && !target.closest(assistantSelector) && !(mutation.type==='childList' && [...mutation.addedNodes,...mutation.removedNodes].every(ownNode));
+        return !ownNode(target) && !assistantFor(target) && !(mutation.type==='childList' && [...mutation.addedNodes,...mutation.removedNodes].every(ownNode));
       }))scheduleBounds();
     });
     layoutObserver.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','hidden','aria-hidden','aria-expanded','data-state','data-collapsed']});
@@ -319,29 +316,44 @@
   function consider(el,type,sourceOverride) {
     if(el.closest(excludedSelector)) return;
     const source=core.stripFence(sourceOverride ?? currentSource(el,type));
-    const kind=core.detectKind(source,type==='code'?language(el):'');
+    const kind=core.detectKind(source,type==='code'?chatgpt.language(el):'');
     if(source.length>MAX_SOURCE || !kind) {const old=states.get(el);if(old)removeState(el,old);return;}
     let state=states.get(el);
     if(!state) {state={id:'li-'+Date.now().toString(36)+'-'+(++sequence),source,type,element:el,updated:Date.now(),complete:false,ready:false,sentSource:null};states.set(el,state);addIsland(el,state);}
-    else if(state.source!==source) {el.classList.remove('latex-islands-original-hidden');state.source=source;state.draftSource=null;state.updated=Date.now();}
-    const streaming=isStreaming(el), settled=Date.now()-state.updated>=SETTLE_MS;
+    else if(state.source!==source) {el.classList.remove('latex-islands-original-hidden');state.source=source;state.draftSource=null;state.failedSource=null;state.revealedSource=false;state.updated=Date.now();}
+    const streaming=chatgpt.isStreaming(el), settled=Date.now()-state.updated>=SETTLE_MS;
     state.complete=Boolean(source.trim()) && (!streaming || hasFollowingContent(el) || (settled && completeTeX(source)));
-    if(!state.complete && source && !settled) {dirty.add(el.closest(assistantSelector));schedule(SETTLE_MS-(Date.now()-state.updated));}
+    if(!state.complete && source && !settled) {dirty.add(assistantFor(el));schedule(SETTLE_MS-(Date.now()-state.updated));}
     send(state);
   }
   function scan() {
     if(!settings.enabled) return;
-    for(const [el,state]of states) if(!el.isConnected || !el.closest(assistantSelector) || el.closest(excludedSelector)) removeState(el,state);
-    const assistants=fullScan?document.querySelectorAll(assistantSelector):[...dirty];fullScan=false;dirty.clear();
+    // Our print stylesheet temporarily hides the app. Its message visibility
+    // says nothing about navigation; keep the ready documents and editor drafts.
+    if(printingPDF()){fullScan=true;return;}
+    for(const [el,state]of states) {
+      const assistant=assistantFor(el);
+      if(!el.isConnected || !assistant || el.closest(excludedSelector)) removeState(el,state);
+      else if(!liveFrame(state)) {
+        // React can replace an injected sibling while retaining the original
+        // code widget. Rebuild its document without discarding the user's draft.
+        cancelSnapshots(state,'The diagram reloaded. Wait for it to render, then export again.');
+        state.ready=false;state.port?.close();state.port=null;
+        if(editor?.state===state)closeEditor();
+        el.classList.remove('latex-islands-original-hidden');state.container?.remove();
+        state.sentKey=null;state.sentSource=null;addIsland(el,state);dirty.add(assistant);
+      }
+    }
+    const assistants=fullScan?assistantsWithin():[...dirty];fullScan=false;dirty.clear();
     for(const assistant of assistants) {
-      if(!assistant?.isConnected) continue;
-      for(const pre of assistant.querySelectorAll('pre')) if(!ownNode(pre) && !pre.parentElement.closest('pre') && !pre.closest(excludedSelector)) consider(pre,'code');
+      if(!assistant?.isConnected || chatgpt.role(assistant)!=='assistant' || ownNode(assistant)) continue;
+      for(const block of chatgpt.getCodeBlocks(assistant)) if(!ownNode(block) && !block.closest(excludedSelector)) consider(block,'code');
       for(const error of assistant.querySelectorAll('.katex-error, [data-latex]')) {
-        if(ownNode(error) || error.closest('pre') || (error.closest('.katex') && !error.classList.contains('katex-error'))) continue;
+        if(ownNode(error) || error.closest(codeSelector) || (error.closest('.katex') && !error.classList.contains('katex-error'))) continue;
         consider(error,'error');
       }
-      for(const block of assistant.querySelectorAll('p, .markdown > div, .prose > div')) {
-        if(ownNode(block) || block.closest('pre, .katex, code') || block.querySelector('pre, code, p, div, .katex, .katex-error, .latex-islands-container')) continue;
+      for(const block of assistant.querySelectorAll('p, .markdown > div, .prose > div, [data-markdown-text-style="assistant-message"] > div')) {
+        if(ownNode(block) || block.closest(codeSelector+', .katex, code') || block.querySelector(codeSelector+', code, p, div, .katex, .katex-error, .latex-islands-container')) continue;
         if(!(block.textContent || '').includes('\\begin')) continue;
         const diagrams=core.splitIslands(block.textContent).filter(token=>token.type==='latex');
         if(diagrams.length===1) consider(block,'raw',diagrams[0].value);
@@ -358,22 +370,35 @@
       state.port?.close();state.port=port;state.ready=true;state.generation++;
       port.onmessage=message=>receiveSnapshot(state,port,message.data);port.start?.();send(state,true);
     }
-    if(data.type==='resize' && Number.isFinite(data.height) && editor?.state!==state) state.frame.style.height=Math.max(80,Math.min(16000,Math.ceil(data.height)))+'px';
+    if(data.type==='resize' && Number.isFinite(data.height) && editor?.state!==state) {
+      const height=Math.max(80,Math.min(16000,Math.ceil(data.height)));
+      state.lastHeight=state.loading?Math.max(height,state.heightFloor || 0):height;state.frame.style.height=state.lastHeight+'px';
+      if(state.ready)finishBoot(state);
+    }
     if(data.type==='open-editor') openEditor(state);
     if(data.type==='close-editor' && editor?.state===state) closeEditor();
     if(data.type==='source-change' && state.complete && typeof data.source==='string' && data.source.length<=MAX_SOURCE) {
       state.draftSource=data.source;state.sentSource=data.source;
       state.sentKey='render\0'+data.source+'\0'+settings.autoRender+'\0'+settings.scale;
     }
-    if(data.type==='result' && state.type!=='raw') {
+    if(data.type==='result') {
       if(!state.complete || (typeof data.source==='string' && data.source!==state.sentSource) || state.sentSource!==(state.draftSource??state.source)) return;
-      state.element.classList.toggle('latex-islands-original-hidden',data.ok===true || (typeof data.svg==='string' && data.svg.length>0 && !data.error));
+      const success=data.ok===true || (typeof data.svg==='string' && data.svg.length>0 && !data.error);
+      state.loading=false;state.failedSource=success?null:state.sentSource;state.revealedSource=false;finishBoot(state);
+      if(state.type!=='raw')state.element.classList.toggle('latex-islands-original-hidden',success);
     }
   });
   document.addEventListener('keydown',event=>{if(event.key==='Escape' && editor) {event.preventDefault();closeEditor();}});
   const observer=new MutationObserver(mutations=>{
+    if(!globalThis.document?.documentElement)return;
     checkSnapshots();
+    // Snapshot validation above still catches real source edits and removals.
+    // The body class removal schedules a complete scan after printing finishes.
+    if(printingPDF()){fullScan=true;return;}
     if(!settings.enabled) return;let changed=false;
+    // Our own insertions are ignored below, but a host update removing an island
+    // still needs a scan even if the mutation contains only extension nodes.
+    for(const state of states.values())if(!liveFrame(state)){dirty.add(assistantFor(state.element));changed=true;}
     for(const mutation of mutations) {
       if(ownNode(mutation.target)) continue;
       const el=mutation.target.nodeType===Node.ELEMENT_NODE?mutation.target:mutation.target.parentElement;
@@ -384,21 +409,21 @@
         }
       }
       if(mutation.type==='childList' && [...mutation.addedNodes,...mutation.removedNodes].every(ownNode)) continue;
-      const assistant=el.closest(assistantSelector);
+      const assistant=assistantFor(el);
       if(assistant) dirty.add(assistant);
       else {
         // Streaming markers may live above the assistant. Inspect affected
         // descendants even when a class has just been removed and no longer matches.
-        if(mutation.type==='attributes' && ['class','data-is-streaming','aria-busy'].includes(mutation.attributeName)) {
-          for(const descendant of el.querySelectorAll(assistantSelector)) dirty.add(descendant);
+        if(mutation.type==='attributes') {
+          for(const descendant of assistantsWithin(el)) dirty.add(descendant);
         }
         for(const node of mutation.addedNodes || []) if(node.nodeType===Node.ELEMENT_NODE && !ownNode(node)) {
-          if(node.matches(assistantSelector)) dirty.add(node);
-          for(const match of node.querySelectorAll(assistantSelector)) dirty.add(match);
+          const message=assistantFor(node);if(message)dirty.add(message);
+          for(const match of assistantsWithin(node)) dirty.add(match);
         }
-        if(el.matches(streamingSelector) || mutation.attributeName==='data-is-streaming' || mutation.attributeName==='aria-busy' || el.querySelector?.('[data-testid="stop-button"]') || [...(mutation.removedNodes || [])].some(n=>n.nodeType===1 && (n.matches('[data-testid="stop-button"]') || n.querySelector('[data-testid="stop-button"]')))) {
-          for(const state of states.values()) dirty.add(state.element.closest(assistantSelector));
-        }
+        // Composer controls and ancestor streaming flags are outside a message.
+        // Let the adapter re-evaluate each pending diagram after those mutations.
+        for(const state of states.values())if(!state.complete)dirty.add(assistantFor(state.element));
       }
       changed=true;
     }
@@ -406,7 +431,7 @@
   });
   window.addEventListener('pagehide',()=>cancelSnapshots(null,'The conversation closed. Try exporting the current conversation again.'));
   window.addEventListener('popstate',checkSnapshots);
-  observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeOldValue:true,attributeFilter:['data-is-streaming','aria-busy','class','data-theme','data-language']});
+  observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeOldValue:true,attributeFilter:[...new Set([...chatgpt.observedAttributes,'class','data-theme','data-language'])]});
   // Theme tracking is independent of diagram detection, including when islands
   // are disabled. One observer batch and palette comparison avoid storage writes
   // for every streamed token, every island, or our own fullscreen class changes.

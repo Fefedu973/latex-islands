@@ -1,11 +1,11 @@
 {
   "name": "latex-islands-chatgpt",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "description": "Local TikZ rendering and configurable conversation exports for ChatGPT",
   "license": "GPL-3.0-or-later",
   "scripts": {
-    "test": "node --test tests/core.test.cjs tests/content.test.cjs tests/island.test.cjs tests/runtime.test.cjs tests/ui.test.cjs tests/export*.test.cjs tests/build*.test.cjs tests/firefox*.test.cjs",
+    "test": "node --test tests/core.test.cjs tests/chatgpt-dom.test.cjs tests/content.test.cjs tests/island.test.cjs tests/runtime.test.cjs tests/ui.test.cjs tests/export*.test.cjs tests/build*.test.cjs tests/firefox*.test.cjs",
     "test:engine": "node -e \"require('node:fs').mkdirSync('tests/engine-fixtures',{recursive:true})\" && node tests/engine.test.cjs && node tests/compiler.test.cjs && node tests/cancel-engine.test.cjs && node tests/euler-engine.test.cjs",
     "test:fonts": "node tests/font-render.browser.cjs",
     "test:pdf": "node tests/pdf-print.browser.cjs",

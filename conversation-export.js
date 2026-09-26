@@ -2,7 +2,8 @@
 (() => {
   'use strict';
   const extensionAPI=globalThis.browser||globalThis.chrome;
-  if (globalThis.__latexIslandsExporterLoaded || !globalThis.LatexIslandsExport) return;
+  const chatDOM=globalThis.LatexIslandsChatGPT;
+  if (globalThis.__latexIslandsExporterLoaded || !globalThis.LatexIslandsExport || !chatDOM) return;
   globalThis.__latexIslandsExporterLoaded = true;
   const core = globalThis.LatexIslandsExport;
   const CHANNEL = 'latex-islands-conversation-export-v1';
@@ -10,6 +11,7 @@
   let preferences={...defaults}, preferencesTouched=false;
   let pending=null,running=false,canceled=false,lastFocus=null,tick=0,mountedId=null,snapshot=null,revision=0,snapshotRevision=-1,previewRequested=false;
   let replyElement=null,pdfAbort=null,pdfDocument=null,pdfCapture=null,pdfSelection=null,textSelection=null,pdfViewSequence=0;
+  const replyActions=new Map();let knownMessages=new Set();
   const root=document.createElement('div');root.className='li-export';root.dataset.latexIslandsExport='true';
   function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text)node.textContent=text;return node;}
   function button(label,className){const node=element('button',className,label);node.type='button';return node;}
@@ -306,27 +308,69 @@
     finally{if(selectedFormat!=='pdf')release('release');pdfAbort=null;setBusy(false);if(!panel.hidden&&document.activeElement===document.body&&actionFocus?.isConnected)actionFocus.focus();}
   }
   inspect.addEventListener('click',()=>run('preview'));copy.addEventListener('click',()=>run('copy'));save.addEventListener('click',()=>run('download'));
+  function moveRoot(parent){
+    if(root.parentElement===parent)return;
+    const focused=document.activeElement,wasOpen=!panel.hidden;
+    parent.append(root);
+    // Replacing ChatGPT's titlebar can disconnect an open modal. Restore its
+    // top-layer membership without resetting its options or in-flight export.
+    if(wasOpen){try{panel.close?.();panel.showModal?.();}catch{}if(panel.contains(focused))focused.focus();}
+  }
   function mount(){
-    tick=0;const id=core.conversationId(location.pathname);
+    tick=0;
+    // Print styles temporarily hide ChatGPT. Its controls are still live; the
+    // body's class removal schedules a fresh mount, including navigation cleanup.
+    if(document.body?.classList.contains('li-pdf-printing'))return;
+    const id=core.conversationId(location.pathname);
     if(mountedId&&id!==mountedId){if(running)cancelExport();show(false);status.textContent='';snapshot=null;}
-    mountedId=id;if(!id){if(running)cancelExport();root.remove();document.querySelectorAll('.li-export-reply').forEach(node=>node.remove());return;}
-    const header=document.querySelector('#conversation-header-actions')||document.querySelector('[data-testid="thread-header-right-actions"], #conversation-header, [data-testid="conversation-header"], #page-header, main header, header');
-    if(header&&!header.contains(root)){root.classList.remove('li-export-fallback');header.append(root);}else if(!header&&!root.isConnected&&document.body){root.classList.add('li-export-fallback');document.body.append(root);}
-    for(const reply of document.querySelectorAll('main [data-message-author-role="assistant"], [role="main"] [data-message-author-role="assistant"]')){
-      if(reply.closest('.li-pdf-root, .li-export')||reply.querySelector('.li-export-reply'))continue;
-      const action=button('PDF','li-export-reply');action.setAttribute('aria-label','Export this reply as PDF');
-      action.addEventListener('click',event=>{event.stopPropagation();if(running)return;replyElement=reply;format.value='pdf';preferencesTouched=true;pdfUser.checked=false;show(true);});reply.append(action);
+    mountedId=id;if(!id){if(running)cancelExport();root.remove();for(const action of replyActions.values())action.remove();replyActions.clear();knownMessages.clear();return;}
+    const header=chatDOM.getHeaderActions();
+    root.classList.toggle('li-export-fallback',!header);
+    if(header||document.body)moveRoot(header||document.body);
+    knownMessages=new Set(chatDOM.getMessages());
+    const replies=new Set([...knownMessages].filter(message=>chatDOM.role(message)==='assistant'));
+    for(const [reply,action]of replyActions)if(!replies.has(reply)){action.remove();replyActions.delete(reply);}
+    for(const reply of replies){
+      let action=replyActions.get(reply);
+      if(!action){
+        action=button('PDF','li-export-reply');action.setAttribute('aria-label','Export this reply as PDF');
+        action.addEventListener('click',event=>{event.stopPropagation();if(running||!reply.isConnected||chatDOM.role(reply)!=='assistant'||!chatDOM.isVisible(reply))return;replyElement=reply;format.value='pdf';preferencesTouched=true;pdfUser.checked=false;show(true);});
+        replyActions.set(reply,action);
+      }
+      const actions=chatDOM.getReplyActions?.(reply),host=actions||reply;
+      action.classList.toggle('li-export-reply-toolbar',!!actions);
+      if(action.parentElement!==host)host.append(action);
     }
   }
   const observer=new MutationObserver(records=>{
+    // ChatGPT can replace only an injected control. Do not filter that removal
+    // as our own mutation; after a normal move/insert every control is connected.
+    const lostControls=mountedId&&(!root.isConnected||[...replyActions].some(([reply,action])=>reply.isConnected&&!action.isConnected));
+    if(lostControls&&!tick)tick=setTimeout(mount,250);
     const own=node=>{const el=node.nodeType===1?node:node.parentElement;return !!el?.closest('.li-export, .li-export-reply, .li-pdf-root');};
     const external=records.filter(record=>!own(record.target)&&!(record.type==='childList'&&[...record.addedNodes,...record.removedNodes].length&&[...record.addedNodes,...record.removedNodes].every(own)));if(!external.length)return;
-    if(external.some(record=>{const el=record.target.nodeType===1?record.target:record.target.parentElement;return el&&!el.closest('.latex-islands-container')&&(el.closest('[data-message-author-role]')||[...record.addedNodes].some(node=>node.nodeType===1&&(node.matches('[data-message-author-role]')||node.querySelector('[data-message-author-role]'))));})){
+    let visibleMessages;
+    if(external.some(record=>{
+      const el=record.target.nodeType===1?record.target:record.target.parentElement;
+      if(!el||el.closest('.latex-islands-container'))return false;
+      if(record.type==='attributes'&&['class','style'].includes(record.attributeName)){
+        if((!snapshot&&!running)||document.body?.classList.contains('li-pdf-printing'))return false;
+        const streaming=value=>/(?:^|\s)(?:result-streaming|streaming-animation)(?:\s|$)/.test(value||'');
+        if(record.attributeName==='class'&&streaming(record.oldValue)!==streaming(el.getAttribute('class'))&&(chatDOM.getMessage(el)||[...knownMessages].some(message=>el.contains(message))))return true;
+        // Hover and layout styles do not change the saved transcript. A style
+        // that changes which messages are available still invalidates it.
+        visibleMessages??=new Set(chatDOM.getMessages());
+        return visibleMessages.size!==knownMessages.size||[...visibleMessages].some(message=>!knownMessages.has(message));
+      }
+      if(chatDOM.getMessage(el)||knownMessages.has(el))return true;
+      if(record.type!=='childList')return false;
+      return [...record.addedNodes,...record.removedNodes].some(node=>node.nodeType===1&&(chatDOM.getMessage(node)||chatDOM.getMessages(node).length||[...knownMessages].some(message=>node===message||node.contains(message))));
+    })){
       revision++;
       if(previewRequested&&snapshot&&!running){status.textContent='The conversation has changed. Refresh the preview; the next export will fetch the latest version.';status.dataset.state='stale';}
     }
     if(!tick)tick=setTimeout(mount,250);
   });
-  observer.observe(document.documentElement,{childList:true,subtree:true,characterData:true});
+  observer.observe(document.documentElement,{childList:true,subtree:true,characterData:true,attributes:true,attributeOldValue:true,attributeFilter:chatDOM.observedAttributes});
   window.addEventListener('popstate',mount);window.addEventListener('pagehide',()=>{cancelExport();pdfDocument?.dispose();});mount();
 })();

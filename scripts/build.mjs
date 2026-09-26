@@ -9,7 +9,7 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 export const RUNTIME_FILES = [
   'LICENSE', 'THIRD_PARTY_NOTICES.md', 'manifest.json',
   'docs/runtime-dependency-licenses.md', 'docs/extra-tex-packages.md', 'docs/cancel-compatibility.md', 'docs/euler-fonts.md', 'docs/licenses/OFL-1.1.txt', 'docs/licenses/LPPL-1.3c.txt', 'docs/licenses/Apache-2.0.txt',
-  'background.js', 'compiler.js', 'content.css', 'content.js',
+  'background.js', 'compiler.js', 'content.css', 'content.js', 'chatgpt-dom.js',
   'conversation-bridge.js', 'conversation-export.js', 'core.js',
   'demo.html', 'demo.js', 'examples.js', 'export-core.js', 'export-preview-renderer.js', 'export-pdf.js',
   'island.css', 'island.html', 'island.js', 'native-controls.js', 'offscreen.html', 'offscreen.js',
