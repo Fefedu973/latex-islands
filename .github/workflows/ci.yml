@@ -32,7 +32,7 @@ jobs:
         timeout-minutes: 3
       - name: Verify first diagram paint with delayed fonts
         run: npm run test:fonts
-        timeout-minutes: 1
+        timeout-minutes: 2
       - name: Verify rich PDF layout and diagram snapshots in Chromium
         run: npm run test:pdf
         timeout-minutes: 4

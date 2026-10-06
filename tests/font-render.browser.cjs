@@ -173,7 +173,7 @@ async function main(){
   try{
     child=spawn(browser,['--headless=new','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-sync','--disable-extensions','--disable-component-update','--remote-debugging-address=127.0.0.1','--remote-debugging-port=0','--user-data-dir='+profile,'--window-size=1000,820','--force-device-scale-factor=1','about:blank'],{windowsHide:true,stdio:['ignore','ignore','pipe']});
     let spawnError;child.on('error',error=>{spawnError=error;});child.stderr.on('data',data=>{stderr=(stderr+data).slice(-6000);});
-    const debugPort=await until(async()=>{if(spawnError)throw spawnError;if(child.exitCode!==null)throw Error('Browser exited: '+stderr);try{return (await fs.readFile(path.join(profile,'DevToolsActivePort'),'utf8')).split(/\r?\n/)[0];}catch{return false;}},'Browser startup');
+    const debugPort=await until(async()=>{if(spawnError)throw spawnError;if(child.exitCode!==null)throw Error('Browser exited: '+stderr);try{return (await fs.readFile(path.join(profile,'DevToolsActivePort'),'utf8')).split(/\r?\n/)[0];}catch{return false;}},'Browser startup',45000).catch(error=>{throw Error(error.message+'\n'+stderr);});
     const target=await (await fetch('http://127.0.0.1:'+debugPort+'/json/new?about:blank',{method:'PUT'})).json();
     cdp=await CDP.connect(target.webSocketDebuggerUrl);
     await cdp.call('Page.enable');await cdp.call('Runtime.enable');await cdp.call('Network.enable');await cdp.call('Network.setCacheDisabled',{cacheDisabled:true});
