@@ -1,6 +1,6 @@
 # LaTeX Islands — TikZ & Export for ChatGPT
 
-Chrome and Firefox desktop Manifest V3 extension · **Version 1.5.5** · English interface
+Chrome and Firefox desktop Manifest V3 extension · **Version 1.5.8** · English interface
 
 Render TikZ diagrams in ChatGPT replies with an interface inspired by its native diagrams: an integrated preview, zoom, drag and a fullscreen editor. ChatGPT continues to display formulas, Markdown and Mermaid. The popup and editor use a monochrome interface. Conversation export provides a configurable transcript and preview based on the site's JSON data.
 
@@ -10,7 +10,7 @@ The Chrome package requires Chrome 116 or newer. The Firefox package requires Fi
 
 ### First installation
 
-1. Fully extract the **Chrome v1.5.5** ZIP into a permanent folder.
+1. Fully extract the **Chrome v1.5.8** ZIP into a permanent folder.
 2. Open `chrome://extensions` and enable **Developer mode**.
 3. Click **Load unpacked**.
 4. Select the extracted folder that directly contains `manifest.json`.
@@ -93,7 +93,7 @@ The engine is shared, prewarmed during streaming and reused across diagrams. Ide
 
 Prewarming reduces the wait after a block closes when the engine has had time to load during streaming. Complex PGFPlots surfaces remain expensive. The figures in [tests/performance-results.md](tests/performance-results.md) describe a historical v1.2 measurement on one machine; they are not current performance measurements or guarantees.
 
-A few adaptations apply only to the copy sent to the compiler: inferring common TikZ libraries, loading Chemfig and TikZ-3DPlot, protecting Circuitikz labels containing `=`, and replacing `shader=interp` with `shader=flat` with a warning for PGFPlots.
+A few adaptations apply only to the copy sent to the compiler: inferring common TikZ libraries and Circuitikz components inside `tikzpicture`, loading Chemfig and TikZ-3DPlot, protecting Circuitikz labels containing `=`, and replacing `shader=interp` with `shader=flat` with a warning for PGFPlots.
 
 The extension is not a complete TeX Live distribution. Custom classes, document pagination, BibTeX, external files, imported images, shell calls, gnuplot and LuaLaTeX/XeLaTeX engines are outside its scope. A missing package or incorrect code can produce an error.
 

@@ -96,6 +96,31 @@ test('unavailable, unrendered, failed or invalid diagrams fail explicitly and cl
   assert.equal(h.get('.li-pdf-document'),null);assert.equal(h.get('style[data-latex-islands-pdf]'),null);
 });
 
+test('failed diagram snapshots retain source and error without losing successful diagrams or surrounding prose',async t=>{
+  const h=harness(t,'<main><article data-message-author-role="assistant"><p>Before both diagrams</p><pre id="good-source" hidden><code>Good original TeX</code></pre><div id="good-frame" class="latex-islands-container"></div><p>Between diagrams</p><pre id="failed-source" hidden><code>Original failed source</code></pre><div id="failed-frame" class="latex-islands-container"><button>Retry</button></div><p>After both diagrams</p></article></main>');
+  const source='\\begin{tikzpicture}\n\\badcommand{<script>alert(1)</script>}\n\\end{tikzpicture}',error='Undefined control sequence. <img src=x onerror=alert(1)>';
+  h.w.LatexIslandsDiagramExport={snapshot:async(element,options)=>{
+    assert.equal(options.tolerateErrors,true);
+    return [{sourceElement:h.get('#good-source'),containerElement:h.get('#good-frame'),svg:SVG,width:600,height:300},{sourceElement:h.get('#failed-source'),containerElement:h.get('#failed-frame'),source,error}];
+  }};
+  const pdf=await h.prepare();t.after(pdf.dispose);
+  assert.equal(pdf.warningCount,1);assert.equal(pdf.count,1);assert.equal(pdf.root.querySelectorAll('.li-pdf-island-image').length,1);
+  assert.equal(decodeURIComponent(pdf.root.querySelector('.li-pdf-island-image').src.split(',').slice(1).join(',')),SVG);
+  const fallback=pdf.root.querySelector('.li-pdf-diagram-fallback');assert.equal(fallback.querySelector('code').textContent,source);assert.equal(fallback.querySelector('p').textContent,error);
+  assert.match(fallback.querySelector('figcaption').textContent,/could not be rendered/);assert.match(pdf.root.textContent,/Before both diagrams.*Between diagrams.*After both diagrams/s);
+  assert.equal(pdf.root.querySelector('script, [onerror], .latex-islands-container, button'),null);assert.equal(pdf.root.querySelectorAll('img').length,1);assert.doesNotMatch(pdf.root.textContent,/Good original TeX|Original failed source|Retry/);
+  pdf.print();assert.equal(h.prints.length,1);h.w.dispatchEvent(new h.w.Event('afterprint'));
+});
+
+test('captured diagram failures remain selectable and warning counts follow the selected messages',async t=>{
+  const h=harness(t,'<main><article data-message-id="failed" data-message-author-role="assistant"><p>Answer with an error</p><pre id="failed-source" hidden><code>Failed code kept verbatim</code></pre><div id="failed-frame" class="latex-islands-container"></div></article><article data-message-id="good" data-message-author-role="assistant"><p>Successful answer</p><pre id="good-source" hidden>Good code</pre><div id="good-frame" class="latex-islands-container"></div></article></main>');fastCollection(h);
+  h.w.LatexIslandsDiagramExport={snapshot:async element=>element.getAttribute('data-message-id')==='failed'?[{sourceElement:h.get('#failed-source'),containerElement:h.get('#failed-frame'),error:'Compilation failed'}]:[{sourceElement:h.get('#good-source'),containerElement:h.get('#good-frame'),svg:SVG,width:600,height:300}]};
+  const capture=await h.collect();t.after(capture.dispose);assert.ok(capture.messages.every(entry=>entry.error===''));
+  const complete=await h.prepare({capture});t.after(complete.dispose);assert.equal(complete.warningCount,1);assert.equal(complete.count,2);assert.equal(complete.root.querySelector('.li-pdf-diagram-fallback code').textContent,'Failed code kept verbatim');
+  const goodOnly=await h.prepare({capture,selectedKeys:['message:good']});t.after(goodOnly.dispose);assert.equal(goodOnly.warningCount,0);assert.equal(goodOnly.root.querySelector('.li-pdf-diagram-fallback'),null);assert.ok(goodOnly.root.querySelector('.li-pdf-island-image'));
+  const failedOnly=await h.prepare({capture,selectedKeys:['message:failed']});t.after(failedOnly.dispose);assert.equal(failedOnly.warningCount,1);assert.match(failedOnly.root.textContent,/Answer with an error.*Compilation failed.*Failed code kept verbatim/s);
+});
+
 test('raw diagrams preserve rich prose before and after the TeX rather than replacing the whole paragraph',async t=>{
   const h=harness(t,'<div role="main"><article data-message-author-role="assistant"><p id="raw"><strong>Before</strong> \\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture} <em>After</em></p><div class="latex-islands-container"></div></article></div>');
   h.w.LatexIslandsCore=require('../core.js');
@@ -345,6 +370,24 @@ test('full capture traverses overlapping virtualized windows and restores the sc
   const pdf=await h.prepare({capture,selectedKeys:['message:m7','message:m0']});t.after(pdf.dispose);assert.deepEqual([...pdf.root.querySelectorAll('strong')].map(x=>x.textContent),['Message 0','Message 7']);assert.equal(progress.at(-1).phase,'ready');
 });
 
+test('code hydration and changing CodeMirror chrome do not invalidate a captured conversation',async t=>{
+  const code='const a = 1;\nconsole.log(a);';
+  const h=harness(t,`<div id="scroll" style="overflow-y:auto"><main><section data-testid="conversation-turn-0"><article data-message-id="a0" data-message-author-role="assistant"><p>An unchanged explanation.</p><pre data-markdown-copy="code-block"><code>${code}</code></pre></article></section></main></div>`);fastCollection(h);
+  const fixture=scrollFixture(h,{height:1200,viewport:300,start:0,render:top=>{
+    if(top>0)h.get('main pre').innerHTML='<div class="cm-editor"><div class="cm-scroller"><div class="cm-gutters"><div class="cm-lineNumbers">'+(top>500?'101 102':'1 2')+'</div></div><div class="cm-content" contenteditable="false"><div class="cm-line">const a = 1;</div><div class="cm-line">console.log(a);</div></div></div><span>Ln '+Math.round(top)+', Col 1</span></div>';
+  }});
+  const capture=await h.collect();t.after(capture.dispose);assert.equal(capture.messages.length,1);assert.equal(capture.messages[0].error,'');assert.ok(fixture.positions.includes(900));
+  const pdf=await h.prepare({capture});t.after(pdf.dispose);assert.equal(pdf.root.querySelector('pre code').textContent,code);assert.match(pdf.root.textContent,/An unchanged explanation/);assert.doesNotMatch(pdf.root.textContent,/Ln |101 102/);
+});
+
+test('a real code edit during history capture still invalidates the conversation after hydration',async t=>{
+  const h=harness(t,'<div id="scroll" style="overflow-y:auto"><main><section data-testid="conversation-turn-0"><article data-message-id="a0" data-message-author-role="assistant"><pre data-markdown-copy="code-block"><code>const a = 1;\nconsole.log(a);</code></pre></article></section></main></div>');fastCollection(h);
+  const fixture=scrollFixture(h,{height:900,viewport:300,start:0,render:top=>{
+    if(top>0)h.get('main pre').innerHTML='<div class="cm-editor"><div class="cm-gutters">1 2</div><div class="cm-content" contenteditable="false"><div class="cm-line">const a = 2;</div><div class="cm-line">console.log(a);</div></div></div>';
+  }});
+  await assert.rejects(h.collect(),/conversation changed/);assert.equal(fixture.top,0);assert.equal(h.get('.li-pdf-document'),null);
+});
+
 test('redesigned reverse timeline captures virtualized messages in chronological order and restores negative scrollTop',async t=>{
   const h=harness(t,'<aside id="sidebar" style="overflow-y:auto"></aside><main><div id="scroll" data-app-action-timeline-scroll style="display:flex;flex-direction:column-reverse;overflow-y:auto;scroll-behavior:smooth"><div data-chatgpt-conversation-selection-target></div></div></main>');fastCollection(h);
   h.get('#sidebar').scrollTo=()=>assert.fail('The conversation exporter must not scroll the sidebar');
@@ -393,11 +436,11 @@ test('a stuck history loader times out and cancellation restores the original po
   const pending=h.collect({signal:controller.signal,onProgress:()=>controller.abort()});await assert.rejects(pending,{name:'AbortError'});assert.equal(fixture.top,500);
 });
 
-test('long messages are scrolled fully and lazy media are recaptured after becoming visible',async t=>{
-  const h=harness(t,'<div id="scroll" style="overflow-y:auto"><main><section data-testid="conversation-turn-0"><article data-message-id="a0" data-message-author-role="assistant"><p>A long response</p><img src="/placeholder.png"></article></section></main></div>');fastCollection(h);
+test('long messages are scrolled fully and lazy images inside viewer buttons are recaptured after becoming visible',async t=>{
+  const h=harness(t,'<div id="scroll" style="overflow-y:auto"><main><section data-testid="conversation-turn-0"><article data-message-id="a0" data-message-author-role="assistant"><p>A long response</p><button aria-label="Open image"><img src="/placeholder.png"></button></article></section></main></div>');fastCollection(h);
   const fixture=scrollFixture(h,{height:1800,viewport:450,start:100,render:top=>{if(top>=900)h.get('img').src='/loaded-picture.png';}});
   const capture=await h.collect();t.after(capture.dispose);assert.ok(fixture.positions.includes(1350));assert.equal(capture.messages.length,1);
-  const pdf=await h.prepare({capture});t.after(pdf.dispose);assert.equal(pdf.root.querySelector('img').src,'https://chatgpt.com/loaded-picture.png');assert.equal(fixture.top,100);
+  const pdf=await h.prepare({capture});t.after(pdf.dispose);assert.equal(pdf.root.querySelector('img').src,'https://chatgpt.com/loaded-picture.png');assert.equal(pdf.root.querySelector('button'),null);assert.equal(fixture.top,100);
 });
 
 test('an image source changed during decoding is recaptured rather than frozen as its old thumbnail',async t=>{
@@ -465,10 +508,45 @@ test('unchanged permanent diagram failures are not retried and transient recheck
   }
 });
 
-test('preview mounts inside the dialog and returns to body before printing',async t=>{
+test('printing restores the same preview after saving or cancelling and allows another print',async t=>{
   const h=harness(t),host=h.doc.createElement('div');h.doc.body.append(host);const pdf=await h.prepare();
+  t.after(pdf.dispose);
   pdf.mountPreview(host);assert.equal(pdf.root.parentElement,host);assert.equal(pdf.root.classList.contains('li-pdf-preview'),true);
-  h.w.print=()=>{assert.equal(pdf.root.parentElement,h.doc.body);assert.equal(pdf.root.classList.contains('li-pdf-preview'),false);};pdf.print();h.w.dispatchEvent(new h.w.Event('afterprint'));assert.equal(pdf.root.isConnected,false);
+  let prints=0;
+  h.w.print=()=>{prints++;assert.equal(pdf.root.parentElement,h.doc.body);assert.equal(pdf.root.classList.contains('li-pdf-preview'),false);assert.equal(pdf.root.classList.contains('li-pdf-active'),true);assert.equal(pdf.root.style.getPropertyValue('display'),'block');assert.equal(pdf.root.style.getPropertyPriority('display'),'important');};
+  for(let attempt=0;attempt<2;attempt++){
+    pdf.print();assert.throws(()=>pdf.print(),/already open/);
+    h.w.dispatchEvent(new h.w.Event('afterprint'));
+    assert.equal(pdf.root.parentElement,host);assert.equal(pdf.root.classList.contains('li-pdf-preview'),true);assert.equal(pdf.root.classList.contains('li-pdf-active'),false);
+    assert.equal(pdf.root.style.getPropertyValue('display'),'');
+    assert.equal(h.w.getComputedStyle(pdf.root).display,'block');assert.match(pdf.root.textContent,/Sample conversation.*Question.*Answer/s);
+    assert.equal(h.doc.title,'Sample conversation - ChatGPT');assert.equal(h.doc.body.classList.contains('li-pdf-printing'),false);assert.ok(h.get('style[data-latex-islands-pdf]'));
+  }
+  assert.equal(prints,2);pdf.dispose();assert.equal(pdf.root.isConnected,false);assert.equal(h.get('style[data-latex-islands-pdf]'),null);
+});
+
+test('a preview closed or removed during printing is disposed instead of restored',async t=>{
+  for(const mode of ['removed','hidden','closed-dialog']){
+    const h=harness(t),host=h.doc.createElement(mode==='closed-dialog'?'dialog':'div');
+    if(mode==='closed-dialog')host.setAttribute('open','');
+    h.doc.body.append(host);const pdf=await h.prepare();pdf.mountPreview(host);pdf.print();
+    if(mode==='removed')host.remove();else if(mode==='hidden')host.hidden=true;else host.removeAttribute('open');
+    h.w.dispatchEvent(new h.w.Event('afterprint'));
+    assert.equal(pdf.root.isConnected,false,mode);assert.equal(h.get('style[data-latex-islands-pdf]'),null,mode);
+    assert.equal(h.doc.body.classList.contains('li-pdf-printing'),false,mode);assert.equal(h.doc.title,'Sample conversation - ChatGPT',mode);
+    assert.throws(()=>pdf.print(),/expired/);
+  }
+});
+
+test('aborting or leaving the page during a preview print cannot resurrect the document',async t=>{
+  for(const mode of ['abort','pagehide','dispose']){
+    const h=harness(t),host=h.doc.createElement('div'),controller=new h.w.AbortController();h.doc.body.append(host);
+    const pdf=await h.prepare({signal:controller.signal});pdf.mountPreview(host);pdf.print();
+    if(mode==='abort')controller.abort();else if(mode==='pagehide')h.w.dispatchEvent(new h.w.Event('pagehide'));else pdf.dispose();
+    h.w.dispatchEvent(new h.w.Event('afterprint'));
+    assert.equal(pdf.root.isConnected,false,mode);assert.equal(host.childElementCount,0,mode);assert.equal(h.get('style[data-latex-islands-pdf]'),null,mode);
+    assert.equal(h.doc.body.classList.contains('li-pdf-printing'),false,mode);assert.equal(h.doc.title,'Sample conversation - ChatGPT',mode);
+  }
 });
 
 test('wide native SVG keeps its intrinsic ratio and computed clipping/transforms after IDs change',async t=>{

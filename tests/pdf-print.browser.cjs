@@ -101,6 +101,11 @@ function fixture() {
       .katex-html{display:inline-block}.katex .frac{display:inline-flex;vertical-align:middle;flex-direction:column;line-height:1.25;text-align:center}
       .katex .frac .num{border-bottom:1px solid currentColor;padding:0 5px}.katex-mathml{position:absolute;clip:rect(1px,1px,1px,1px);width:1px;height:1px;overflow:hidden}
       .native-math-label{font-weight:bold}.screen-only-hidden{display:none}
+      /* Live ChatGPT print isolation observed 2026-10-06. A named layer's
+         important rule wins over the export's old unlayered ID rule. */
+      @layer components { @media print {
+        body:has(> .printDocument-v_w5Ax) > :not(.printDocument-v_w5Ax) { display:none !important }
+      } }
     </style><script>
       window.testPrintCalls=0;window.testBridgeRequests=[];window.print=()=>{window.testPrintCalls++;};
       window.addEventListener('message',event=>{if(event.data?.channel==='latex-islands-conversation-export-v1'&&event.data.type==='request')window.testBridgeRequests.push(event.data.path);});
@@ -108,7 +113,7 @@ function fixture() {
         get(defaults,callback){const value={...defaults,...storage};if(callback)queueMicrotask(()=>callback(value));return Promise.resolve(value);},
         set(value,callback){Object.assign(storage,value);if(callback)queueMicrotask(callback);return Promise.resolve();}
       },onChanged:{addListener(){}}}};
-    </script></head><body><div id="app"><header><div id="conversation-header-actions"></div><button>APP_CHROME_CONTROL</button></header><main>
+    </script></head><body><div class="printDocument-v_w5Ax" hidden></div><div id="app"><header><div id="conversation-header-actions"></div><button>APP_CHROME_CONTROL</button></header><main>
       <article data-message-author-role="user"><div class="whitespace-pre-wrap">USER_MESSAGE_ONLY: Explain the equations and keep the diagram proportions.</div></article>
       <article data-message-author-role="assistant" data-fixture-reply="first"><div class="markdown prose">
         <h2>FIRST_REPLY_ONLY: A rich mathematical answer</h2><p>Keep <strong>bold emphasis</strong>, <em>italics</em>, <a href="https://example.org/reference">a reference link</a> and native equations.</p>
@@ -303,10 +308,12 @@ async function main() {
         return state.calls === beforeCalls + 1;
       }, name + ' print invocation');
       const screen = await cdp.evaluate(`(() => {const root=document.querySelector('.li-pdf-root,.li-pdf-document');return {display:getComputedStyle(root).display,title:document.title,body:document.body.classList.contains('li-pdf-printing')};})()`);
-      assert.equal(screen.display, 'none', 'PDF clone must not affect the screen conversation'); assert.equal(screen.body, true);
+      assert.equal(screen.display, 'block', 'The active print root is protected from host hiding rules'); assert.equal(screen.body, true);
       // 178 mm = A4 width minus two 16 mm margins, at 96 CSS pixels per inch.
       await cdp.call('Emulation.setDeviceMetricsOverride', {width:673,height:900,deviceScaleFactor:1,mobile:false});
       await cdp.call('Emulation.setEmulatedMedia', {media:'print'});
+      const hostConflict = await cdp.evaluate(`(() => {const root=document.querySelector('.li-pdf-active');root.style.removeProperty('display');const unprotected=getComputedStyle(root).display;root.style.setProperty('display','block','important');return {unprotected,protected:getComputedStyle(root).display};})()`);
+      assert.deepEqual(hostConflict,{unprotected:'none',protected:'block'},'Reproduce the formerly blank PDF with the current ChatGPT layered print rule');
       await cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
       const geometry = await cdp.evaluate(`(() => {
         const root=document.querySelector('.li-pdf-root,.li-pdf-document'),rect=root.getBoundingClientRect();
@@ -330,7 +337,7 @@ async function main() {
         assert.equal(diagram.fit, 'contain'); assert.equal(diagram.transform, 'none'); assert.equal(diagram.filter, 'none'); assert(diagram.embeddedFonts, 'TeX font bytes must travel with every exported SVG');
         assert(!diagram.svg.includes('71px'), 'Pan transform must never be exported'); delete diagram.svg;
       }
-      if (name === 'conversation') {
+      if (name.startsWith('conversation')) {
         assert(geometry.text.includes('USER_MESSAGE_ONLY')); assert(geometry.text.includes('FIRST_REPLY_ONLY')); assert(geometry.text.includes('SECOND_REPLY_ONLY')); assert(geometry.text.includes('END_OF_SECOND_REPLY'));
         assert.equal(geometry.tables, 1); assert(geometry.code.includes('Code line 36')); assert(geometry.code.includes('abcdef'.repeat(75)));
         assert(geometry.nativeMath.box.width > 20 && geometry.nativeMath.box.height > 10); assert(geometry.nativeMath.fraction.height > 25); assert.match(geometry.nativeMath.font, /Georgia/); assert.equal(geometry.nativeMath.mathml, 'none');
@@ -342,22 +349,41 @@ async function main() {
       const printed = await cdp.call('Page.printToPDF', {preferCSSPageSize:true,printBackground:true,displayHeaderFooter:false});
       const pdf = Buffer.from(printed.data, 'base64'); assert.equal(pdf.subarray(0,5).toString(), '%PDF-'); assert(pdf.length > 10000);
       const pages = (pdf.toString('latin1').match(/\/Type\s*\/Page\b/g) || []).length;
-      if (name === 'conversation') assert(pages >= 3);
+      if (name.startsWith('conversation')) assert(pages >= 3);
       else assert.equal(pages, 1, 'Tall reply must leave room for the heading and context on the same page');
       await fs.writeFile(path.join(output, 'pdf-' + name + '.pdf'), pdf);
       // Chromium emits afterprint for printToPDF. Explicitly dispatching it also
       // covers browsers/CDP builds that omit the lifecycle event in headless mode.
       await cdp.evaluate(`window.dispatchEvent(new Event('afterprint'))`);
       await cdp.call('Emulation.setEmulatedMedia', {media:'screen'});
-      const cleanup = await cdp.evaluate(`({roots:document.querySelectorAll('.li-pdf-root,.li-pdf-document').length,styles:document.querySelectorAll('style[data-latex-islands-pdf]').length,printing:document.body.classList.contains('li-pdf-printing'),title:document.title})`);
-      assert.deepEqual(cleanup, {roots:0,styles:0,printing:false,title:'Rich PDF regression - ChatGPT'});
+      const cleanup = await cdp.evaluate(`(() => {const preview=document.querySelector('.li-export-pdf-preview > .li-pdf-preview');return {roots:document.querySelectorAll('.li-pdf-root,.li-pdf-document').length,styles:document.querySelectorAll('style[data-latex-islands-pdf]').length,printing:document.body.classList.contains('li-pdf-printing'),title:document.title,previewVisible:!!preview && getComputedStyle(preview).display==='block' && preview.getBoundingClientRect().height>0,messages:preview?.querySelectorAll('.li-pdf-message').length};})()`);
+      assert.deepEqual(cleanup, {roots:1,styles:1,printing:false,title:'Rich PDF regression - ChatGPT',previewVisible:true,messages:expectedMessages});
+      const restoredPreview = await cdp.call('Page.captureScreenshot', {format:'png'});
+      await fs.writeFile(path.join(output, 'pdf-' + name + '-restored-preview.png'), Buffer.from(restoredPreview.data, 'base64'));
       const {text, code, ...summary} = geometry;
       reports.push({case:name,bytes:pdf.length,pages,geometry:summary,cleanup});
     }
     await printCase('conversation', 3, 3, () => cdp.evaluate(`document.querySelector('.li-export-save').click()`));
+    await until(()=>cdp.evaluate(`!!document.querySelector('[data-fixture-reply="second"] .li-export-reply')`),'Reply actions restored after leaving print media');
     await cdp.evaluate(`document.querySelector('.li-export-close').click();document.querySelector('[data-fixture-reply="second"] .li-export-reply').click()`);
     assert.equal(await cdp.evaluate(`document.getElementById('li-export-title').textContent`), 'Export reply');
     await printCase('reply', 1, 1, () => cdp.evaluate(`document.querySelector('.li-export-save').click()`));
+    await printCase('reply-repeat', 1, 1, () => cdp.evaluate(`document.querySelector('.li-export-save').click()`));
+
+    // A real compiler failure must preserve its source without discarding the
+    // prose or the three already-rendered diagrams in the conversation.
+    const invalidSource=String.raw`\begin{tikzpicture}\draw[liUndefinedFixtureKey] (0,0)--(1,1);\end{tikzpicture}`;
+    await cdp.evaluate(`(()=>{document.querySelector('.li-export-close').click();const pre=document.createElement('pre'),code=document.createElement('code');code.className='language-tikz';code.textContent=${JSON.stringify(invalidSource)};pre.append(code);document.querySelector('[data-fixture-reply="first"] .prose').append(pre);})()`);
+    await until(()=>cdp.evaluate(`(()=>{const frames=document.querySelectorAll('[data-fixture-reply="first"] iframe'),doc=frames[2]?.contentDocument;return frames.length===3&&doc?.querySelector('.island')?.dataset.state==='idle'&&doc?.getElementById('source')?.value===${JSON.stringify(invalidSource)}})()`),'Invalid diagram renderer initialized');
+    await cdp.evaluate(`document.querySelectorAll('[data-fixture-reply="first"] iframe')[2].contentDocument.getElementById('render-manual').click()`);
+    await until(()=>cdp.evaluate(`document.querySelectorAll('[data-fixture-reply="first"] iframe')[2].contentDocument.querySelector('.island').dataset.state==='error'`),'Real invalid TeX fails',90000);
+    await openConversation();
+    await cdp.evaluate(`document.querySelector('.li-export-inspect').click()`);
+    await until(()=>cdp.evaluate(`document.querySelector('.li-export-panel').getAttribute('aria-busy')==='false'&&document.querySelectorAll('.li-pdf-diagram-fallback').length===1`),'PDF contains failed diagram fallback');
+    const fallback=await cdp.evaluate(`({source:document.querySelector('.li-pdf-diagram-fallback code').textContent,caption:document.querySelector('.li-pdf-diagram-fallback figcaption').textContent,warning:document.querySelector('.li-export-preview > .li-export-detail').textContent})`);
+    assert.equal(fallback.source,invalidSource);assert.match(fallback.caption,/could not be rendered/);assert.match(fallback.warning,/1 diagram/);
+    await printCase('conversation-with-error',3,3,()=>cdp.evaluate(`document.querySelector('.li-export-save').click()`));
+    reports.push({case:'Real compilation error preserves code, prose and healthy diagrams',...fallback});
 
     // A real scrolling DOM keeps only overlapping windows of messages mounted.
     // There is no JSON endpoint or reconstructed transcript in this fixture.
@@ -389,6 +415,7 @@ async function main() {
     const lazyPDF=await cdp.call('Page.printToPDF',{preferCSSPageSize:true,printBackground:true,displayHeaderFooter:false});
     await fs.writeFile(path.join(output,'pdf-selected-history.pdf'),Buffer.from(lazyPDF.data,'base64'));
     await cdp.evaluate(`window.dispatchEvent(new Event('afterprint'));window.virtualCapture.dispose()`);
+    await cdp.call('Emulation.setEmulatedMedia',{media:'screen'});
     reports.push({case:'auto-scroll virtualized history and arbitrary selection',...lazy});
     assert.deepEqual(await cdp.evaluate('window.testBridgeRequests'), [], 'PDF export must not request the conversation backend');
     assert(!requests.some(request => request.includes('/backend-api/')));

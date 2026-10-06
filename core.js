@@ -121,18 +121,137 @@
     return -1;
   }
 
-  function inferPackages(text, packages) {
-    const tokens = commandTokens(text), custom = new Set(), explicit = new Set(Object.keys(packages));
-    const has = name => Object.prototype.hasOwnProperty.call(packages, name);
-    const add = name => { if (!has(name)) packages[name] = ''; };
+  function definedCommands(text, tokens, includeRedefinitions = false) {
+    const custom = new Set();
     for (const token of tokens) {
-      if (!['newcommand','providecommand','NewDocumentCommand','ProvideDocumentCommand','DeclareRobustCommand','def','gdef','edef','xdef','DeclareMathOperator','DeclarePairedDelimiter','DeclarePairedDelimiterX','DeclarePairedDelimiterXPP'].includes(token.name)) continue;
+      if (!['newcommand','renewcommand','providecommand','NewDocumentCommand','RenewDocumentCommand','ProvideDocumentCommand','DeclareRobustCommand','def','gdef','edef','xdef','let','DeclareMathAlphabet','DeclareMathOperator','DeclarePairedDelimiter','DeclarePairedDelimiterX','DeclarePairedDelimiterXPP'].includes(token.name)) continue;
+      // Redefining a package command still needs its original package loaded.
+      if (!includeRedefinitions && ['renewcommand','RenewDocumentCommand','let','DeclareMathAlphabet'].includes(token.name)) continue;
       let index = skipSpaceAndComments(text, token.end);
       if (text[index] === '*') index = skipSpaceAndComments(text, index + 1);
       if (text[index] === '{') index = skipSpaceAndComments(text, index + 1);
       const defined = /^\\([A-Za-z@]+)/.exec(text.slice(index));
       if (defined) custom.add(defined[1]);
     }
+    return custom;
+  }
+
+  function adaptAccentedMathLabels(text, custom, declaredCharacters) {
+    if (['mathrm','text','normalfont'].some(name => custom.has(name))) return {text,count:0};
+    const edits = [];
+    const tokens = commandTokens(text);
+    for (let i=0;i<tokens.length;i++) {
+      const token=tokens[i], previous=tokens[i-1];
+      if (token.name !== 'mathrm') continue;
+      if (previous && ['string','noexpand'].includes(previous.name) && skipSpaceAndComments(text,previous.end)===token.start) continue;
+      const group = groupAt(text,skipSpaceAndComments(text,token.end),'{','}');
+      if (!group) continue;
+      const label = withoutComments(group.value);
+      if ([...declaredCharacters].some(character => label.includes(character))) continue;
+      // Only unambiguous Latin text: do not reinterpret real math expressions,
+      // Greek symbols or arbitrary macros as text. Both UTF-8 and TeX accents
+      // are common in LLM-generated labels; ordinary math alphabets stay intact.
+      const accents = /\\(?:[`'"^~=.](?:\s*\{\s*[A-Za-z]\s*\}|\s*[A-Za-z])|[cuvHrbd]\s*\{\s*[A-Za-z]\s*\})/g;
+      const accented = /[\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u017F]/.test(label) || new RegExp(accents).test(label);
+      const plain = label.replace(accents,'a').replace(/\\(?:[,!;: ]|(?:quad|qquad|enspace|thinspace)\b)/g,'');
+      if (!accented || !/^[\p{Script=Latin}0-9\s{}.,'’():]+$/u.test(plain)) continue;
+      edits.push({start:token.start,end:group.end,value:'\\text{\\normalfont '+group.value+'}'});
+    }
+    for (let i=edits.length-1;i>=0;i--) text=text.slice(0,edits[i].start)+edits[i].value+text.slice(edits[i].end);
+    return {text,count:edits.length};
+  }
+
+  // Circuitikz also works in tikzpicture. Inspect actual path/node options,
+  // not words in labels, coordinates or comments. Keep custom TikZ keys and
+  // TikZ's separate circuits libraries authoritative when names overlap.
+  function usesCircuitComponents(text, tokens, libraries) {
+    const pathKeys = new Set(`R C L D V I sV sI cV cI vR vC vL pR D* Do
+      resistor capacitor inductor diode battery battery1 short open generic
+      potentiometer thermistor photoresistor led photodiode zD Schottky
+      vsource isource vsourcesin isourcesin cvsource cisource switch`.split(/\s+/));
+    const nodeKeys = new Set(`ground sground nground pground rground cground tground
+      tlground npn pnp nmos pmos nigfete pigfete njfet pjfet`.split(/\s+/));
+    for (const name of ['op amp','ideal op amp','buffer','transformer','transformer core']) nodeKeys.add(name);
+    const candidates = [], custom = new Set();
+    let nativeCircuits = libraries.some(name => /^circuits(?:\.|$)/.test(name));
+    const keyName = value => value.trim().replace(/^\/tikz\//, '').replace(/\s+/g, ' ');
+    function inspect(value, context, tikzNamespace = true) {
+      const entries = []; let start = 0;
+      for (let i = 0; i <= value.length; i++) {
+        if (value[i] === '\\') { i++; continue; }
+        if (value[i] === '{') { const group = groupAt(value,i,'{','}'); if (group) { i=group.end-1; continue; } }
+        if (i === value.length || value[i] === ',') { entries.push(value.slice(start,i)); start=i+1; }
+      }
+      for (const entry of entries) {
+        const equal = entry.indexOf('='), rawKey = (equal < 0 ? entry : entry.slice(0,equal)).trim();
+        if (rawKey.endsWith('/.cd')) { tikzNamespace = rawKey === '/tikz/.cd'; continue; }
+        if (!tikzNamespace && !rawKey.startsWith('/tikz/')) continue;
+        const key = keyName(rawKey);
+        const setting = equal < 0 ? '' : entry.slice(equal+1).trim();
+        const definition = /^(.*?)\/\.(style(?: args| n args)?|code(?: args| n args)?|initial|estore in|store in)$/.exec(key);
+        if (definition) custom.add(keyName(definition[1]));
+        if (/\/\.(?:style|append style|prefix style)$/.test(key)) {
+          const group = groupAt(setting,0,'{','}');
+          if (group) inspect(group.value,'any');
+        } else if (!key.includes('/.')) {
+          if (/^circuit (?:ee|logic)(?: |$)/.test(key)) nativeCircuits = true;
+          if (key === 'shape') candidates.push({key:keyName(setting.replace(/^\{(.*)\}$/, '$1')),context:'node'});
+          else candidates.push({key,context});
+        }
+      }
+    }
+    function optionsAt(index, context) {
+      index = skipSpaceAndComments(text,index);
+      if (text[index] !== '[') return index;
+      // A bracket inside a braced label must not close the option list.
+      for (let i=index+1, depth=1;i<text.length;i++) {
+        if (text[i] === '\\') { i++; continue; }
+        if (text[i] === '%') { i=skipSpaceAndComments(text,i)-1; continue; }
+        if (text[i] === '{') { const group=groupAt(text,i,'{','}'); if (group) {i=group.end-1;continue;} }
+        if (text[i] === '[') depth++;
+        if (text[i] === ']' && --depth === 0) { inspect(withoutComments(text.slice(index+1,i)),context); return i+1; }
+      }
+      return text.length;
+    }
+    for (const token of tokens) {
+      let pos = skipSpaceAndComments(text,token.end);
+      if (token.name === 'tikzset' || token.name === 'pgfkeys') {
+        const group=groupAt(text,pos,'{','}'); if (group) inspect(withoutComments(group.value),'any',token.name==='tikzset');
+      } else if (token.name === 'tikz') {
+        optionsAt(pos,'any');
+      } else if (token.name === 'tikzstyle') {
+        const group=groupAt(text,pos,'{','}');
+        if (group) { custom.add(keyName(group.value)); pos=skipSpaceAndComments(text,group.end); if(text[pos]==='=') optionsAt(pos+1,'any'); }
+      } else if (token.name === 'begin') {
+        const group=groupAt(text,pos,'{','}');
+        if (group && /^(?:tikzpicture|scope)$/.test(group.value.trim())) optionsAt(group.end,'any');
+      } else if (['draw','path','node','fill','filldraw','shade','shadedraw'].includes(token.name)) {
+        let context=token.name==='node'?'node':'path';
+        while(pos<text.length && text[pos]!==';') {
+          if (text[pos]==='[') {pos=optionsAt(pos,context);continue;}
+          if (text[pos]==='{' || text[pos]==='(') {
+            const group=groupAt(text,pos,text[pos],text[pos]==='{'?'}':')');
+            if(group) {pos=group.end;continue;}
+          }
+          if (text[pos]==='%') {pos=skipSpaceAndComments(text,pos);continue;}
+          if (text[pos]==='\\') break;
+          const word=/^[A-Za-z]+/.exec(text.slice(pos));
+          if(word) {
+            if(word[0]==='node') context='node';
+            else if(word[0]==='to' || word[0]==='edge') context='path';
+            pos+=word[0].length;
+          } else pos++;
+        }
+      }
+    }
+    return !nativeCircuits && candidates.some(({key,context}) => !custom.has(key) &&
+      ((context!=='node' && pathKeys.has(key)) || (context!=='path' && nodeKeys.has(key))));
+  }
+
+  function inferPackages(text, packages, libraries) {
+    const tokens = commandTokens(text), custom = definedCommands(text,tokens), explicit = new Set(Object.keys(packages));
+    const has = name => Object.prototype.hasOwnProperty.call(packages, name);
+    const add = name => { if (!has(name)) packages[name] = ''; };
     const used = new Set(tokens.filter(token => !custom.has(token.name)).map(token => token.name));
     for (const name of used) {
       const pkg = COMMAND_PACKAGES.get(name);
@@ -163,6 +282,7 @@
       if (env === 'tikzcd') add('tikz-cd');
       if (env === 'array' || env === 'tabular' || env === 'tabular*') add('array');
     }
+    if (!has('circuitikz') && usesCircuitComponents(text,tokens,libraries)) add('circuitikz');
     if (used.has('text') && !has('amsmath') && !has('mathtools') && !has('physics') && !has('mhchem')) add('amstext');
     // Keep explicit declarations/options. Avoid duplicate inferred dependencies.
     if (has('amssymb') && !explicit.has('amsfonts')) delete packages.amsfonts;
@@ -352,6 +472,19 @@
     const warnings = [];
     if (documentClass && documentClass.name !== 'standalone') warnings.push('The diagram engine uses the standalone class; the layout of the ' + documentClass.name + ' class is ignored.');
 
+    const beforeAdaptation = preamble + '\n' + body;
+    const adaptationTokens = commandTokens(beforeAdaptation), custom = definedCommands(beforeAdaptation,adaptationTokens,true);
+    const declaredCharacters = new Set();
+    for (const token of adaptationTokens) if (token.name === 'DeclareUnicodeCharacter') {
+      const group=groupAt(beforeAdaptation,skipSpaceAndComments(beforeAdaptation,token.end),'{','}');
+      const code=group && /^[0-9a-f]{1,6}$/i.test(group.value.trim()) ? parseInt(group.value,16) : NaN;
+      if (code>=0 && code<=0x10ffff) declaredCharacters.add(String.fromCodePoint(code));
+    }
+    const adaptedPreamble = adaptAccentedMathLabels(preamble,custom,declaredCharacters), adaptedBody = adaptAccentedMathLabels(body,custom,declaredCharacters);
+    preamble = adaptedPreamble.text; body = adaptedBody.text;
+    const adaptedLabels = adaptedPreamble.count + adaptedBody.count;
+    if (adaptedLabels) warnings.push(`LaTeX compatibility: rendered ${adaptedLabels} accented text label${adaptedLabels>1?'s':''} in \\mathrm using upright text. Use \\text{...} for words inside formulas.`);
+
     const uncommentedBody = () => withoutComments(body);
     if (!/\\(?:begin\s*\{(?:tikzpicture|circuitikz|tikzcd|axis|semilogxaxis|semilogyaxis|loglogaxis|groupplot|polaraxis)\}|tikz\b|chemfig\b)/.test(uncommentedBody()) && /\\(?:draw|node|path|fill|filldraw|coordinate|shade|shadedraw)\b/.test(uncommentedBody())) body = '\\begin{tikzpicture}\n' + body + '\n\\end{tikzpicture}';
     if (/\\begin\s*\{(?:axis|semilogxaxis|semilogyaxis|loglogaxis|groupplot|polaraxis)\}/.test(uncommentedBody()) && !/\\begin\s*\{tikzpicture\}/.test(uncommentedBody())) body = '\\begin{tikzpicture}\n' + body + '\n\\end{tikzpicture}';
@@ -365,7 +498,7 @@
     if (scan.includes('−')) unicode.push('\\DeclareUnicodeCharacter{2212}{\\ensuremath{-}}');
     if (scan.includes('°')) unicode.push('\\DeclareUnicodeCharacter{00B0}{\\ensuremath{{}^{\\circ}}}');
     if (unicode.length) preamble = unicode.join('\n') + '\n' + preamble;
-    inferPackages(preamble + '\n' + body, texPackages);
+    inferPackages(preamble + '\n' + body, texPackages, libraries);
 
     const plotLibraries = [];
     if (Object.prototype.hasOwnProperty.call(texPackages, 'pgfplots')) {

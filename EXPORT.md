@@ -29,7 +29,9 @@ The PDF exporter does not request the conversation API or reconstruct messages f
 
 The print copy removes navigation, composers and action buttons, uses a light background with page margins, wraps code, and preserves the page's rendered math and rich content. Pale neutral text from dark mode becomes dark ink on paper; diagram colors and deliberately colored text are preserved. Browser print settings control paper size and optional browser headers and footers; the in-window preview shows the content, while the print dialog shows final pagination.
 
-Diagrams are exported as complete vector SVGs with embedded fonts, using their intrinsic proportions and fitting within the page. Preview pan and zoom do not affect their size or crop the drawing. Updated local diagram edits are included. Finish generating replies, render every diagram and apply pending editor changes before exporting; the extension reports unavailable diagrams instead of silently leaving them out.
+Diagrams are exported as complete vector SVGs with embedded fonts, using their intrinsic proportions and fitting within the page. Preview pan and zoom do not affect their size or crop the drawing. Updated local diagram edits are included. Finish generating replies and apply pending editor changes before exporting. A diagram that fails compilation or cannot finish rendering within the bounded wait is replaced with its source and a concise error; the other diagrams and messages still export. The preview tells you how many diagrams use this fallback.
+
+Saving or cancelling the browser print dialog returns to the same preview. You can print again, adjust the message selection or close the export window without reloading ChatGPT.
 
 The browser loads the page's existing image resources as needed for the print copy. PDF does not download attachment files. Temporary capture and preview data remain in the tab and are cleared when the export window closes.
 

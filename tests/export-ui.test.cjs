@@ -11,6 +11,8 @@ function harness(respond,pathname='/c/'+ID,saved={},html=DEFAULT_PAGE){
   const w=dom.window,sent=[],downloads=[],blobs=[],copied=[],stored=[];
   w.URL.createObjectURL=blob=>{blobs.push(blob);return 'blob:synthetic-'+blobs.length;};w.URL.revokeObjectURL=()=>{};
   w.HTMLAnchorElement.prototype.click=function(){downloads.push({name:this.download,url:this.href});};
+  w.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
+  w.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');};
   Object.defineProperty(w.navigator,'clipboard',{value:{writeText:async value=>copied.push(value)}});
   w.chrome={storage:{local:{get:async defaults=>({...defaults,...saved}),set:async value=>stored.push(value)}}};
   function reply(request,data,overrides={}){w.dispatchEvent(new w.MessageEvent('message',{source:w,origin:w.location.origin,data:{channel:CHANNEL,type:'response',requestId:request.requestId,...data},...overrides}));}
@@ -437,6 +439,33 @@ test('PDF preview documents sharing the export styling class survive delayed con
   await h.remount();await h.remount();
   assert.equal(preview.isConnected,true);assert.equal(preview.parentElement,h.get('.li-export-pdf-preview'));assert.equal(prepared.disposed,false);
   assert.equal(preview.querySelectorAll('p').length,4);assert.equal(h.get('.li-export-panel').hidden,false);assert.equal(pdf.prepares.length,1);
+});
+
+test('real PDF preview remains after printing and is disposed when closing or changing options',async t=>{
+  for(const action of ['close','filter','format']){
+    const html='<header id="page-header"><div id="conversation-header-actions"></div></header><main><article data-message-id="q1" data-message-author-role="user">A prompt</article><article data-message-id="a1" data-message-author-role="assistant"><p>A rich <strong>answer</strong>.</p></article></main>';
+    const h=harness(null,'/c/'+ID,{},html);t.after(h.close);
+    h.w.eval(fs.readFileSync(path.join(ROOT,'export-pdf.js'),'utf8'));
+    const prints=[];h.w.print=()=>prints.push(h.get('.li-pdf-active'));
+    h.get('.li-export-reply').click();h.get('.li-export-inspect').click();await h.settle();
+    assert.match(h.get('.li-export-pdf-preview').textContent,/A rich answer/);assert.equal(prints.length,0);
+    h.get('.li-export-save').click();await h.settle();assert.equal(prints.length,1);
+    const printed=prints[0];assert.ok(printed);assert.equal(printed.parentElement,h.w.document.body);
+    h.w.dispatchEvent(new h.w.Event('afterprint'));await h.settle();
+    assert.equal(printed.parentElement,h.get('.li-export-pdf-preview'));assert.match(printed.textContent,/A rich answer/);
+    assert.equal(h.w.getComputedStyle(printed).display,'block');assert.equal(h.get('.li-export-pdf-preview').hidden,false);
+    assert.equal(h.w.document.body.classList.contains('li-pdf-printing'),false);assert.equal(h.get('.li-export-status').textContent,'');
+    if(action==='close')h.get('.li-export-close').click();
+    else if(action==='filter')h.change('#li-export-pdf-include-user',true);
+    else h.format('md');
+    await h.settle();assert.equal(printed.isConnected,false,action);
+    if(action==='filter'){
+      assert.match(h.get('.li-export-pdf-preview').textContent,/A prompt.*A rich answer/s);
+      assert.equal(h.w.document.querySelectorAll('style[data-latex-islands-pdf]').length,1);
+      h.get('.li-export-close').click();
+    }
+    assert.equal(h.get('.li-pdf-root'),null,action);assert.equal(h.get('style[data-latex-islands-pdf]'),null,action);assert.equal(h.sent.filter(item=>item.data.type==='request').length,0);
+  }
 });
 
 test('each reply has one PDF action which exports that reply and restores conversation scope on header open',async t=>{

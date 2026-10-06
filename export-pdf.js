@@ -5,6 +5,7 @@
   const chatgpt = globalThis.LatexIslandsChatGPT;
   const OWN = '.li-export, .li-export-reply, .latex-islands-editor';
   const OMIT = 'script, style, link, meta, base, iframe, object, embed, form, input, textarea, select, button, dialog, nav, [role="button"], [role="toolbar"], [role="menu"], [contenteditable="true"], [data-testid="composer"], [data-markdown-copy="exclude"], h4[data-conversation-role], .li-export, .li-export-reply, .latex-islands-editor, animate, animateMotion, animateTransform, set';
+  const IMAGE_OMIT = OMIT.split(', ').filter(selector => !['button', '[role="button"]'].includes(selector)).join(', ');
   const ASSET_TIMEOUT = 15000;
   const HISTORY_TIMEOUT = 600000, MAX_SCROLL_STEPS = 2000;
   const MAX_CAPTURE_RETRIES = 2;
@@ -121,6 +122,14 @@
     }
   }
   function diagramImage(snapshot) {
+    if (snapshot.error) {
+      const figure = make('figure', 'li-pdf-island li-pdf-diagram-fallback');
+      const caption = make('figcaption', '', 'Diagram could not be rendered');
+      const reason = make('p', '', String(snapshot.error).slice(0, 500));
+      const pre = make('pre'), code = make('code');
+      code.textContent = snapshot.source || chatgpt.source(snapshot.sourceElement) || snapshot.sourceElement?.textContent || '';
+      pre.append(code); figure.append(caption, reason, pre); return figure;
+    }
     const width = Number(snapshot.width), height = Number(snapshot.height);
     if (!(width > 0 && height > 0 && Number.isFinite(width) && Number.isFinite(height)) || !/^\s*(?:<\?xml[^>]*>\s*)?<svg[\s>]/i.test(snapshot.svg || '')) throw Error('A LaTeX Island has no valid rendered size. Render it again before exporting.');
     const figure = make('figure', 'li-pdf-island'), image = make('img', 'li-pdf-island-image');
@@ -252,6 +261,9 @@
 #${id} .li-pdf-content :is(img,canvas) { max-width:100% !important; height:auto; object-fit:contain; break-inside:avoid; }
 #${id} .li-pdf-content svg:not(svg svg) { display:block; max-width:100% !important; height:auto !important; max-height:180mm !important; break-inside:avoid; }
 #${id} .li-pdf-island { display:block; max-width:100%; margin:12pt 0; padding:0; break-inside:avoid; page-break-inside:avoid; }
+#${id} .li-pdf-diagram-fallback { break-inside:auto; page-break-inside:auto; border-left:3px solid #aaa; padding-left:10pt; }
+#${id} .li-pdf-diagram-fallback figcaption { font-weight:650; }
+#${id} .li-pdf-diagram-fallback > p { font-size:9pt; color:#555; }
 #${id} .li-pdf-raw-text { white-space:pre-wrap; }
 #${id} .li-pdf-island-image { display:block; max-width:100% !important; max-height:180mm !important; height:auto !important; object-fit:contain; margin:0 auto; }
 #${id} .katex-mathml, #${id} mjx-assistive-mml { display:none !important; }
@@ -284,14 +296,22 @@
     return elementKeys.get(element);
   }
   function mediaSignature(element) {
-    return [...element.querySelectorAll('img, svg, canvas, .latex-islands-container')].map(node => node.localName === 'img' ? (node.currentSrc || node.getAttribute('src') || '') + ':' + node.naturalWidth : node.outerHTML).join('|');
+    return [...element.querySelectorAll('img, svg, canvas')].filter(node => !node.closest((node.localName === 'img' ? IMAGE_OMIT : OMIT) + ', .latex-islands-container')).map(node => node.localName === 'img' ? (node.currentSrc || node.getAttribute('src') || '') + ':' + node.naturalWidth : node.outerHTML).join('|');
   }
   function messageText(element) {
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    let node, text = '';
+    const codeBlocks = new Set(chatgpt.getCodeBlocks(element));
+    let text = '';
     // The host loader changes while the iframe connects; it is extension UI,
     // not a streamed change to the user's actual message or source code.
-    while ((node = walker.nextNode())) if (!node.parentElement?.closest(OMIT + ', ' + OWN + ', .latex-islands-container')) text += node.data;
+    const visit = node => {
+      if (node.nodeType === Node.TEXT_NODE) { text += node.data; return; }
+      if (node.nodeType !== Node.ELEMENT_NODE || node.matches(OMIT + ', ' + OWN + ', .latex-islands-container')) return;
+      // Hydrating a plain code block into CodeMirror adds gutters and replaces
+      // newline text with block elements. Compare the code, not that widget UI.
+      if (codeBlocks.has(node)) { text += chatgpt.source(node).replace(/\r\n?/g, '\n'); return; }
+      for (const child of node.childNodes) visit(child);
+    };
+    visit(element);
     return text;
   }
   function turnIndex(element) {
@@ -329,7 +349,7 @@
       const snapshotter = globalThis.LatexIslandsDiagramExport?.snapshot;
       if (!snapshotter && hasIsland(source)) throw Error('LaTeX Island export is unavailable. Reload the page and render the diagrams before exporting.');
       try {
-        snapshots = snapshotter ? await bounded(snapshotter(source, {signal}), signal, 'A diagram did not finish rendering for PDF export.') : [];
+        snapshots = snapshotter ? await bounded(snapshotter(source, {signal, tolerateErrors:true}), signal, 'A diagram did not finish rendering for PDF export.') : [];
         if (waitForDiagram && hasIsland(source) && !snapshots.length) throw Error('A LaTeX Island is not ready.');
         break;
       } catch (error) {
@@ -348,7 +368,8 @@
     const section = make('section', 'li-pdf-message'), role = chatgpt.role(source);
     section.append(make('h2', 'li-pdf-role', role === 'user' ? 'You' : 'ChatGPT'));
     const content = make('div', 'li-pdf-content'), copy = cloneContent(source, replacements, removed);
-    if (copy) content.append(copy);
+    if (!copy) throw Error('This message is no longer visible. Load the conversation again.');
+    content.append(copy);
     section.append(content);
     if (waitForDiagram) await readyAssets(section, signal);
     if (!source.isConnected || messageText(source) !== originalText) throw Error('The conversation changed during PDF export. Try again.');
@@ -509,12 +530,26 @@
     root.id = id; root.setAttribute('role', 'document'); root.setAttribute('aria-label', title);
     style.textContent = stylesheet(id); style.dataset.latexIslandsPdf = id;
     root.append(make('h1', 'li-pdf-title', title));
-    let disposed = false, printing = false, previousTitle = null;
-    const dispose = () => {
-      if (disposed) return; disposed = true;
-      window.removeEventListener('afterprint', dispose); window.removeEventListener('pagehide', dispose); signal?.removeEventListener('abort', dispose);
+    let disposed = false, printing = false, previousTitle = null, previewContainer = null;
+    const resetPrint = () => {
+      window.removeEventListener('afterprint', afterPrint);
       if (activePrint === root) { activePrint = null; document.body.classList.remove('li-pdf-printing'); }
       if (previousTitle !== null && document.title === title) document.title = previousTitle;
+      previousTitle = null; printing = false; root.classList.remove('li-pdf-active');
+      root.style.removeProperty('display');
+    };
+    const afterPrint = () => {
+      if (disposed) return;
+      resetPrint();
+      // Printing temporarily moves the preview onto the page. Cancelling or
+      // saving must return that same document to the still-open export dialog.
+      if (previewContainer?.isConnected && !previewContainer.closest('[hidden], dialog:not([open])')) { root.classList.add('li-pdf-preview'); previewContainer.append(root); }
+      else dispose();
+    };
+    const dispose = () => {
+      if (disposed) return; disposed = true;
+      resetPrint(); window.removeEventListener('pagehide', dispose); signal?.removeEventListener('abort', dispose);
+      previewContainer = null;
       root.remove(); style.remove();
     };
     signal?.addEventListener('abort', dispose, {once:true});
@@ -533,17 +568,22 @@
       if (stored && (!captures.has(capture) || stored.sourceURL !== conversationURL())) throw Error('This PDF capture has expired. Load the conversation again.');
       if (originals.some(({source,text,media}) => !source.isConnected || messageText(source) !== text || mediaSignature(source) !== media)) throw Error('The conversation changed during PDF export. Try again.');
       onProgress({phase:'ready', completed:selected.length, total:selected.length});
-      return {root, count:selected.length, title, dispose, mountPreview(container) {
+      return {root, count:selected.length, title, warningCount:root.querySelectorAll('.li-pdf-diagram-fallback').length, dispose, mountPreview(container) {
         check(signal);
         if (disposed || printing || !container?.isConnected) throw Error('This PDF preview is no longer available. Prepare it again.');
-        root.classList.add('li-pdf-preview'); container.append(root); return root;
+        previewContainer = container; root.classList.add('li-pdf-preview'); container.append(root); return root;
       }, print() {
         check(signal);
         if (disposed || !root.isConnected) throw Error('This PDF export has expired. Prepare it again.');
         if (printing || activePrint) throw Error('A PDF print dialog is already open.');
         printing = true; activePrint = root; previousTitle = document.title; document.title = title;
         root.classList.remove('li-pdf-preview'); document.body.append(root);
-        root.classList.add('li-pdf-active'); document.body.classList.add('li-pdf-printing'); window.addEventListener('afterprint', dispose, {once:true});
+        root.classList.add('li-pdf-active'); document.body.classList.add('li-pdf-printing'); window.addEventListener('afterprint', afterPrint, {once:true});
+        // ChatGPT hides other body children in a named CSS layer when its own
+        // print document exists. Layered !important beats even our ID selector;
+        // an inline important declaration protects this root without changing
+        // any host elements or depending on ChatGPT's generated class names.
+        root.style.setProperty('display', 'block', 'important');
         try { window.print(); } catch (error) { dispose(); throw error; }
       }};
     } catch (error) { dispose(); throw error; }

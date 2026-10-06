@@ -124,6 +124,12 @@ snippets.push(...LatexIslandsExamples.map(example=>['example-'+example.id,exampl
     assert.ok(fs.existsSync(path.join(engineDir,'fonts',family+'.woff2')),`${name}: missing font ${family}`);
     assert.ok(fontCSS.includes('font-family: '+family+';'),`${name}: missing font CSS for ${family}`);
    }
+   if(name==='mathrm-accented-label-script-fonts') {
+    // Text-style repairs must stay upright even in an italic node, and honor
+    // math script sizes rather than inserting full-size text into subscripts.
+    assert.deepEqual([...families].sort(),['cmr10','cmr5','cmr7']);
+    for(const size of [5,7,10]) assert.match(result.svg,new RegExp(`font-family="cmr${size}" font-size="${size}"`));
+   }
    fs.writeFileSync(path.join(__dirname,'engine-fixtures','robust-'+name+'.svg'),result.svg);
    console.log('PASS robust-'+name,result.svg.length+' bytes',result.duration+'ms');
   } catch(error) {

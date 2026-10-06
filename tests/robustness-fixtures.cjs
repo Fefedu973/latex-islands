@@ -54,6 +54,59 @@ module.exports = [
 to[R,l={\SI{4.7}{\kilo\ohm}}] (3,2)
 to[C,l={\qty{100}{\micro\farad}}] (3,0) -- (0,0);
 \end{circuitikz}`],
+ ['circuitikz-tikzpicture-rectifier-user-example', String.raw`\begin{tikzpicture}
+\draw (0,0) node[ground]{} to[sV,l=$v_e(t)$] (0,3)
+      to[D,l=$D$] (3,3)
+      -- (5,3);
+\draw (3,3) to[C,l=$C_L$] (3,0) node[ground]{};
+\draw (5,3) to[R,l=$R_L$] (5,0) node[ground]{};
+\draw[->] (5.7,0.2) -- (5.7,2.8) node[midway,right] {$v_s$};
+\end{tikzpicture}`],
+ ['circuitikz-tikzpicture-path-components', String.raw`\begin{tikzpicture}
+\draw (0,0) to[R,l=$R$] (2,0) to[L,l=$L$] (4,0)
+      to[C,l=$C$] (4,-2) -- (0,-2) -- (0,0);
+\end{tikzpicture}`],
+ ['circuitikz-accented-mathrm-user-example', String.raw`\begin{tikzpicture}
+\draw (0,0) node[ground]{} to[sV,l=$v_e(t)$] (0,3)
+      to[R,l=$r_{GBF}$] (2.5,3)
+      to[battery1,l=$V_S$] (4.5,3)
+      -- (6,3);
+
+\draw (8,3) -- (6,3);
+\draw (8,3) to[R,l=$R_L$] (8,0) node[ground]{};
+
+\draw[fill] (6,3) circle (1.5pt);
+\draw[fill] (6,0) circle (1.5pt);
+\draw (6,0) node[ground]{};
+
+\draw[<->] (6.6,0.2)--(6.6,2.8)
+ node[midway,right] {$E_{Th}=V_{\mathrm{à\,vide}}$};
+\end{tikzpicture}`],
+ ['mathrm-explicit-text-accents', String.raw`\begin{tikzpicture}
+\node at (0,1) {$V_{\mathrm{\`a\,vide}}$};
+\node at (0,0) {$I_{\mathrm{r\'eseau}}$};
+\node at (0,-1) {$U_{\mathrm{cr\^{e}te}}$};
+\end{tikzpicture}`],
+ ['mathrm-accented-label-script-fonts', String.raw`\begin{tikzpicture}
+\node[font=\itshape] at (0,0) {$\mathrm{à\,vide}_{\mathrm{réseau}_{\mathrm{crête}}}$};
+\end{tikzpicture}`],
+ ['circuitikz-tikzpicture-ground-node', String.raw`\begin{tikzpicture}
+\draw (0,1) -- (0,0) node[ground]{};
+\end{tikzpicture}`],
+ ['circuitikz-tikzpicture-op-amp-node', String.raw`\begin{tikzpicture}
+\node[op amp] (amp) at (0,0) {};
+\draw (amp.+) -- ++(-1,0) node[left] {$v_+$};
+\draw (amp.-) -- ++(-1,0) node[left] {$v_-$};
+\draw (amp.out) -- ++(1,0) node[right] {$v_o$};
+\end{tikzpicture}`],
+ ['tikz-native-iec-circuit', String.raw`\usetikzlibrary{circuits.ee.IEC}
+\begin{tikzpicture}[circuit ee IEC]
+\draw (0,0) node[ground]{} to[resistor={info={$R$}}] (0,2);
+\end{tikzpicture}`],
+ ['tikz-custom-circuit-key-names', String.raw`\tikzset{ground/.style={circle,draw,inner sep=2pt},R/.style={dashed}}
+\begin{tikzpicture}
+\draw (0,0) node[ground] {A} to[R] (2,0) node[ground] {B};
+\end{tikzpicture}`],
  ['siunitx-quantity-comment-separated-arguments', String.raw`\begin{tikzpicture}
 \node at (0,0) {$\qty{5}% value comment
 {\metre}$};

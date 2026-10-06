@@ -12,6 +12,7 @@
   const HIDDEN_ATTRIBUTE = 'data-latex-islands-hidden';
   const states = new Map(), ids = new Map(), dirty = new Set();
   const snapshots = new Map(), MAX_SNAPSHOT = 10 * 1024 * 1024;
+  const printMedia=window.matchMedia?.('print');
   let snapshotSequence = 0, diagnosticSequence = 0;
   const settings = {enabled:true, autoRender:true, scale:1, renderColors:'chatgpt'};
   let timer = 0, timerDue = Infinity, sequence = 0, fullScan = true, editor = null;
@@ -32,7 +33,7 @@
     return message && chatgpt.role(message)==='assistant'?message:null;
   }
   function assistantsWithin(root) {return chatgpt.getMessages(root).filter(message=>chatgpt.role(message)==='assistant' && !ownNode(message));}
-  function printingPDF() {return document.body?.classList.contains('li-pdf-printing');}
+  function printingPDF() {return document.body?.classList.contains('li-pdf-printing') || printMedia?.matches;}
   function setSourceHidden(state,hidden) {
     state.hideSource=state.type!=='raw' && hidden;
     const el=state.element;
@@ -145,6 +146,18 @@
     return location.href===href && liveFrame(state) && !state.frame.hasAttribute('srcdoc') && state.ready && state.port===port && state.generation===generation && state.complete &&
       state.sentSource===source && (state.draftSource??state.source)===source && state.source===hostSource && sourceForSnapshot(state)===hostSource;
   }
+  function snapshotSourceCurrent(request) {
+    const {state,source,hostSource,href}=request;
+    // A failed renderer can still export its code, but never code from another
+    // conversation or an edited/replaced message.
+    return location.href===href && ids.get(state.id)===state && state.element.isConnected && state.container?.isConnected && state.complete &&
+      (state.draftSource??state.source)===source && state.source===hostSource && sourceForSnapshot(state)===hostSource;
+  }
+  function diagramSnapshotError(message) {const error=new Error(message);error.code='LI_DIAGRAM_UNAVAILABLE';return error;}
+  function conciseDiagramError(message) {
+    const lines=String(message || 'The diagram could not be rendered.').split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+    return (lines.find(line=>/^!|^Package .+ Error:|^Please use /.test(line)) || lines[0] || 'The diagram could not be rendered.').replace(/^!\s*/,'').slice(0,500);
+  }
   function snapshotUnavailableMessage(request) {
     const {state,source,hostSource}=request;
     if(!liveFrame(state) || state.frame.hasAttribute('srcdoc'))return 'The diagram is unavailable. Reload the conversation and try again.';
@@ -232,17 +245,19 @@
     const request=snapshots.get(data.requestId);
     if(!request || request.state!==state || request.port!==port)return;
     if(!snapshotCurrent(request) || data.source!==request.source) {request.finish(new Error('The diagram changed. Wait for the latest render, then export again.'));return;}
-    if(data.ok!==true) {request.finish(new Error(typeof data.error==='string'?data.error.slice(0,500):'The diagram could not be exported. Render it and try again.'));return;}
+    if(data.ok!==true) {
+      const message=typeof data.error==='string'?data.error.slice(0,500):'The diagram could not be exported. Render it and try again.';
+      request.finish(/^The diagram (?:has changed|changed|is still streaming)/.test(message)?new Error(message):diagramSnapshotError(message));return;
+    }
     if(typeof data.svg!=='string' || !data.svg || data.svg.length>MAX_SNAPSHOT || new Blob([data.svg]).size>MAX_SNAPSHOT ||
       !Number.isFinite(data.width) || !Number.isFinite(data.height) || data.width<=0 || data.height<=0 || data.width>100000 || data.height>100000) {
-      request.finish(new Error('The diagram export has invalid dimensions or exceeds the 10 MB limit.'));return;
+      request.finish(diagramSnapshotError('The diagram export has invalid dimensions or exceeds the 10 MB limit.'));return;
     }
     request.finish(null,{sourceElement:state.element,containerElement:state.container,svg:data.svg,width:data.width,height:data.height});
   }
-  function snapshotState(state,signal) {
+  function snapshotState(request,signal,timeoutMs=10000) {
     return new Promise((resolve,reject)=>{
-      const source=state.draftSource??state.source,requestId='snapshot-'+(++snapshotSequence);
-      const request={state,port:state.port,source,hostSource:state.source,href:location.href,generation:state.generation};
+      const {state,source}=request,requestId='snapshot-'+(++snapshotSequence);
       let timeout=0,finished=false;
       const abort=()=>request.finish(new DOMException('PDF export was cancelled.','AbortError'));
       request.finish=(error,value)=>{
@@ -255,26 +270,54 @@
       if(signal?.aborted) {abort();return;}
       if(!snapshotCurrent(request)) {request.finish(new Error(snapshotUnavailableMessage(request)));return;}
       snapshots.set(requestId,request);signal?.addEventListener('abort',abort,{once:true});
-      timeout=setTimeout(()=>request.finish(new Error('The diagram export timed out. Render the diagram again and retry the PDF export.')),10000);
-      try {if(!post(state,{type:'snapshot',requestId,source}))request.finish(new Error('The diagram is unavailable. Reload it and try exporting again.'));}
-      catch {request.finish(new Error('The diagram disconnected. Reload it and try exporting again.'));}
+      timeout=setTimeout(()=>request.finish(diagramSnapshotError('The diagram export timed out. Render the diagram again and retry the PDF export.')),timeoutMs);
+      try {if(!post(state,{type:'snapshot',requestId,source}))request.finish(diagramSnapshotError('The diagram is unavailable. Reload it and try exporting again.'));}
+      catch {request.finish(diagramSnapshotError('The diagram disconnected. Reload it and try exporting again.'));}
     });
   }
-  globalThis.LatexIslandsDiagramExport=Object.freeze({async snapshot(element,{signal}={}) {
+  async function tolerantSnapshot(request,signal) {
+    const {state,source}=request,deadline=Date.now()+10000;
+    const fallback=message=>({sourceElement:state.element,containerElement:state.container,source,error:conciseDiagramError(message)});
+    const check=()=>{
+      if(signal.aborted)throw new DOMException('PDF export was cancelled.','AbortError');
+      if(!snapshotSourceCurrent(request))throw new Error('The diagram or conversation changed. Try exporting the PDF again.');
+    };
+    const pause=()=>new Promise((resolve,reject)=>{
+      const finish=()=>{signal.removeEventListener('abort',abort);resolve();};
+      const timer=setTimeout(finish,Math.min(200,Math.max(0,deadline-Date.now())));
+      const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);reject(new DOMException('PDF export was cancelled.','AbortError'));};
+      signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();
+    });
+    while(true) {
+      check();
+      request.port=state.port;request.generation=state.generation;
+      if(snapshotCurrent(request)) {
+        try {return await snapshotState(request,signal,Math.max(1,deadline-Date.now()));}
+        catch(error) {
+          check();
+          if(error.code!=='LI_DIAGRAM_UNAVAILABLE')throw error;
+          if(!/still rendering|still loading/.test(error.message) || Date.now()>=deadline)return fallback(state.failedSource===source && state.renderError || error.message);
+        }
+      }
+      if(Date.now()>=deadline)return fallback(snapshotUnavailableMessage(request));
+      await pause();
+    }
+  }
+  globalThis.LatexIslandsDiagramExport=Object.freeze({async snapshot(element,{signal,tolerateErrors=false}={}) {
     if(signal?.aborted)throw new DOMException('PDF export was cancelled.','AbortError');
     if(!element?.isConnected || typeof element.contains!=='function')throw new Error('The conversation is no longer available.');
     // Include diagrams added since the last scheduled scan; do not silently print their source instead.
     fullScan=true;scan();
     const selected=[...states.values()].filter(state=>element.contains(state.element));
     const checkpoints=selected.map(state=>({state,port:state.port,source:state.draftSource??state.source,hostSource:state.source,href:location.href,generation:state.generation}));
-    const controller=new AbortController(),abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true});
+    const controller=new AbortController(),abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true});window.addEventListener('pagehide',abort,{once:true});
     try {
-      const results=await Promise.all(selected.map(state=>snapshotState(state,controller.signal)));
-      if(signal?.aborted)throw new DOMException('PDF export was cancelled.','AbortError');
-      if(!element.isConnected || checkpoints.some(request=>!element.contains(request.state.element)||!snapshotCurrent(request)))throw new Error('The diagram or conversation changed. Try exporting the PDF again.');
+      const results=await Promise.all(checkpoints.map(request=>tolerateErrors?tolerantSnapshot(request,controller.signal):snapshotState(request,controller.signal)));
+      if(controller.signal.aborted)throw new DOMException('PDF export was cancelled.','AbortError');
+      if(!element.isConnected || checkpoints.some((request,index)=>!element.contains(request.state.element)||!(results[index].error?snapshotSourceCurrent(request):snapshotCurrent(request))))throw new Error('The diagram or conversation changed. Try exporting the PDF again.');
       return results;
     }
-    finally {controller.abort();signal?.removeEventListener('abort',abort);}
+    finally {controller.abort();signal?.removeEventListener('abort',abort);window.removeEventListener('pagehide',abort);}
   }});
   function send(state,force=false) {
     const source=state.complete && state.draftSource!=null?state.draftSource:state.source;
@@ -580,7 +623,7 @@
       if(!state.complete || (typeof data.source==='string' && data.source!==state.sentSource) || state.sentSource!==(state.draftSource??state.source)) return;
       const success=data.ok===true || (typeof data.svg==='string' && data.svg.length>0 && !data.error);
       state.diagnosticResult={at:Date.now(),ok:success};recordDiagnostic(state,'render-result',success?'success':'failure');
-      state.loading=false;state.failedSource=success?null:state.sentSource;state.revealedSource=false;finishBoot(state);
+      state.loading=false;state.failedSource=success?null:state.sentSource;state.renderError=success?null:conciseDiagramError(data.error);state.revealedSource=false;finishBoot(state);
       setSourceHidden(state,success);
     }
   });
@@ -655,6 +698,9 @@
   const themeObserver=new MutationObserver(syncPageTheme);
   for(const element of [document.documentElement,document.body]) if(element)themeObserver.observe(element,{attributes:true,attributeFilter:['class','data-theme','style']});
   window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change',syncPageTheme);
+  // afterprint can fire before Chromium stops applying print styles. Keep the
+  // live conversation intact until screen media resumes, even without a DOM mutation.
+  printMedia?.addEventListener?.('change',event=>{if(!event.matches){fullScan=true;schedule(0);syncPageTheme();}});
   function updateSettings(next) {
     const previousColors=settings.renderColors;
     for(const key of Object.keys(settings))if(Object.hasOwn(next,key))settings[key]=next[key];
