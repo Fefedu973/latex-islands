@@ -52,6 +52,78 @@ test('infers packages and wraps bare axis or draw fragments', () => {
   assert.match(core.normalizeTeX(String.raw`\draw (0,0)--(1,1);`).body, /^\\begin\{tikzpicture\}/);
 });
 
+test('infers Circuitikz from circuit components inside ordinary tikzpicture', () => {
+  const source = String.raw`\begin{tikzpicture}
+\draw (0,0) node[ground]{} to[sV,l=$v_e(t)$] (0,3)
+      to[D,l=$D$] (3,3)
+      -- (5,3);
+\draw (3,3) to[C,l=$C_L$] (3,0) node[ground]{};
+\draw (5,3) to[R,l=$R_L$] (5,0) node[ground]{};
+\draw[->] (5.7,0.2) -- (5.7,2.8) node[midway,right] {$v_s$};
+\end{tikzpicture}`;
+  const result = core.normalizeTeX(source);
+  assert.deepEqual(result.texPackages, {circuitikz:''});
+  assert.equal(result.body,source);
+  assert.deepEqual(core.normalizeTeX('\\usepackage[american,RPvoltages]{circuitikz}\n'+source).texPackages, {circuitikz:'american,RPvoltages'});
+});
+
+test('infers Circuitikz for standalone path and node components with nested labels', () => {
+  for (const component of ['R','C','L','D','sV','battery','short','generic']) {
+    const result=core.normalizeTeX(String.raw`\draw (0,0) to [l={text ] node[custom]},${component}] (2,0);`);
+    assert.equal(result.texPackages.circuitikz,'',component);
+  }
+  for (const component of ['ground','sground','npn','pmos','op amp','ideal op amp']) {
+    assert.equal(core.normalizeTeX(String.raw`\node (device) [${component}] {};`).texPackages.circuitikz,'',component);
+  }
+  assert.equal(core.normalizeTeX(String.raw`\node[shape=ground] {};`).texPackages.circuitikz,'');
+  assert.equal(core.normalizeTeX(String.raw`\draw (0,0) node[/tikz/ground] {};`).texPackages.circuitikz,'');
+  assert.equal(core.normalizeTeX(String.raw`\draw (0,0) to% component follows
+[R] (2,0);`).texPackages.circuitikz,'');
+  assert.equal(core.normalizeTeX(String.raw`\path (0,0) edge[C] (2,0);`).texPackages.circuitikz,'');
+});
+
+test('Circuitikz inference follows styles but respects custom definitions', () => {
+  assert.equal(core.normalizeTeX(String.raw`\tikzset{load/.style={R,l={load}}}\draw (0,0) to[load] (2,0);`).texPackages.circuitikz,'');
+  assert.equal(core.normalizeTeX(String.raw`\tikzstyle{load}=[R]\draw (0,0) to[load] (2,0);`).texPackages.circuitikz,'');
+  for (const declarations of [
+    String.raw`\tikzset{ground/.style={circle,draw},R/.style={dashed}}`,
+    String.raw`\tikzstyle{ground}=[circle,draw]\tikzstyle{R}=[dashed]`,
+    String.raw`\tikzset{/tikz/ground/.code={},R/.style={}}`,
+    String.raw`\pgfkeys{/tikz/ground/.style={circle,draw},/tikz/R/.style={dashed}}`,
+    String.raw`\pgfkeys{/tikz/.cd,ground/.style={circle,draw},R/.style={dashed}}`
+  ]) {
+    assert.deepEqual(core.normalizeTeX(declarations+String.raw`\draw (0,0) node[ground]{} to[R] (2,0);`).texPackages,{});
+  }
+  assert.deepEqual(core.normalizeTeX(String.raw`\begin{tikzpicture}[ground/.style={circle},R/.style={dashed}]\node[ground] {};\draw (0,0) to[R] (2,0);\end{tikzpicture}`).texPackages,{});
+  assert.deepEqual(core.normalizeTeX(String.raw`\tikz[ground/.style={circle,draw}] \node[ground] {};`).texPackages,{});
+  assert.equal(core.normalizeTeX(String.raw`\pgfkeys{/other/.cd,ground/.style={circle}}\node[ground] {};`).texPackages.circuitikz,'');
+});
+
+test('Circuitikz inference ignores labels, coordinates, comments and verbatim text', () => {
+  const source=String.raw`% \node[ground] {}; \draw (0,0) to[R] (2,0);
+\begin{tikzpicture}
+\node[align=center,label={above:to[R], node[ground]}] {ground, R, C, D and to[R] or node[ground]};
+\node at (0,1) {\verb|\node[ground]{}; \draw (0,0) to[R] (2,0);|};
+\coordinate (ground) at (0,0);
+\draw (ground)--(1,1) node[right] {$R+C+D$};
+\end{tikzpicture}`;
+  assert.deepEqual(core.normalizeTeX(source).texPackages,{});
+});
+
+test('Circuitikz inference does not override native TikZ circuits libraries', () => {
+  for (const prefix of [String.raw`\usetikzlibrary{circuits.ee.IEC}`,String.raw`\usetikzlibrary{circuits.ee.US}`]) {
+    const result=core.normalizeTeX(prefix+String.raw`\begin{tikzpicture}[circuit ee IEC]\node[ground] {};\draw (0,0) to[resistor] (2,0);\end{tikzpicture}`);
+    assert.deepEqual(result.texPackages,{});
+  }
+});
+
+test('inferred Circuitikz receives the existing label compatibility fix', () => {
+  const result=core.normalizeTeX(String.raw`\draw (0,0) to[R,l=$R=10\Omega$] (2,0);`);
+  assert.equal(result.texPackages.circuitikz,'');
+  assert.match(result.body,/l=\{\$R=10/);
+  assert.equal(result.warnings.length,1);
+});
+
 test('loads math text support for diagram labels and preamble macros', () => {
   for (const label of ['charge', 'réseau compliqué']) {
     const source = String.raw`\begin{circuitikz}\draw (0,0) to[generic,l=$\text{${label}}$] (3,0);\end{circuitikz}`;
@@ -64,6 +136,55 @@ test('loads math text support for diagram labels and preamble macros', () => {
 \begin{document}\begin{tikzpicture}\node {$\labeltext$};\end{tikzpicture}\end{document}`);
   assert.equal(result.texPackages.amstext, '');
   assert.equal(result.addToPreamble, String.raw`\newcommand{\labeltext}{\text{charge}}`);
+});
+
+test('adapts plain accented mathrm labels while preserving their original source', () => {
+  for (const label of ['à\\,vide','réseau compliqué','fréquence','\\`a\\,vide',String.raw`r\'{e}seau`,String.raw`fa\c{c}ade`]) {
+    const source=String.raw`\begin{tikzpicture}\node {$V_{\mathrm{${label}}}$};\end{tikzpicture}`;
+    const result=core.normalizeTeX(source);
+    assert.equal(result.source,source);
+    assert.deepEqual(result.texPackages,{amstext:''});
+    assert.ok(result.body.includes('\\text{\\normalfont '+label+'}'),label);
+    assert.equal(result.warnings.length,1);
+    assert.match(result.warnings[0],/accented text label/);
+  }
+});
+
+test('accented mathrm adaptation handles macros, balanced groups and multiple labels', () => {
+  const source=String.raw`\newcommand{\loadlabel}{\mathrm{r\'{e}seau}}
+\begin{tikzpicture}\node {$V_{\mathrm% label follows
+{à\,{vide}}}+I_{\mathrm{entrée}}$};\end{tikzpicture}`;
+  const result=core.normalizeTeX(source);
+  assert.match(result.preamble,/\\text\{\\normalfont r/);
+  assert.ok(result.body.includes('\\text{\\normalfont à\\,{vide}}'));
+  assert.match(result.warnings[0],/3 accented text labels/);
+});
+
+test('accented mathrm adaptation leaves expressions, comments and verbatim text intact', () => {
+  const source=String.raw`\begin{tikzpicture}
+% \mathrm{entrée}
+\node {\verb|\mathrm{à\,vide}|};
+\node {\string\mathrm{été}};
+\node {\noexpand\mathrm{été}};
+\node {$\mathrm{d}+\mathrm{GBF}+\mathrm{Hz}+\mathrm{é^2}+\mathrm{é+x}+\mathrm{é-x}+\mathrm{réel\alpha}+\mathrm{réel\custom}$};
+\end{tikzpicture}`;
+  const result=core.normalizeTeX(source);
+  assert.equal(result.body,source);
+  assert.deepEqual(result.texPackages,{});
+  assert.equal(result.warnings.length,0);
+});
+
+test('accented mathrm adaptation honors custom command definitions and package options', () => {
+  const body=String.raw`\begin{tikzpicture}\node {$V_{\mathrm{à\,vide}}$};\end{tikzpicture}`;
+  for (const declaration of [String.raw`\renewcommand{\mathrm}[1]{#1}`,String.raw`\def\mathrm#1{#1}`,String.raw`\let\mathrm\text`,String.raw`\newcommand{\text}[1]{#1}`]) {
+    const result=core.normalizeTeX(declaration+'\n'+body);
+    assert.equal(result.body,body);
+    assert.equal(result.warnings.length,0);
+  }
+  assert.deepEqual(core.normalizeTeX(String.raw`\usepackage[fleqn]{amsmath}`+body).texPackages,{amsmath:'fleqn'});
+  assert.deepEqual(core.normalizeTeX(String.raw`\usepackage{amstext}`+body).texPackages,{amstext:''});
+  assert.equal(core.normalizeTeX(String.raw`\DeclareUnicodeCharacter{00E0}{x}`+body).body,body);
+  assert.deepEqual(core.normalizeTeX(String.raw`\renewcommand{\boxed}[1]{\fbox{#1}}\node {$\boxed{x}$};`).texPackages,{amsmath:''});
 });
 
 test('math text inference preserves explicit AMS packages and options', () => {

@@ -1,4 +1,4 @@
-# Reviewer build and runtime provenance — 1.5.5
+# Reviewer build and runtime provenance — 1.5.8
 
 ## Extension packages
 
@@ -16,9 +16,9 @@ npm run lint:firefox
 
 `npm ci` installs development/test/packaging dependencies from the locked npm dependency set. These tools are not installed or downloaded by the running extension.
 
-Build outputs are `dist/chrome/`, `dist/firefox/`, `dist/latex-islands-chrome-1.5.5.zip`, `dist/latex-islands-firefox-1.5.5.zip`, and `dist/latex-islands-source-1.5.5.zip`. Browser ZIPs have `manifest.json` at their root. The source ZIP includes first-party code, scripts, tests, lockfiles, notices, readable worker modifications and the upstream archives listed below. The build does not recompile the upstream TeX toolchain.
+Build outputs are `dist/chrome/`, `dist/firefox/`, `dist/latex-islands-chrome-1.5.8.zip`, `dist/latex-islands-firefox-1.5.8.zip`, and `dist/latex-islands-source-1.5.8.zip`. Browser ZIPs have `manifest.json` at their root. The source ZIP includes first-party code, scripts, tests, lockfiles, notices, readable worker modifications and the upstream archives listed below. The build does not recompile the upstream TeX toolchain.
 
-Version 1.5.5 fixes PDF text contrast when capturing ChatGPT's dark theme and includes the September integration updates, without new runtime dependencies or permissions. Content scripts start at `document_end` so diagram loaders can replace existing code earlier. PDF scrolls the current conversation to let the site load earlier messages, keeps sanitized rich-content snapshots in memory, and opens the browser's print dialog only when requested. It does not use the conversation API bridge. Markdown and text use that bridge and apply message selection; the complete JSON archive remains unfiltered. See [export details](../EXPORT.md) and [validation results](../VALIDATION.md).
+Version 1.5.8 fixes blank PDF printing, restores previews after printing, and exports source fallbacks for failed diagrams. It also adapts plain accented text labels in `\mathrm` to upright text before compilation. It includes Circuitikz component inference, the PDF contrast fix and September integration updates, without new runtime dependencies or permissions. Content scripts start at `document_end` so diagram loaders can replace existing code earlier. PDF scrolls the current conversation to let the site load earlier messages, keeps sanitized rich-content snapshots in memory, and opens the browser's print dialog only when requested. It does not use the conversation API bridge. Markdown and text use that bridge and apply message selection; the complete JSON archive remains unfiltered. See [export details](../EXPORT.md) and [validation results](../VALIDATION.md).
 
 ## Bundled upstream inputs
 

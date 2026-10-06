@@ -1,4 +1,4 @@
-# Validation — 1.5.5
+# Validation — 1.5.8
 
 This file describes reproducible checks and their scope. It does not claim Chrome Web Store or Mozilla approval. No private conversations, account exports, HAR captures or credentials are part of the public fixtures.
 
@@ -23,6 +23,30 @@ node tests/firefox-smoke.mjs
 The Firefox smoke test requires Firefox installed locally. Set `FIREFOX_BINARY` to its executable if it is not at the default location. It copies `dist/firefox` into a temporary directory, installs that copy into a new temporary profile, runs headless, then removes its own test directory. The test copy adds a localhost fixture origin and reporting instrumentation; the release package and personal browser profiles are not modified.
 
 The font regression test requires Chrome or Edge (`CHROME_BINARY` can override discovery). It opens an isolated headless profile, serves the production island with a synthetic cached compilation, and deliberately delays bundled WOFF2 responses. It verifies that the loading indicator remains until the required faces load, then compares diagram pixels before and after hover in dark, light and native color modes. Screenshots and a report remain in the temporary directory printed by the test; the browser profile is removed.
+
+## Version 1.5.8 PDF print lifecycle and compatibility checks — 2026-10-06
+
+The current public ChatGPT stylesheet contains a layered `!important` rule that hides body children other than its native print document. That rule outranks the export's former unlayered ID selector. A synthetic reproduction using that observed CSS and native Chrome `window.print()` produced one blank page with no message text when the new inline display protection was disabled. With the protection enabled, two consecutive native Save as PDF operations each produced four pages containing all expected text, and both actual `afterprint` events restored the same preview. All four PDF pages were rendered and visually checked.
+
+- All 394 unit/integration tests passed, including print restoration and disposal, code-widget hydration, genuine edits, lazy image cards, mixed diagram failures, cancellation and source/route changes.
+- The production TeX engine, first-paint font test and actual Chrome extension navigation/repair-prompt regression passed in isolated profiles.
+- The Chromium PDF suite passed with the current layered print rule, repeated printing, scrolling history, arbitrary selection, dark-mode contrast and a real invalid TeX diagram. The failed diagram's source/error was printed while the three valid diagrams and surrounding messages remained; its PDF fallback was visually checked.
+- Chrome 154.0.8037.97 was used for the local browser tests. Firefox package lint reported zero errors and the existing Android minimum-version metadata warning; desktop Firefox native printing was not newly verified by this change.
+- Daily CI repeats the regression suite and retains synthetic evidence. The optional public DOM sentinel is explicitly unconfigured until a public synthetic share URL is supplied; fixture success is not a claim of authenticated live-site coverage. See [compatibility testing](docs/compatibility-testing.md).
+
+## Version 1.5.7 Accented text labels in math — 2026-09-27
+
+The reported circuit now loads Circuitikz, but its `V_{\mathrm{à\,vide}}` label reproduced a math-accent error in the packaged engine. The targeted compiler-copy adaptation to `\text{\normalfont à\,vide}` compiles the unchanged user source. A separate italic-node fixture checks that the labels remain upright and use the bundled `cmr10`, `cmr7` and `cmr5` fonts at 10/7/5pt for normal text, subscripts and nested subscripts. Explicit TeX accent forms are also covered.
+
+All 375 unit/integration tests pass. The actual compiler suite passes 61 diagram fixtures plus cache, error and timeout recovery checks. Unit regressions cover balanced groups, preamble macros, comments, verbatim and literal commands, custom definitions, explicit Unicode declarations and package options. Mathematical expressions and ordinary unaccented `\mathrm` remain unchanged.
+
+## Version 1.5.6 Circuitikz component inference — 2026-09-27
+
+An ordinary `tikzpicture` using `node[ground]` and `to[sV]`, `to[D]`, `to[C]` and `to[R]` reproduced the missing `/tikz/ground` key with the previous normalizer in the bundled WebAssembly engine. Loading Circuitikz explicitly compiled the same source without edits. The fixed normalizer now infers the package; its SVG is byte-for-byte identical to the explicit-package output.
+
+All 371 unit/integration tests pass. The actual compiler suite passes 58 diagram fixtures, including six new regressions for the reported circuit, standalone components, custom styles and native TikZ circuits, plus cache, error and timeout recovery checks. Robustness fixtures also check the availability of emitted fonts. Component inference preserves package options and ignores comments, node labels and inline verbatim text. Unrecognized components or arbitrary path macros may still require an explicit package declaration.
+
+This change is limited to pre-compilation dependency inference. It does not establish new live ChatGPT or store-publication validation.
 
 ## Version 1.5.5 PDF dark-theme text — 2026-09-26
 

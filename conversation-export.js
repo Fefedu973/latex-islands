@@ -238,6 +238,7 @@
       const prepared=await globalThis.LatexIslandsPDF.prepare({capture:pdfCapture,selectedKeys:pdfSelection===null?null:[...pdfSelection],roleMode:replyElement?'conversation':pdfRole.value,signal:pdfAbort?.signal});
       if(token!==pdfViewSequence){prepared.dispose();return;}
       pdfDocument=prepared;prepared.mountPreview(pdfPreview);
+      previewNote.textContent=prepared.warningCount?prepared.warningCount+' diagram'+(prepared.warningCount===1?' could':'s could')+' not be rendered. The PDF includes the source code and error instead.':'';
     }catch(error){if(token===pdfViewSequence){status.dataset.state='error';status.textContent=error.message||'Could not prepare the PDF.';}throw error;}
   }
   function updatePreview(){
@@ -304,7 +305,7 @@
         previewRequested=true;previewMode=action==='messages'||action==='refresh'?'messages':'dialogue';
         await renderPDF();
         if(canceled||core.conversationId(location.pathname)!==id)throw new Error('Export cancelled.');
-        if(action==='download'){if(!pdfDocument)throw new Error('Select at least one message.');pdfDocument.print();pdfDocument=null;}
+        if(action==='download'){if(!pdfDocument)throw new Error('Select at least one message.');pdfDocument.print();}
         status.dataset.state='success';return;
       }
       if(!snapshot||snapshotRevision!==revision||action==='refresh'){
@@ -340,12 +341,13 @@
     if(wasOpen){try{panel.close?.();panel.showModal?.();}catch{}if(panel.contains(focused))focused.focus();}
   }
   const controlSelector='.li-export:not(.li-pdf-root), .li-export-reply';
+  const printMedia=window.matchMedia?.('print');
   function unownedControl(node){return node.matches(controlSelector)&&node!==root&&![...replyActions.values()].includes(node);}
   function mount(){
     tick=0;
     // Print styles temporarily hide ChatGPT. Its controls are still live; the
     // body's class removal schedules a fresh mount, including navigation cleanup.
-    if(document.body?.classList.contains('li-pdf-printing'))return;
+    if(document.body?.classList.contains('li-pdf-printing')||printMedia?.matches)return;
     // ChatGPT's cached DOM can contain copies of our controls without their
     // handlers. Keep the live dialog and tracked actions, and discard the copies.
     for(const node of document.querySelectorAll(controlSelector))if(unownedControl(node))node.remove();
@@ -405,5 +407,8 @@
     if(!tick)tick=setTimeout(mount,250);
   });
   observer.observe(document.documentElement,{childList:true,subtree:true,characterData:true,attributes:true,attributeOldValue:true,attributeFilter:chatDOM.observedAttributes});
+  // afterprint can precede the switch back to screen media. Visibility under
+  // print CSS must never be interpreted as deleted conversation messages.
+  printMedia?.addEventListener?.('change',event=>{if(!event.matches)mount();});
   window.addEventListener('popstate',mount);window.addEventListener('pagehide',()=>{cancelExport();pdfDocument?.dispose();});mount();
 })();

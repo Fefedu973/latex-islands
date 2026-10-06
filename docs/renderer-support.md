@@ -28,6 +28,8 @@ For example, this fragment needs no package declarations:
 
 The extension detects command names, ignores comments, escaped backslashes and inline verbatim text, and preserves explicitly declared package options. User-defined commands are excluded from automatic command inference. Packages are loaded only when needed. Additional commands and packages can still require an explicit `\usepackage{...}` declaration.
 
+Circuitikz is also inferred inside an ordinary `tikzpicture`: common component options such as `node[ground]`, `node[op amp]`, `to[R]`, `to[C]`, `to[D]` and `to[sV]` load the package. Component names in labels or comments do not trigger it, custom styles retain their definitions, and TikZ's separate `circuits.*` libraries take precedence over this inference. Unrecognized components can still use an explicit `\usepackage{circuitikz}` declaration or a `circuitikz` environment.
+
 Common TikZ libraries are inferred for positioning, coordinate calculations, shapes, arrows, fitting, matrices, intersections, patterns, decorations, background layers, automata, chains and 3D planes. PGFPlots libraries are inferred for grouped plots, filled regions, statistical plots, polar axes and date coordinates. Explicit `\usetikzlibrary` and `\usepgfplotslibrary` declarations remain supported for bundled libraries.
 
 Declarations before the first diagram, such as `\DeclareMathOperator`, `\DeclarePairedDelimiter`, `\definecolor`, `\tikzset` or `\pgfplotsset`, are placed in the generated preamble. Bare drawing commands and bare plot axes receive a TikZ picture wrapper. The original source remains available in the editor and when copied.
@@ -39,6 +41,8 @@ Common Unicode Greek letters, mathematical relations, arrows and set symbols in 
 `physics` and `siunitx` both define `\qty` with different meanings. A standalone `\qty(x)` selects physics delimiters; a standalone `\qty{5}{\metre}` selects a physical quantity. In diagrams that combine both packages, use `\SI{5}{\metre}` for units and `\quantity(x)` for physics delimiters. The renderer reports ambiguous automatically inferred combinations instead of silently interpreting a unit as unrelated mathematical text. Explicit package declarations retain their normal LaTeX meaning and loading order.
 
 ## Compatibility and limits
+
+Plain accented words in `\mathrm`, such as `V_{\mathrm{à\,vide}}`, are adapted to upright text in the compiler copy, with a compatibility notice. `\mathrm` stays in math mode; `V_{\text{à\,vide}}` is the appropriate source for a textual label. The adaptation handles common Unicode and explicit TeX accents, loads text support and preserves subscript sizing. It leaves ordinary math alphabets, mathematical expressions, custom macros and explicit Unicode declarations unchanged. The original editor/copy source is preserved.
 
 This is a local TikZ/TeX-to-SVG engine, not a complete TeX distribution. Unknown commands, unavailable packages and unsupported fonts produce diagnostics with the underlying log. The extension does not silently remove them or download TeX code at runtime.
 

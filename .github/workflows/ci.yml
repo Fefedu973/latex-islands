@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Check the default branch daily, including browser updates between releases.
+    - cron: '23 4 * * *'
 
 permissions:
   contents: read
@@ -11,7 +14,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,6 +22,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Record the hosted Chromium version
+        run: google-chrome --version
       - name: Verify pinned TeX dependencies offline
         run: node scripts/vendor-tex-packages.mjs --check
       - run: npm test
@@ -30,10 +35,19 @@ jobs:
         timeout-minutes: 1
       - name: Verify rich PDF layout and diagram snapshots in Chromium
         run: npm run test:pdf
-        timeout-minutes: 2
+        timeout-minutes: 4
+      - name: Ensure native-print test system tools are available
+        run: |
+          if ! command -v xvfb-run >/dev/null || ! command -v xauth >/dev/null || ! command -v pdftotext >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y xvfb xauth poppler-utils
+          fi
+      - name: Verify native Save as PDF and repeated preview restoration
+        run: xvfb-run -a npm run test:pdf:native
+        timeout-minutes: 5
       - name: Verify navigation and repair prompts in the actual Chrome extension
         run: npm run test:chrome
-        timeout-minutes: 2
+        timeout-minutes: 4
       - run: npm run build
       - name: Verify reproducible archives
         run: |
@@ -54,6 +68,48 @@ jobs:
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
+      - name: Retain synthetic browser evidence, including failed runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-browser-evidence
+          # Fresh runner, explicit test-output names. Never collect a browser
+          # profile, real conversation, source tree, HAR, or auth/session data.
+          path: |
+            tests/engine-fixtures/pdf-*.png
+            tests/engine-fixtures/pdf-*.pdf
+            tests/engine-fixtures/pdf-*.json
+            tests/engine-fixtures/chatgpt-*.png
+            tests/engine-fixtures/chromium-extension-navigation*.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  public-chatgpt:
+    name: Public ChatGPT DOM contract (not authenticated end-to-end coverage)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Check the configured public synthetic conversation
+        env:
+          CHATGPT_SMOKE_URL: ${{ vars.CHATGPT_SMOKE_URL }}
+        run: node scripts/check-public-chatgpt.mjs
+      - name: Retain counts and coverage status only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-chatgpt-coverage
+          path: tests/engine-fixtures/public-chatgpt-report.json
+          if-no-files-found: warn
+          retention-days: 7
 
   publish:
     name: Publish GitHub release

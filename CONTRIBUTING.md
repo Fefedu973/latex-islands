@@ -21,6 +21,8 @@ For visual checks, `node tests/preview-server.cjs` serves local test pages. Use 
 
 ## Tests and reports
 
+CI runs the regression suite daily as well as on code changes. See [compatibility checks](docs/compatibility-testing.md) for coverage, retained evidence, the optional public ChatGPT sentinel and the live checks that still require an authenticated browser.
+
 Include reproduction steps, browser/version, expected behavior and a minimal diagram or synthetic API fixture. Test dark and light themes, keyboard navigation, small windows and export fidelity when relevant. Do not add real conversation exports, HAR files, cookies, tokens, user identifiers, downloaded files, machine-specific paths or private screenshots to the repository.
 
 Use actual TeX and browser checks for rendering changes; a passing DOM test alone does not prove engine or browser integration. Document any verification you could not perform. Do not claim store approval from local linting.

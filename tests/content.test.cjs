@@ -19,7 +19,7 @@ function harness({streaming=false,saved={},source=SOURCE,modern=false}={}){
   <pre id="diagram"><code class="language-tikz"></code></pre><pre id="ordinary"><code class="language-python">print('ordinary code')</code></pre>
   </div></section></main><div id="composer" contenteditable="true"><pre></pre></div></body></html>`,{url:'https://chatgpt.com/c/test',runScripts:'outside-only'});
   const css=dom.window.document.createElement('style');css.textContent=fs.readFileSync(path.join(ROOT,'content.css'),'utf8');dom.window.document.head.append(css);
-  const w=dom.window,timers=new Map(),changes=[],storageWrites=[],resizeObservers=[];let now=100000,nextTimer=0;
+  const w=dom.window,timers=new Map(),changes=[],storageWrites=[],resizeObservers=[],mediaQueries=new Map();let now=100000,nextTimer=0;
   const get=id=>w.document.getElementById(id);
   get('diagram').querySelector('code').textContent=source;get('user').querySelector('code').textContent=SOURCE;get('composer').querySelector('pre').textContent=SOURCE;
   if(modern) {
@@ -43,6 +43,8 @@ function harness({streaming=false,saved={},source=SOURCE,modern=false}={}){
   if(streaming)get('assistant').setAttribute('data-is-streaming','true');
   w.Date.now=()=>now;w.setTimeout=(fn,delay=0)=>{const id=++nextTimer;timers.set(id,{fn,due:now+delay});return id;};w.clearTimeout=id=>timers.delete(id);
   w.requestAnimationFrame=callback=>w.setTimeout(()=>callback(now),16);w.cancelAnimationFrame=w.clearTimeout;
+  w.matchMedia=query=>{if(!mediaQueries.has(query)){const media=new w.EventTarget();media.matches=false;media.media=query;mediaQueries.set(query,media);}return mediaQueries.get(query);};
+  const setMedia=(query,matches)=>{const media=w.matchMedia(query);media.matches=matches;const event=new w.Event('change');event.matches=matches;media.dispatchEvent(event);};
   w.ResizeObserver=class {constructor(callback){this.callback=callback;this.targets=new Set();resizeObservers.push(this);}observe(element){this.targets.add(element);}disconnect(){this.targets.clear();}};
   w.chrome={runtime:{getURL:file=>EXT+'/'+file},storage:{local:{get:(defaults,callback)=>callback({...defaults,...saved}),set:(value,callback)=>{storageWrites.push(value);callback?.();}},onChanged:{addListener:fn=>changes.push(fn)}}};
   const before={native:get('native').outerHTML,user:get('user').outerHTML,composer:get('composer').outerHTML,ordinary:get('ordinary').outerHTML};
@@ -56,7 +58,7 @@ function harness({streaming=false,saved={},source=SOURCE,modern=false}={}){
   function connect(frame){const sent=[];const port={postMessage:data=>sent.push({data,origin:EXT}),close(){this.closed=true;}};sent.port=port;sent.reply=data=>port.onmessage?.({data:{channel:'latex-islands',id:decodeURIComponent(new URL(frame.src).hash.slice(1)),...data}});message(frame,{type:'ready'},EXT,frame.contentWindow,[port]);return sent;}
   function message(frame,data={},origin=EXT,source=frame.contentWindow,ports=[]){w.dispatchEvent(new w.MessageEvent('message',{origin,source,ports,data:{channel:'latex-islands',id:decodeURIComponent(new URL(frame.src).hash.slice(1)),...data}}));}
   const resize=element=>{for(const observer of resizeObservers)if(observer.targets.has(element))observer.callback([{target:element}]);};
-  return {w,get,storageWrites,resizeObservers,resize,hidden:id=>w.getComputedStyle(get(id)).display==='none',before,advance,settings,connect,message,frames:()=>[...w.document.querySelectorAll('.latex-islands-container iframe')],close:()=>w.close()};
+  return {w,get,storageWrites,resizeObservers,resize,setMedia,hidden:id=>w.getComputedStyle(get(id)).display==='none',before,advance,settings,connect,message,frames:()=>[...w.document.querySelectorAll('.latex-islands-container iframe')],close:()=>w.close()};
 }
 
 test('one assistant TikZ island is added while native math, user, composer and ordinary code stay intact',async t=>{
@@ -549,6 +551,80 @@ test('PDF snapshots recheck earlier diagrams after collecting multiple document-
   frames[0].dispatchEvent(new h.w.Event('load'));
   last.reply(snapshotReply(last.at(-1).data));
   await rejected;
+});
+
+test('tolerant PDF snapshots preserve successful diagrams and the failed diagram edited source',async t=>{
+  const h=harness();t.after(h.close);await h.advance(60);
+  const second=h.w.document.createElement('pre');second.innerHTML='<code class="language-tikz"></code>';second.firstElementChild.textContent=SOURCE;
+  h.get('assistant').querySelector('.markdown').append(second);await h.advance(60);
+  const [goodFrame,badFrame]=h.frames(),good=h.connect(goodFrame),bad=h.connect(badFrame),edited=SOURCE.replace('(1,1)','(4,4)');
+  h.message(badFrame,{type:'source-change',source:edited});
+  h.message(badFrame,{type:'result',ok:false,source:edited,error:'TikZJax: TeX did not produce input.dvi.\n\n! Undefined control sequence.\n'+ 'diagnostic '.repeat(1000)});
+  const promise=h.w.LatexIslandsDiagramExport.snapshot(h.get('assistant'),{tolerateErrors:true});
+  bad.reply({...bad.at(-1).data,type:'snapshot-result',ok:false,error:'A diagram has not rendered. Use Render diagram or Retry, then export again.'});
+  good.reply(snapshotReply(good.at(-1).data));const results=await promise;
+  assert.equal(results.length,2);assert.equal(results[0].svg,SNAPSHOT_SVG);assert.equal(results[0].error,undefined);
+  assert.equal(results[1].sourceElement,second);assert.equal(results[1].containerElement,badFrame.parentElement);
+  assert.equal(results[1].source,edited);assert.equal(results[1].error,'Undefined control sequence.');assert.equal(results[1].svg,undefined);
+});
+
+test('tolerant PDF snapshots wait for renderer readiness and bound unavailable renderers',async t=>{
+  for(const becomesReady of [true,false]){
+    const h=harness();t.after(h.close);await h.advance(60);
+    let settled=false;const promise=h.w.LatexIslandsDiagramExport.snapshot(h.get('assistant'),{tolerateErrors:true});promise.then(()=>settled=true);
+    await h.advance(1000);assert.equal(settled,false);
+    if(becomesReady){const sent=h.connect(h.frames()[0]);await h.advance(200);assert.equal(sent.at(-1).data.type,'snapshot');sent.reply(snapshotReply(sent.at(-1).data));}
+    else await h.advance(9001);
+    const [result]=await promise;
+    if(becomesReady)assert.equal(result.svg,SNAPSHOT_SVG);
+    else{assert.equal(result.source,SOURCE);assert.match(result.error,/connection is still loading|unavailable/);assert.equal(result.sourceElement,h.get('diagram'));}
+  }
+});
+
+test('tolerant PDF snapshots retry busy diagrams and include bounded renderer failures as source',async t=>{
+  for(const outcome of ['success','timeout','invalid','failure']){
+    const h=harness();t.after(h.close);await h.advance(60);const sent=h.connect(h.frames()[0]);
+    if(outcome==='success')h.message(h.frames()[0],{type:'result',ok:false,source:SOURCE,error:'An earlier compilation failed.'});
+    const promise=h.w.LatexIslandsDiagramExport.snapshot(h.get('assistant'),{tolerateErrors:true}),initial=sent.at(-1).data;
+    if(outcome==='timeout')await h.advance(10001);
+    else if(outcome==='invalid')sent.reply({...snapshotReply(initial),width:Infinity});
+    else if(outcome==='failure')sent.reply({...initial,type:'snapshot-result',ok:false,error:'A diagram has not rendered. Use Render diagram or Retry, then export again.'});
+    else{
+      sent.reply({...initial,type:'snapshot-result',ok:false,error:'The diagram is still rendering. Wait for it to finish, then export again.'});
+      await h.advance(200);const retry=sent.at(-1).data;assert.equal(retry.type,'snapshot');assert.notEqual(retry.requestId,initial.requestId);sent.reply(snapshotReply(retry));
+    }
+    const [result]=await promise;
+    if(outcome==='success')assert.equal(result.svg,SNAPSHOT_SVG);
+    else{assert.equal(result.source,SOURCE);assert.match(result.error,/timed out|dimensions|not rendered/);assert.equal(result.svg,undefined);}
+  }
+});
+
+test('tolerant PDF snapshots never turn source, route, document, or cancellation changes into fallback diagrams',async t=>{
+  for(const change of ['source','draft','navigation','remove','pagehide','abort','reply-source']){
+    const h=harness();t.after(h.close);await h.advance(60);const controller=new h.w.AbortController();
+    const sent=change==='reply-source'?h.connect(h.frames()[0]):null;
+    const promise=h.w.LatexIslandsDiagramExport.snapshot(h.get('assistant'),{signal:controller.signal,tolerateErrors:true}),rejected=assert.rejects(promise,/changed|cancelled/);
+    if(change==='source')h.get('diagram').querySelector('code').textContent=SOURCE.replace('(1,1)','(2,2)');
+    if(change==='draft'){const frame=h.frames()[0];h.connect(frame);h.message(frame,{type:'source-change',source:SOURCE.replace('(1,1)','(2,2)')});}
+    if(change==='navigation')h.w.history.pushState({},'', '/c/another-chat');
+    if(change==='remove')h.get('assistant').remove();
+    if(change==='pagehide')h.w.dispatchEvent(new h.w.Event('pagehide'));
+    if(change==='abort')controller.abort();
+    if(change==='reply-source')sent.reply({...snapshotReply(sent.at(-1).data),source:'stale source'});
+    await h.advance(200);await rejected;
+  }
+});
+
+test('tolerant PDF snapshots revalidate failed diagram sources after other diagrams finish',async t=>{
+  const h=harness();t.after(h.close);await h.advance(60);
+  const second=h.w.document.createElement('pre');second.innerHTML='<code class="language-tikz"></code>';second.firstElementChild.textContent=SOURCE;
+  h.get('assistant').querySelector('.markdown').append(second);await h.advance(60);
+  const [badFrame,goodFrame]=h.frames(),bad=h.connect(badFrame),good=h.connect(goodFrame);
+  h.message(badFrame,{type:'result',ok:false,source:SOURCE,error:'Undefined control sequence.'});
+  const promise=h.w.LatexIslandsDiagramExport.snapshot(h.get('assistant'),{tolerateErrors:true}),rejected=assert.rejects(promise,/changed/);
+  bad.reply({...bad.at(-1).data,type:'snapshot-result',ok:false,error:'A diagram has not rendered. Use Render diagram or Retry, then export again.'});await tick();
+  h.get('diagram').querySelector('code').textContent=SOURCE.replace('(1,1)','(2,2)');
+  good.reply(snapshotReply(good.at(-1).data));await rejected;
 });
 
 test('content detection ignores PDF clones and per-response export controls',async t=>{
@@ -1048,4 +1124,23 @@ test('PDF print suppression still rejects pending snapshots when the actual TeX 
   assert.equal(h.frames()[0],frame);assert.equal(sent.at(-1).data.type,'snapshot-cancel');
   h.w.document.querySelector('main').style.removeProperty('display');h.w.document.body.classList.remove('li-pdf-printing');await h.advance(60);
   assert.equal(h.frames()[0],frame);assert.equal(sent.at(-1).data.source,SOURCE.replace('(1,1)','(8,8)'));
+});
+
+test('print media remains protected after afterprint and screen media resumes discovery without a DOM mutation',async t=>{
+  const h=harness({modern:true,saved:{autoRender:false}});t.after(h.close);await h.advance(60);
+  const frame=h.frames()[0],sent=h.connect(frame),draft=SOURCE.replace('(1,1)','(7,7)');
+  h.message(frame,{type:'source-change',source:draft});h.message(frame,{type:'result',ok:true,source:draft});
+  const main=h.w.document.querySelector('main'),getStyle=h.w.getComputedStyle.bind(h.w);
+  h.w.getComputedStyle=element=>element===main && h.w.matchMedia('print').matches?{display:'none',visibility:'visible'}:getStyle(element);
+  h.setMedia('print',true);h.w.document.body.classList.add('li-pdf-printing');await h.advance(60);
+  const added=h.w.document.createElement('pre');added.textContent=SOURCE;h.get('assistant').append(added);
+  // Native afterprint clears our marker while the browser can still expose
+  // hidden print-layout ancestors. Neither cleanup nor theme sync may run yet.
+  h.w.dispatchEvent(new h.w.Event('afterprint'));h.w.document.body.classList.remove('li-pdf-printing');await h.advance(500);
+  assert.equal(h.frames().length,1);assert.equal(h.frames()[0],frame);assert.equal(sent.port.closed,undefined);
+  assert.equal(sent.filter(item=>item.data.type==='render').length,1);
+  h.setMedia('print',false);await h.advance(0);
+  assert.equal(h.frames().length,2);assert.equal(h.frames()[0],frame);assert.equal(sent.port.closed,undefined);
+  const promise=h.w.LatexIslandsDiagramExport.snapshot(h.get('diagram')),request=sent.at(-1).data;
+  assert.equal(request.source,draft);sent.reply(snapshotReply(request));await promise;
 });
