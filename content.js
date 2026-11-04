@@ -92,7 +92,11 @@
   }
   function appearance(el) {
     const root=document.documentElement, css=getComputedStyle(assistantFor(el) || document.body);
-    const dark=root.classList.contains('dark') || root.dataset.theme==='dark' || (!root.classList.contains('light') && css.colorScheme==='dark');
+    // Current ChatGPT sets data-theme without the former .dark/.light class.
+    // An explicit theme boundary wins over a stale class during transitions.
+    let explicit='';
+    for(let scope=assistantFor(el) || document.body;scope;scope=scope.parentElement)if(/^(dark|light)$/.test(scope.dataset.theme || '')){explicit=scope.dataset.theme;break;}
+    const dark=explicit?explicit==='dark':root.classList.contains('dark') || (!root.classList.contains('light') && css.colorScheme==='dark');
     let background=dark?'#212121':'#ffffff';
     for(let parent=el?.parentElement || document.body;parent;parent=parent.parentElement) {
       const color=getComputedStyle(parent).backgroundColor;
@@ -100,7 +104,9 @@
     }
     const tooltip=Object.fromEntries(Object.entries({background:'--color-background-tooltip',text:'--color-text-tooltip',border:'--color-border-tooltip',shadow:'--shadow-tooltip'}).map(([key,name])=>[key,css.getPropertyValue(name).trim()]).filter(([,value])=>value));
     const hover=css.getPropertyValue('--color-background-primary-ghost-hover').trim();
-    return {theme:dark?'dark':'light',colors:{background,text:css.color || (dark?'#ececec':'#0d0d0d'),surface:dark?'#2f2f2f':'#f4f4f4',border:dark?'#424242':'#e5e5e5',...(hover?{hover}:{})},...(Object.keys(tooltip).length?{tooltip}:{})};
+    const surface=css.getPropertyValue('--color-surface-elevated-secondary').trim() || css.getPropertyValue('--color-surface-elevated').trim();
+    const border=css.getPropertyValue('--color-border-subtle').trim();
+    return {theme:dark?'dark':'light',colors:{background,text:css.color || (dark?'#ececec':'#0d0d0d'),surface:surface || (dark?'#2f2f2f':'#f4f4f4'),border:border || (dark?'#424242':'#e5e5e5'),...(hover?{hover}:{})},...(Object.keys(tooltip).length?{tooltip}:{})};
   }
   function pageTheme() {return appearance(assistantsWithin()[0] || document.body);}
   function themeKey(theme) {return JSON.stringify([theme?.theme,...['text','background','surface','border','hover'].map(key=>theme?.colors?.[key]),...['background','text','border','shadow'].map(key=>theme?.tooltip?.[key])]);}
@@ -111,7 +117,7 @@
     if(!globalThis.document?.body || printingPDF())return;
     const theme=pageTheme(),key=themeKey(theme);
     if(key!==pageThemeKey) {pageThemeKey=key;for(const state of states.values())sendView(state);}
-    if(themeStorageReady && key!==storedThemeKey) {
+    if(themeStorageReady && key!==storedThemeKey && document.visibilityState!=='hidden') {
       storedThemeKey=key;
       chrome.storage.local.set({chatgptTheme:theme},()=>{if(chrome.runtime.lastError)storedThemeKey='';});
     }
@@ -563,6 +569,7 @@
     // Our print stylesheet temporarily hides the app. Its message visibility
     // says nothing about navigation; keep the ready documents and editor drafts.
     if(printingPDF()){fullScan=true;return;}
+    syncPageTheme();
     for(const state of [...states.values()])rebindHydratedSource(state);
     for(const [el,state]of states) {
       const assistant=assistantFor(el);
@@ -654,7 +661,7 @@
         if(mutation.attributeName===HIDDEN_ATTRIBUTE)continue;
         if(mutation.attributeName==='class') {
           const clean=value=>(value || '').replace(/\blatex-islands-[\w-]+\b/g,'').trim();
-          if(clean(mutation.oldValue)===clean(el.className)) continue;
+          if(clean(mutation.oldValue)===clean(el.getAttribute('class'))) continue;
         }
       }
       if(mutation.type==='childList' && [...mutation.addedNodes,...mutation.removedNodes].every(ownNode)) continue;
@@ -682,7 +689,7 @@
       // waits for the token throttle. Discover it in this observer microtask;
       // ordinary text streaming still uses the bounded scheduled scan.
       if(mutation.type==='childList' && [...mutation.addedNodes].some(node=>node.nodeType===Node.ELEMENT_NODE && !ownNode(node) && (node.matches(codeSelector) || node.querySelector(codeSelector))))urgent=true;
-      if(mutation.type==='attributes' && /^(?:data-message-author-role|data-chatgpt-search-unit-key|data-chatgpt-selection-message-id|data-conversation-role|data-markdown-text-style|data-markdown-copy|data-language)$/.test(mutation.attributeName))urgent=true;
+      if(mutation.type==='attributes' && /^(?:data-message-author-role|data-chatgpt-search-unit-key|data-content-search-unit-key|data-chatgpt-selection-message-id|data-conversation-role|data-markdown-text-style|data-markdown-copy|data-language)$/.test(mutation.attributeName))urgent=true;
       if(mutation.type==='attributes' && ['hidden','inert','aria-hidden'].includes(mutation.attributeName))urgent=true;
       if(mutation.type==='attributes' && ['style','class'].includes(mutation.attributeName) && assistantsWithin(el).some(message=>chatgpt.getCodeBlocks(message).some(code=>!states.has(code))))urgent=true;
       changed=true;
@@ -698,6 +705,7 @@
   const themeObserver=new MutationObserver(syncPageTheme);
   for(const element of [document.documentElement,document.body]) if(element)themeObserver.observe(element,{attributes:true,attributeFilter:['class','data-theme','style']});
   window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change',syncPageTheme);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){storedThemeKey='';syncPageTheme();}});
   // afterprint can fire before Chromium stops applying print styles. Keep the
   // live conversation intact until screen media resumes, even without a DOM mutation.
   printMedia?.addEventListener?.('change',event=>{if(!event.matches){fullScan=true;schedule(0);syncPageTheme();}});

@@ -49,7 +49,10 @@
     const timer = setTimeout(() => controller.abort(), 45000);
     try {
       let response = await get(safePath, controller.signal);
-      if (response.status === 401) {
+      // A cookie-only request may be reported as not found as well as 401.
+      // Retry that same allowlisted path once with the current site's session;
+      // a genuine 404 remains an error for endpoint fallback in export-core.
+      if (response.status === 401 || (response.status === 404 && !token)) {
         token = null;
         const sessionResponse = await nativeFetch('/api/auth/session', {method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal});
         if (sessionResponse.ok) {

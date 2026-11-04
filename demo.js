@@ -58,7 +58,7 @@
     for (const [property, key] of Object.entries(properties)) {
       root.style.removeProperty(property);
       const color = followed && chatgptTheme.colors?.[key];
-      if (typeof color === 'string' && /^(#[\da-f]{3,8}|rgba?\([\d\s.,%/]+\))$/i.test(color)) root.style.setProperty(property, color);
+      if (typeof color === 'string' && color.length < 300 && (globalThis.CSS?.supports('color',color) || /^(#[\da-f]{3,8}|rgba?\([\d\s.,%/]+\))$/i.test(color))) root.style.setProperty(property, color);
     }
     root.style.removeProperty('--hover');
     const hover = followed && chatgptTheme.colors?.hover;

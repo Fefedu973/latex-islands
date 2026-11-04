@@ -63,6 +63,45 @@ test('401 session fallback retains credentials only in memory and release clears
   assert.equal(h.requests[3].options.headers.Authorization, undefined);
 });
 
+test('cookie-only 404 retries the exact path with the session once, without leaking the token', async () => {
+  const h = harness(async (url, options) => {
+    if (url === '/api/auth/session') return success({accessToken:'synthetic-token'});
+    return options.headers.Authorization ? success({messages:[]}) : {ok:false,status:404};
+  });
+  await h.send();
+  assert.deepEqual(h.requests.map(r=>r.url),[REQUEST,'/api/auth/session',REQUEST]);
+  assert.equal(h.replies[0].data.ok,true);assert.ok(!JSON.stringify(h.replies).includes('synthetic-token'));
+});
+
+test('a genuine 404 remains bounded and no anonymous session triggers another API request', async () => {
+  for (const session of [{accessToken:'synthetic-token'},{}]) {
+    const h=harness(async url=>url==='/api/auth/session'?success(session):{ok:false,status:404});
+    await h.send();assert.equal(h.requests.length,session.accessToken?3:2);assert.equal(h.replies[0].data.status,404);
+  }
+});
+
+test('authenticated endpoint fallback produces complete JSON and readable Markdown and text',async()=>{
+  const full={id:ID,title:'Synthetic conversation',current_node:'a',mapping:{
+    q:{parent:null,message:{id:'q',author:{role:'user'},content:{content_type:'text',parts:['A question']}}},
+    a:{parent:'q',message:{id:'a',author:{role:'assistant'},content:{content_type:'text',parts:['An **answer** with $x^2$']}}}
+  }};
+  const h=harness(async(url,options)=>{
+    if(url==='/api/auth/session')return success({accessToken:'synthetic-token'});
+    if(!options.headers.Authorization)return {ok:false,status:404};
+    return url==='/backend-api/conversation/'+ID?success(full):{ok:false,status:404};
+  });
+  const core=require('../export-core.js');let serial=0;
+  const archive=await core.collectConversation({id:ID,fetchJSON:async path=>{
+    await h.send({path,requestId:'export-read-'+(++serial)});const response=h.replies.at(-1).data;
+    if(!response.ok)throw Object.assign(new Error(response.error),{status:response.status});
+    return response.payload;
+  }});
+  assert.deepEqual(archive.messages.map(m=>m.id),['q','a']);assert.equal(archive.completeness.pagination_complete,true);
+  assert.match(core.toMarkdown(archive),/An \*\*answer\*\* with \$x\^2\$/);assert.match(core.toText(archive),/A question/);
+  assert.deepEqual(JSON.parse(JSON.stringify(archive)).raw_pages[0].payload,full);
+  assert.ok(!JSON.stringify(archive).includes('synthetic-token'));
+});
+
 test('API refusal exposes the HTTP status without copying response bodies', async () => {
   const h = harness(async () => ({ok: false, status: 403, json: async () => ({sensitive_debug: 'must not forward'})}));
   await h.send();

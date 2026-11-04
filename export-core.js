@@ -63,22 +63,32 @@
     if (typeof fetchJSON !== 'function') throw new Error('Transport unavailable.');
     const rawPages = [];
     let path = pathFor(id), payload, legacy = false;
+    const hasMapping = value => value && value.mapping && typeof value.mapping === 'object' && !Array.isArray(value.mapping);
+    function assertIdentity(value) {
+      const reportedId = value && (value.conversation_id || value.id);
+      if (reportedId && reportedId !== id) throw new Error('The response does not match the requested conversation.');
+    }
+    async function readMapping() {
+      const mappingPath = '/backend-api/conversation/' + id;
+      const full = await fetchJSON(mappingPath);
+      assertIdentity(full);
+      if (!hasMapping(full)) throw new Error('Unrecognized conversation format. No incomplete export was downloaded.');
+      // A complete mapping replaces paginated data; never combine branches or
+      // claim success for just the pages received before an endpoint failed.
+      rawPages.length = 0; path = mappingPath; payload = full; legacy = true;
+    }
     try { payload = await fetchJSON(path); }
     catch (error) {
       if (error.status !== 404 && error.status !== 405) throw error;
-      path = '/backend-api/conversation/' + id;
-      payload = await fetchJSON(path);
-      legacy = true;
+      await readMapping();
     }
-    if (payload && payload.mapping && typeof payload.mapping === 'object' && !Array.isArray(payload.mapping)) legacy = true;
-    if (legacy && (!payload || !payload.mapping || typeof payload.mapping !== 'object' || Array.isArray(payload.mapping))) {
-      throw new Error('Unrecognized conversation format. No incomplete export was downloaded.');
-    }
-    const reportedId = payload && (payload.conversation_id || payload.id);
-    if (reportedId && reportedId !== id) throw new Error('The response does not match the requested conversation.');
+    assertIdentity(payload);
+    if (hasMapping(payload)) legacy = true;
+    else if (!legacy && !Array.isArray(payload?.messages)) await readMapping();
     const cursors = new Set(), messageIds = new Set();
     let anonymousMessages = 0;
     while (true) {
+      assertIdentity(payload);
       if (!legacy) assertPage(payload, rawPages.length === 0);
       rawPages.push({path, fetched_at: now(), payload});
       if (!legacy) for (const message of payload.messages) {
@@ -92,7 +102,12 @@
       if (cursors.has(cursor)) throw new Error('ChatGPT pagination is repeating. Export incomplete; download cancelled.');
       cursors.add(cursor);
       path = pathFor(id, cursor);
-      payload = await fetchJSON(path);
+      try { payload = await fetchJSON(path); }
+      catch (error) {
+        if (error.status !== 404 && error.status !== 405) throw error;
+        await readMapping();
+      }
+      if (!legacy && hasMapping(payload)) { rawPages.length = 0; legacy = true; }
     }
     const conversation = rawPages[0].payload;
     const messages = legacy ? legacyMessages(conversation) : mergeMessages(rawPages);

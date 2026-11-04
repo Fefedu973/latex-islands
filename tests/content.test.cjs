@@ -61,6 +61,16 @@ function harness({streaming=false,saved={},source=SOURCE,modern=false}={}){
   return {w,get,storageWrites,resizeObservers,resize,setMedia,hidden:id=>w.getComputedStyle(get(id)).display==='none',before,advance,settings,connect,message,frames:()=>[...w.document.querySelectorAll('.latex-islands-container iframe')],close:()=>w.close()};
 }
 
+test('native SVG class mutations do not interrupt the diagram observer',async t=>{
+  const h=harness();t.after(h.close);await h.advance(2100);const errors=[];
+  h.w.addEventListener('error',event=>{errors.push(event.error);event.preventDefault();});
+  const svg=h.w.document.createElementNS('http://www.w3.org/2000/svg','svg');
+  h.get('native').append(svg);await tick();svg.classList.add('hovered');await h.advance(60);
+  assert.deepEqual(errors,[]);assert.equal(h.frames().length,1);
+  h.get('diagram').querySelector('code').textContent=SOURCE.replace('(1,1)','(2,2)');await h.advance(300);
+  assert.equal(h.frames().length,1);assert.equal(errors.length,0);
+});
+
 test('one assistant TikZ island is added while native math, user, composer and ordinary code stay intact',async t=>{
   const h=harness();t.after(h.close);await h.advance(2100);assert.equal(h.frames().length,1);
   const frame=h.frames()[0];assert.match(frame.src,/^chrome-extension:\/\/test-id\/island\.html\?/);
@@ -133,6 +143,23 @@ test('native tooltip and ghost-hover palette changes reach island views without 
   assert.deepEqual(JSON.parse(JSON.stringify(sent[0].data.tooltip)),{background:'rgb(17, 18, 19)',text:'rgb(250, 250, 250)',border:'rgba(255, 255, 255, 0.12)',shadow:'0px 3px 12px rgba(0, 0, 0, 0.2)'});assert.equal(sent[0].data.colors.hover,'rgb(41, 42, 43)');
   style.setProperty('--shadow-tooltip','0px 4px 16px rgba(0, 0, 0, 0.3)');style.setProperty('--color-background-primary-ghost-hover','rgb(51, 52, 53)');h.w.document.body.classList.add('palette-updated');await tick();
   const view=sent.findLast(item=>item.data.type==='view');assert.equal(view.data.tooltip.shadow,'0px 4px 16px rgba(0, 0, 0, 0.3)');assert.equal(view.data.colors.hover,'rgb(51, 52, 53)');assert.equal(sent.filter(item=>item.data.type==='render').length,1);
+});
+
+test('current data-theme overrides stale classes and updates nested surface palettes without recompiling',async t=>{
+  const h=harness();t.after(h.close);await h.advance(60);const sent=h.connect(h.frames()[0]),root=h.w.document.documentElement;
+  root.className='dark';root.dataset.theme='light';await h.advance(60);
+  assert.equal(sent.at(-1).data.theme,'light');
+  root.className='chatgpt-theme';root.dataset.theme='dark';await h.advance(60);assert.equal(sent.at(-1).data.theme,'dark');
+  const scope=h.get('assistant');scope.dataset.theme='light';scope.style.setProperty('--color-surface-elevated','rgb(245, 246, 247)');await h.advance(60);
+  assert.equal(sent.at(-1).data.theme,'light');assert.equal(sent.at(-1).data.colors.surface,'rgb(245, 246, 247)');
+  assert.equal(sent.filter(item=>item.data.type==='render').length,1);
+});
+
+test('background tabs cannot overwrite the remembered theme of the active ChatGPT tab',async t=>{
+  const h=harness();t.after(h.close);await h.advance(60);const writes=h.storageWrites.length;let visibility='hidden';
+  Object.defineProperty(h.w.document,'visibilityState',{get:()=>visibility});
+  h.w.document.documentElement.dataset.theme='dark';await h.advance(60);assert.equal(h.storageWrites.length,writes);
+  visibility='visible';h.w.document.dispatchEvent(new h.w.Event('visibilitychange'));assert.equal(h.storageWrites.at(-1).chatgptTheme.theme,'dark');
 });
 
 test('saved native colors also reach a streaming prepare message',async t=>{

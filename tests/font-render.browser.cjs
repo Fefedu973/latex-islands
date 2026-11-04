@@ -209,7 +209,14 @@ async function main(){
       if(mode.name==='dark'&&!ready.filters.some(filter=>filter.includes('invert')))failures.push('Dark adaptation not exercised');
       if(mode.name==='native'&&(ready.filters.length||ready.background!=='rgb(255, 255, 255)'))failures.push('Native white preview not exercised');
       if(testCase.requests.some(request=>!request.finished||request.finished-request.requested<250))failures.push('Font response did not observe the intended delay');
-      reports.push({mode:mode.name,ok:failures.length===0,failures,pending,ready,changedPixels,screenshotSHA256:crypto.createHash('sha256').update(before).digest('hex'),fontRequests:testCase.requests.map(request=>({font:request.font,delayMs:request.finished-request.requested}))});
+      const menuPoint=await cdp.evaluate(`(()=>{const frame=document.querySelector('iframe'),outer=frame.getBoundingClientRect(),rect=frame.contentDocument.getElementById('menu-toggle').getBoundingClientRect();return {x:outer.left+rect.left+rect.width/2,y:outer.top+rect.top+rect.height/2}})()`);
+      await cdp.call('Input.dispatchMouseEvent',{type:'mouseMoved',...menuPoint});
+      await cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      await until(()=>cdp.evaluate(`getComputedStyle(document.querySelector('iframe').contentDocument.querySelector('.floating-tools')).opacity==='1'`),'Diagram controls finish revealing on hover');
+      const menuHover=await cdp.evaluate(`(()=>{const doc=document.querySelector('iframe').contentDocument,menu=doc.getElementById('menu-toggle'),css=getComputedStyle(menu),canvas=doc.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d');ctx.fillStyle=css.backgroundColor;ctx.fillRect(0,0,1,1);return {hovered:menu.matches(':hover'),background:css.backgroundColor,alpha:ctx.getImageData(0,0,1,1).data[3],toolsOpacity:getComputedStyle(menu.parentElement).opacity}})()`);
+      if(!menuHover.hovered||menuHover.alpha!==255||menuHover.toolsOpacity!=='1')failures.push('Diagram options disappeared or became transparent on hover');
+      await screenshot(mode.name+'-menu-hover.png');
+      reports.push({mode:mode.name,ok:failures.length===0,failures,pending,ready,menuHover,changedPixels,screenshotSHA256:crypto.createHash('sha256').update(before).digest('hex'),fontRequests:testCase.requests.map(request=>({font:request.font,delayMs:request.finished-request.requested}))});
     }
     const report={ok:reports.every(result=>result.ok)&&cdp.errors.length===0,browser:browserVersion.product,sourceRef:sourceRef||'working tree',fixture,artifacts:temporary,results:reports,browserErrors:cdp.errors};
     await fs.writeFile(path.join(temporary,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));

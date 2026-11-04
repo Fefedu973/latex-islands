@@ -56,3 +56,6 @@
 .editor-header button svg{width:20px;height:20px}
 :root{--hover:#0000000d;--tooltip-background:#fff;--tooltip-text:#0d0d0d;--tooltip-border:#0d0d0d0d}
 :root[data-theme="dark"]{--hover:#ffffff1a;--tooltip-background:#303030;--tooltip-text:#ededed;--tooltip-border:#ededed0d}
+/* Keep this pill opaque even above a native white diagram canvas. Ghost
+   hover colors alone become invisible when painted directly over white. */
+.menu-toggle:not(:disabled):hover,.menu-toggle[aria-expanded="true"]{background:color-mix(in srgb,var(--text) 10%,var(--surface));color:var(--text)}
