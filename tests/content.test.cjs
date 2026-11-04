@@ -145,6 +145,23 @@ test('native tooltip and ghost-hover palette changes reach island views without 
   const view=sent.findLast(item=>item.data.type==='view');assert.equal(view.data.tooltip.shadow,'0px 4px 16px rgba(0, 0, 0, 0.3)');assert.equal(view.data.colors.hover,'rgb(51, 52, 53)');assert.equal(sent.filter(item=>item.data.type==='render').length,1);
 });
 
+test('current data-theme overrides stale classes and updates nested surface palettes without recompiling',async t=>{
+  const h=harness();t.after(h.close);await h.advance(60);const sent=h.connect(h.frames()[0]),root=h.w.document.documentElement;
+  root.className='dark';root.dataset.theme='light';await h.advance(60);
+  assert.equal(sent.at(-1).data.theme,'light');
+  root.className='chatgpt-theme';root.dataset.theme='dark';await h.advance(60);assert.equal(sent.at(-1).data.theme,'dark');
+  const scope=h.get('assistant');scope.dataset.theme='light';scope.style.setProperty('--color-surface-elevated','rgb(245, 246, 247)');await h.advance(60);
+  assert.equal(sent.at(-1).data.theme,'light');assert.equal(sent.at(-1).data.colors.surface,'rgb(245, 246, 247)');
+  assert.equal(sent.filter(item=>item.data.type==='render').length,1);
+});
+
+test('background tabs cannot overwrite the remembered theme of the active ChatGPT tab',async t=>{
+  const h=harness();t.after(h.close);await h.advance(60);const writes=h.storageWrites.length;let visibility='hidden';
+  Object.defineProperty(h.w.document,'visibilityState',{get:()=>visibility});
+  h.w.document.documentElement.dataset.theme='dark';await h.advance(60);assert.equal(h.storageWrites.length,writes);
+  visibility='visible';h.w.document.dispatchEvent(new h.w.Event('visibilitychange'));assert.equal(h.storageWrites.at(-1).chatgptTheme.theme,'dark');
+});
+
 test('saved native colors also reach a streaming prepare message',async t=>{
   const h=harness({streaming:true,source:'',saved:{renderColors:'native'}});t.after(h.close);h.get('ordinary').remove();await h.advance(60);
   const sent=h.connect(h.frames()[0]);assert.equal(sent[0].data.type,'prepare');assert.equal(sent[0].data.renderColors,'native');

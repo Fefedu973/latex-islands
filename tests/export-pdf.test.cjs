@@ -474,6 +474,15 @@ test('capture waits for a newly mounted diagram before freezing its rendered sna
   const pdf=await h.prepare({capture});t.after(pdf.dispose);assert.ok(pdf.root.querySelector('.li-pdf-island-image'));
 });
 
+test('citation favicons keep their displayed size and source buttons do not become picture cards',async t=>{
+  const h=harness(t,'<style>.FaviconBox-fixture{position:relative;width:12px;height:12px}.favicon-image{position:absolute;width:100%;height:100%}</style><main><article data-message-author-role="assistant"><p>Scientific answer <a href="https://example.org"><span class="Favicon-fixture"><div class="FaviconBox-fixture"><img class="favicon-image" src="https://www.google.com/s2/favicons?domain=example.org&amp;sz=32"></div></span>Reference</a></p><button><span class="Favicon-fixture"><img src="https://www.google.com/s2/favicons?domain=other.org&amp;sz=32"></span>Other reference</button><button><img alt="Content image" src="/picture.png" width="640" height="320"></button></article></main>');
+  const icon=h.get('.favicon-image');icon.getBoundingClientRect=()=>({width:12,height:12});
+  const pdf=await h.prepare();t.after(pdf.dispose);
+  const copied=pdf.root.querySelector('.favicon-image');assert.equal(copied.style.getPropertyValue('width'),'12px');assert.equal(copied.style.getPropertyValue('position'),'static');
+  assert.equal(copied.style.getPropertyPriority('width'),'important');assert.match(pdf.root.textContent,/Other reference/);
+  assert.equal(pdf.root.querySelectorAll('.li-pdf-media').length,1);assert.equal(pdf.root.querySelector('.li-pdf-media img').alt,'Content image');
+});
+
 test('PDF includes visible TeX source when it is not a rendered Island',async t=>{
   const code='\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}';
   const h=harness(t,`<main><article data-message-author-role="user"><p>Why does this fail?</p><pre><code>${code}</code></pre></article><article data-message-author-role="assistant"><p>Try <code>${code}</code> instead.</p><pre><code>${code}</code></pre></article></main>`);

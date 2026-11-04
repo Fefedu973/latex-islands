@@ -89,7 +89,8 @@ function setTheme(message) {
   else if(!document.documentElement.dataset.renderColors)document.documentElement.dataset.renderColors='chatgpt';
   for(const key of ['text','background','surface','border']){
     const value=message.colors?.[key];
-    if(typeof value==='string'&&/^(?:#[\da-f]{3,8}|rgba?\([\d.,%\s/]+\)|hsla?\([\d.,%\s/]+\))$/i.test(value))document.documentElement.style.setProperty('--'+key,value);
+    if(typeof value==='string'&&value.length<300&&(globalThis.CSS?.supports('color',value) || /^(?:#[\da-f]{3,8}|rgba?\([\d.,%\s/]+\)|hsla?\([\d.,%\s/]+\))$/i.test(value)))document.documentElement.style.setProperty('--'+key,value);
+    else if(message.theme==='dark'||message.theme==='light')document.documentElement.style.removeProperty('--'+key);
   }
   if(typeof message.colors?.hover==='string'&&message.colors.hover.length<300&&globalThis.CSS?.supports('color',message.colors.hover))document.documentElement.style.setProperty('--hover',message.colors.hover);
   else if(message.theme==='dark'||message.theme==='light')document.documentElement.style.removeProperty('--hover');

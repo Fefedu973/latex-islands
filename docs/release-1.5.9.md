@@ -1,5 +1,8 @@
 # LaTeX Islands 1.5.9
 
+- Keep the diagram options button opaque on hover, including dark controls over a native white diagram canvas.
+- Follow the current explicit ChatGPT theme and surface palette during hydration. Background tabs no longer overwrite the theme remembered for the active tab; popup/editor palettes accept current browser color formats.
+- Preserve favicon dimensions and inline positioning in PDFs. Source badges keep their text instead of becoming oversized image cards.
 - Fix the content observer crashing when ChatGPT changes an SVG class. Native diagram and icon hover updates no longer interrupt diagram discovery.
 - Recognize content-search message wrappers during hydration, alongside the existing conversation wrappers, without counting a message twice.
 - Retry an unauthenticated conversation request reported as HTTP 404 once using the existing ChatGPT session. Credentials remain in the page bridge and are never included in an export.

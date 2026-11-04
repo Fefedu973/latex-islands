@@ -101,6 +101,7 @@ function fixture() {
       .katex-html{display:inline-block}.katex .frac{display:inline-flex;vertical-align:middle;flex-direction:column;line-height:1.25;text-align:center}
       .katex .frac .num{border-bottom:1px solid currentColor;padding:0 5px}.katex-mathml{position:absolute;clip:rect(1px,1px,1px,1px);width:1px;height:1px;overflow:hidden}
       .native-math-label{font-weight:bold}.screen-only-hidden{display:none}
+      .FaviconBox-fixture{position:relative;display:inline-block;width:12px;height:12px}.fixture-favicon{position:absolute;inset:0;width:100%;height:100%}
       /* Live ChatGPT print isolation observed 2026-10-06. A named layer's
          important rule wins over the export's old unlayered ID rule. */
       @layer components { @media print {
@@ -123,6 +124,7 @@ function fixture() {
         <h3>A formatted table</h3><div class="scroll-wrapper"><table><thead><tr><th>Quantity</th><th>Value</th></tr></thead><tbody>${Array.from({length:6}, (_, index) => '<tr><td>Measurement ' + (index + 1) + '</td><td>' + (index + 1) / 3 + '</td></tr>').join('')}</tbody></table></div>
         <h3>Long code remains readable</h3><pre><div><button>COPY_CODE_CONTROL</button><code class="language-javascript">${escapeHTML(longCode)}</code></div></pre>
         <p><img alt="Inline illustration" width="90" height="45" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='45'%3E%3Crect width='90' height='45' fill='%23abc'/%3E%3C/svg%3E"></p>
+        <a href="https://example.org/reference"><span class="Favicon-fixture"><span class="FaviconBox-fixture"><img class="fixture-favicon" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Crect width='32' height='32' fill='%23f60'/%3E%3C/svg%3E"></span></span>Small reference icon</a><button><span class="Favicon-fixture"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Crect width='32' height='32' fill='%230af'/%3E%3C/svg%3E"></span>Source badge label</button>
         <button>COPY_REPLY_CONTROL</button><span hidden>HIDDEN_CONTROL</span><div class="screen-only-hidden">CSS_HIDDEN_CONTROL</div><div aria-hidden="true">ARIA_HIDDEN_CONTROL</div>
       </div></article>
       <article data-message-author-role="assistant" data-fixture-reply="second"><div class="markdown prose"><h2>SECOND_REPLY_ONLY: Tall diagram</h2><p>The complete diagram must fit vertically on a page.</p>${diagram(2)}<p>END_OF_SECOND_REPLY</p></div></article>
@@ -286,6 +288,8 @@ async function main() {
     await cdp.evaluate(`document.querySelector('.li-export-inspect').click()`);
     await until(() => cdp.evaluate(`document.querySelector('.li-export-panel').getAttribute('aria-busy')==='false'&&!!document.querySelector('.li-export-pdf-preview .li-pdf-preview')`), 'Rich in-dialog preview');
     assert.equal(await cdp.evaluate('window.testPrintCalls'), 0);
+    const faviconGeometry=await cdp.evaluate(`(()=>{const root=document.querySelector('.li-export-pdf-preview .li-pdf-preview'),icon=root.querySelector('.fixture-favicon'),rect=icon.getBoundingClientRect();return {width:rect.width,height:rect.height,position:getComputedStyle(icon).position,badge:root.querySelector('.li-pdf-source')?.textContent}})()`);
+    assert.equal(faviconGeometry.width,12);assert.equal(faviconGeometry.height,12);assert.equal(faviconGeometry.position,'static');assert.equal(faviconGeometry.badge,'Source badge label');reports.push({case:'Source favicons remain inline and badges retain their labels',...faviconGeometry});
     shot = await cdp.call('Page.captureScreenshot', {format:'png'});
     await fs.writeFile(path.join(output, 'pdf-dialog-preview.png'), Buffer.from(shot.data, 'base64'));
     await cdp.evaluate(`document.querySelector('.li-export-choose-messages').click()`);

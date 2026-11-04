@@ -76,6 +76,7 @@
       const src = url(source.currentSrc || source.getAttribute('src'), true);
       if (!src) throw Error('An image in this reply cannot be included safely in the PDF.');
       clone.src = src; clone.loading = 'eager'; clone.decoding = 'sync';
+      if(favicon(source))clone.classList.add('li-pdf-favicon');
     }
     if (clone.localName === 'image' && !url(source.getAttribute('href') || source.getAttribute('xlink:href'), true)) throw Error('An SVG image in this reply cannot be included safely in the PDF.');
     let svg = source.closest('svg');
@@ -83,6 +84,24 @@
     const math = source.closest('.katex, mjx-container, math');
     const paperText = !svg || (math && math.contains(svg));
     const css = source.isConnected && clone.style ? getComputedStyle(source) : null;
+    if (css && source.namespaceURI === 'http://www.w3.org/1999/xhtml' && !math) {
+      // Source badges use absolutely positioned images inside tiny wrappers.
+      // Once copied into the paper document they must not position themselves
+      // relative to the whole page or inherit its full width.
+      if (/^(absolute|fixed|sticky)$/.test(css.position)) {
+        clone.style.setProperty('position','static','important');
+        clone.style.setProperty('inset','auto','important');
+      }
+      if (source.localName === 'img') {
+        const rect=source.getBoundingClientRect(),width=rect.width||source.width,height=rect.height||source.height;
+        if(width>0&&height>0){
+          clone.style.setProperty('width',width+'px','important');
+          clone.style.setProperty('height','auto','important');
+          clone.style.setProperty('max-width','100%','important');
+          clone.style.setProperty('aspect-ratio',width+' / '+height);
+        }
+      }
+    }
     if (svg && css) {
       // Mermaid and native SVG charts may have a <style> scoped to their live
       // ID. Keep bounded computed paint/type properties before changing IDs,
@@ -168,7 +187,13 @@
     if (element.matches('button, [role="button"]') && !element.closest('[role="toolbar"], nav, ' + OWN) && visible(element) && !removed.has(element)) {
       // Generated pictures open a viewer through a button-shaped card. Preserve
       // its actual images, without copying the viewer trigger or action icons.
-      const images = [...element.querySelectorAll('img')];
+      const allImages = [...element.querySelectorAll('img')];
+      const images = allImages.filter(image => !favicon(image));
+      if (allImages.length && !images.length) {
+        const source=make('span','li-pdf-source');
+        source.textContent=(element.innerText || element.textContent || '').replace(/\s+/g,' ').trim();
+        return source.textContent ? source : null;
+      }
       if (images.length) {
         const figure = make('figure', 'li-pdf-media');
         for (const image of images) { const copy = cloneContent(image, replacements, removed); if (copy) figure.append(copy); }
@@ -199,6 +224,10 @@
     if (containsDiagram && !visible(element)) { clone.removeAttribute('hidden'); clone.classList.remove('latex-islands-original-hidden'); clone.style.setProperty('display', 'block', 'important'); }
     for (const child of element.childNodes) { const copy = cloneContent(child, replacements, removed); if (copy) clone.append(copy); }
     return clone;
+  }
+  function favicon(image) {
+    if(image.closest('[class^="Favicon-"], [class*=" Favicon-"], [data-testid*="favicon"]'))return true;
+    try {return /\/(?:s2\/favicons|favicon(?:s)?(?:\.\w+|\/|$))/i.test(new URL(image.currentSrc || image.getAttribute('src'),document.baseURI).pathname);}catch{return false;}
   }
   function uniqueIds(root, prefix) {
     let number = 0;
@@ -259,6 +288,8 @@
 #${id} .li-pdf-content thead { display:table-header-group; }
 #${id} .li-pdf-content tr { break-inside:avoid; }
 #${id} .li-pdf-content :is(img,canvas) { max-width:100% !important; height:auto; object-fit:contain; break-inside:avoid; }
+#${id} .li-pdf-favicon { display:inline-block; vertical-align:-.1em; margin-inline-end:3px; }
+#${id} .li-pdf-source { display:inline; margin-inline:.25em; }
 #${id} .li-pdf-content svg:not(svg svg) { display:block; max-width:100% !important; height:auto !important; max-height:180mm !important; break-inside:avoid; }
 #${id} .li-pdf-island { display:block; max-width:100%; margin:12pt 0; padding:0; break-inside:avoid; page-break-inside:avoid; }
 #${id} .li-pdf-diagram-fallback { break-inside:auto; page-break-inside:auto; border-left:3px solid #aaa; padding-left:10pt; }
