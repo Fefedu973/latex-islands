@@ -212,6 +212,7 @@ async function main(){
       const menuPoint=await cdp.evaluate(`(()=>{const frame=document.querySelector('iframe'),outer=frame.getBoundingClientRect(),rect=frame.contentDocument.getElementById('menu-toggle').getBoundingClientRect();return {x:outer.left+rect.left+rect.width/2,y:outer.top+rect.top+rect.height/2}})()`);
       await cdp.call('Input.dispatchMouseEvent',{type:'mouseMoved',...menuPoint});
       await cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      await until(()=>cdp.evaluate(`getComputedStyle(document.querySelector('iframe').contentDocument.querySelector('.floating-tools')).opacity==='1'`),'Diagram controls finish revealing on hover');
       const menuHover=await cdp.evaluate(`(()=>{const doc=document.querySelector('iframe').contentDocument,menu=doc.getElementById('menu-toggle'),css=getComputedStyle(menu),canvas=doc.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d');ctx.fillStyle=css.backgroundColor;ctx.fillRect(0,0,1,1);return {hovered:menu.matches(':hover'),background:css.backgroundColor,alpha:ctx.getImageData(0,0,1,1).data[3],toolsOpacity:getComputedStyle(menu.parentElement).opacity}})()`);
       if(!menuHover.hovered||menuHover.alpha!==255||menuHover.toolsOpacity!=='1')failures.push('Diagram options disappeared or became transparent on hover');
       await screenshot(mode.name+'-menu-hover.png');
