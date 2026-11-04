@@ -654,7 +654,7 @@
         if(mutation.attributeName===HIDDEN_ATTRIBUTE)continue;
         if(mutation.attributeName==='class') {
           const clean=value=>(value || '').replace(/\blatex-islands-[\w-]+\b/g,'').trim();
-          if(clean(mutation.oldValue)===clean(el.className)) continue;
+          if(clean(mutation.oldValue)===clean(el.getAttribute('class'))) continue;
         }
       }
       if(mutation.type==='childList' && [...mutation.addedNodes,...mutation.removedNodes].every(ownNode)) continue;
@@ -682,7 +682,7 @@
       // waits for the token throttle. Discover it in this observer microtask;
       // ordinary text streaming still uses the bounded scheduled scan.
       if(mutation.type==='childList' && [...mutation.addedNodes].some(node=>node.nodeType===Node.ELEMENT_NODE && !ownNode(node) && (node.matches(codeSelector) || node.querySelector(codeSelector))))urgent=true;
-      if(mutation.type==='attributes' && /^(?:data-message-author-role|data-chatgpt-search-unit-key|data-chatgpt-selection-message-id|data-conversation-role|data-markdown-text-style|data-markdown-copy|data-language)$/.test(mutation.attributeName))urgent=true;
+      if(mutation.type==='attributes' && /^(?:data-message-author-role|data-chatgpt-search-unit-key|data-content-search-unit-key|data-chatgpt-selection-message-id|data-conversation-role|data-markdown-text-style|data-markdown-copy|data-language)$/.test(mutation.attributeName))urgent=true;
       if(mutation.type==='attributes' && ['hidden','inert','aria-hidden'].includes(mutation.attributeName))urgent=true;
       if(mutation.type==='attributes' && ['style','class'].includes(mutation.attributeName) && assistantsWithin(el).some(message=>chatgpt.getCodeBlocks(message).some(code=>!states.has(code))))urgent=true;
       changed=true;

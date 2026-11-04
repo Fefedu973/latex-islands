@@ -66,6 +66,37 @@ test('only a missing modern endpoint triggers legacy fallback; legacy preserves 
   }
 });
 
+test('an unsupported envelope or missing pagination endpoint falls back to one complete mapping',async()=>{
+  const full={id:ID,title:'Complete mapping',mapping:{q:{message:message('q','user','Complete prompt')},a:{message:message('a','assistant','Complete answer')}}};
+  for(const mode of ['envelope','pagination']){
+    const requests=[];
+    const archive=await core.collectConversation({id:ID,fetchJSON:async path=>{
+      requests.push(path);
+      if(path==='/backend-api/conversation/'+ID)return full;
+      if(requests.length===1)return mode==='envelope'?{conversation:{title:'Changed envelope'}}:page([message('partial','assistant','Partial newest page')],'older');
+      throw Object.assign(new Error('Missing pagination endpoint'),{status:404});
+    }});
+    assert.equal(archive.completeness.pagination_complete,true);assert.equal(archive.completeness.pages,1);
+    assert.deepEqual(archive.messages.map(m=>m.id),['q','a']);assert.equal(archive.raw_pages[0].payload,full);
+    assert.equal(requests.length,mode==='envelope'?2:3);
+  }
+});
+
+test('fallback and later pages still reject another conversation and authentication failures',async()=>{
+  for(const mode of ['wrong-page','wrong-mapping','auth']){
+    let count=0;
+    await assert.rejects(core.collectConversation({id:ID,fetchJSON:async path=>{
+      count++;
+      if(count===1)return page([], 'older');
+      if(mode==='auth')throw Object.assign(new Error('Authentication required'),{status:401});
+      if(mode==='wrong-page')return page([],null,{conversation_id:'another'});
+      if(path.includes('/messages?'))throw Object.assign(new Error('Not found'),{status:404});
+      return {id:'another',mapping:{}};
+    }}),mode==='auth'?/Authentication required/:/does not match/);
+    assert.equal(count,mode==='wrong-mapping'?3:2);
+  }
+});
+
 test('input and server conversation IDs are checked before export', async () => {
   let called = false;
   await assert.rejects(core.collectConversation({id: '../../secret', fetchJSON: async () => { called = true; }}), /saved conversation/);

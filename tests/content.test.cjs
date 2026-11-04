@@ -61,6 +61,16 @@ function harness({streaming=false,saved={},source=SOURCE,modern=false}={}){
   return {w,get,storageWrites,resizeObservers,resize,setMedia,hidden:id=>w.getComputedStyle(get(id)).display==='none',before,advance,settings,connect,message,frames:()=>[...w.document.querySelectorAll('.latex-islands-container iframe')],close:()=>w.close()};
 }
 
+test('native SVG class mutations do not interrupt the diagram observer',async t=>{
+  const h=harness();t.after(h.close);await h.advance(2100);const errors=[];
+  h.w.addEventListener('error',event=>{errors.push(event.error);event.preventDefault();});
+  const svg=h.w.document.createElementNS('http://www.w3.org/2000/svg','svg');
+  h.get('native').append(svg);await tick();svg.classList.add('hovered');await h.advance(60);
+  assert.deepEqual(errors,[]);assert.equal(h.frames().length,1);
+  h.get('diagram').querySelector('code').textContent=SOURCE.replace('(1,1)','(2,2)');await h.advance(300);
+  assert.equal(h.frames().length,1);assert.equal(errors.length,0);
+});
+
 test('one assistant TikZ island is added while native math, user, composer and ordinary code stay intact',async t=>{
   const h=harness();t.after(h.close);await h.advance(2100);assert.equal(h.frames().length,1);
   const frame=h.frames()[0];assert.match(frame.src,/^chrome-extension:\/\/test-id\/island\.html\?/);

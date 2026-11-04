@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 (() => {
   'use strict';
-  // Semantic attributes observed in the public web UI, September 2026. Keep
+  // Semantic attributes observed in the public web UI, November 2026. Keep
   // the previous renderer supported during staged rollouts and account changes.
   const OWN = '.latex-islands-container, .latex-islands-editor, .li-export, .li-export-reply, .li-pdf-root';
-  const CANDIDATE = '[data-message-author-role], [data-chatgpt-search-unit-key], [data-chatgpt-selection-message-id]';
+  const CANDIDATE = '[data-message-author-role], [data-chatgpt-search-unit-key], [data-content-search-unit-key], [data-chatgpt-selection-message-id]';
   const SCROLL = '[data-app-action-timeline-scroll], [data-scroll-root], [class~="group/scroll-root"]';
   const STREAM = '[data-is-streaming="true"], .result-streaming, .streaming-animation, [aria-busy="true"]';
   const element = node => node?.nodeType === 1 ? node : node?.parentElement;
@@ -29,7 +29,7 @@
     if (!el) return '';
     const legacy = el.getAttribute('data-message-author-role');
     if (legacy === 'assistant' || legacy === 'user') return legacy;
-    const key = el.getAttribute('data-chatgpt-search-unit-key');
+    const key = el.getAttribute('data-chatgpt-search-unit-key') || el.getAttribute('data-content-search-unit-key');
     const keyed = key?.match(/:(user|assistant)$/)?.[1];
     if (keyed) return keyed;
     if (el.hasAttribute('data-chatgpt-selection-message-id') && el.querySelector('[data-markdown-text-style="assistant-message"]')) return 'assistant';
@@ -171,7 +171,7 @@
   }
   const observedAttributes = ['class', 'style', 'hidden', 'inert', 'aria-hidden', 'aria-busy', 'data-is-streaming', 'data-theme', 'data-language',
     'data-message-author-role', 'data-message-id', 'data-chatgpt-search-unit-key', 'data-chatgpt-search-message-ids', 'data-chatgpt-selection-message-id',
-    'data-conversation-role', 'data-markdown-text-style', 'data-markdown-copy', 'data-content-search-turn-key', 'data-turn-key',
+    'data-conversation-role', 'data-markdown-text-style', 'data-markdown-copy', 'data-content-search-turn-key', 'data-content-search-unit-key', 'data-turn-key',
     'data-app-shell-main-titlebar', 'data-app-shell-header-slot', 'data-app-shell-header-obstacle', 'data-testid', 'data-test-id', 'aria-label'];
   globalThis.LatexIslandsChatGPT = Object.freeze({getConversationRoot, getMessages, getMessage, role, messageId, turnIndex, getCodeBlocks, source, language,
     isStreaming, getScrollRoot, getViewport, getHeaderActions, getReplyActions, isVisible, observedAttributes});

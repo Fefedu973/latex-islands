@@ -59,6 +59,17 @@ test('header control is idempotent and option selection makes no request before 
   h.w.document.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(h.get('.li-export-panel').hidden,true);
 });
 
+test('closing a delayed PDF capture disposes it and the next preview collects fresh content',async t=>{
+  const h=harness();t.after(h.close);const pdf=installPDF(h),collect=h.w.LatexIslandsPDF.collect;
+  let complete;
+  h.w.LatexIslandsPDF.collect=settings=>new Promise(resolve=>{complete=async()=>resolve(await collect(settings));});
+  h.get('.li-export-toggle').click();h.format('pdf');h.get('.li-export-inspect').click();
+  h.get('.li-export-close').click();await complete();await h.settle();
+  assert.equal(pdf.captures[0].disposed,true);assert.equal(pdf.mounts.length,0);
+  h.w.LatexIslandsPDF.collect=collect;h.get('.li-export-toggle').click();h.get('.li-export-inspect').click();await h.settle();
+  assert.equal(pdf.collects.length,2);assert.equal(pdf.prepares[0].capture,pdf.captures[1]);
+});
+
 function modernTitlebar(id,hidden=false){return `<div data-app-shell-main-titlebar="true" aria-hidden="${hidden}" data-testid="app-shell-header-context-menu-surface"><div data-app-shell-header-obstacle="true"><div class="pointer-events-auto" style="pointer-events:auto"><div id="${id}" class="flex items-center gap-toolbar-action"><span><button aria-label="Share">Share</button></span><button aria-label="More">More</button></div></div></div></div>`;}
 const MODERN_PAGE=`<header hidden><div id="conversation-header-actions"></div></header><main data-app-shell-main-surface="browser"><header data-app-shell-titlebar="true" style="pointer-events:none">${modernTitlebar('inactive-actions',true)}${modernTitlebar('active-actions')}<div data-app-shell-header-slot="end"></div></header><div data-content-search-turn-key="turn-user"><div id="modern-user" data-chatgpt-search-unit-key="turn-user:user"><div data-user-message-bubble>Current prompt</div></div></div><div data-content-search-turn-key="turn-answer"><div id="modern-reply" data-chatgpt-search-unit-key="turn-answer:assistant"><h4 data-conversation-role="assistant">ChatGPT</h4><div data-chatgpt-selection-message-id="modern-answer"><div data-markdown-text-style="assistant-message"><p id="modern-prose">Modern DOM answer</p></div></div></div><div id="native-reply-actions" class="turn-action-controls"><button aria-label="Copy">Copy</button><button aria-label="More">More</button></div></div></main>`;
 
@@ -479,7 +490,8 @@ test('each reply has one PDF action which exports that reply and restores conver
   assert.deepEqual(Array.from(pdf.prepares[0].selectedKeys),['a1']);assert.deepEqual(pdf.mounts[0],['a1']);assert.equal(pdf.prints.length,0);
   h.change('#li-export-pdf-include-user',true);await h.settle();assert.deepEqual(pdf.mounts.at(-1),['q1','a1']);assert.equal(pdf.collects.length,1);
   h.get('.li-export-close').click();h.get('.li-export-toggle').click();assert.equal(h.get('#li-export-title').textContent,'Export conversation');assert.equal(h.get('#li-export-format').disabled,false);
-  h.get('.li-export-save').click();await h.settle();assert.equal(pdf.collects[1].replyElement,null);assert.equal(pdf.captures[0].disposed,true);
+  assert.equal(h.get('#li-export-format').value,'md','reply PDF does not replace the preferred transcript format');
+  h.format('pdf');h.get('.li-export-save').click();await h.settle();assert.equal(pdf.collects[1].replyElement,null);assert.equal(pdf.captures[0].disposed,true);
   assert.equal(h.w.document.querySelectorAll('.li-export-reply').length,1);
 });
 

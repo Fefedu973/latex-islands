@@ -1,4 +1,4 @@
-# Validation — 1.5.8
+# Validation — 1.5.9
 
 This file describes reproducible checks and their scope. It does not claim Chrome Web Store or Mozilla approval. No private conversations, account exports, HAR captures or credentials are part of the public fixtures.
 
@@ -23,6 +23,16 @@ node tests/firefox-smoke.mjs
 The Firefox smoke test requires Firefox installed locally. Set `FIREFOX_BINARY` to its executable if it is not at the default location. It copies `dist/firefox` into a temporary directory, installs that copy into a new temporary profile, runs headless, then removes its own test directory. The test copy adds a localhost fixture origin and reporting instrumentation; the release package and personal browser profiles are not modified.
 
 The font regression test requires Chrome or Edge (`CHROME_BINARY` can override discovery). It opens an isolated headless profile, serves the production island with a synthetic cached compilation, and deliberately delays bundled WOFF2 responses. It verifies that the loading indicator remains until the required faces load, then compares diagram pixels before and after hover in dark, light and native color modes. Screenshots and a report remain in the temporary directory printed by the test; the browser profile is removed.
+
+## Version 1.5.9 compatibility maintenance — 2026-11-04
+
+Live inspection of a signed-in ChatGPT conversation found message wrappers using both `data-chatgpt-search-unit-key` and `data-content-search-unit-key`, UUID exchange keys, a region with `data-app-action-timeline-scroll`, and working header/reply export controls. JSON preview failed with HTTP 404. Console logs reproduced an exception in the content observer because native SVG `className` is an `SVGAnimatedString`, not a string. The fix reads the class attribute instead.
+
+Regression checks cover SVG class changes, hydration without duplicate messages, bounded session retry after 404, endpoint/mapping fallback without partial exports, rejection of mismatched conversation IDs, visible TeX source without an active Island, and capture disposal after cancellation. The full unit/DOM suite passes (403 tests). The real TeX engine, delayed-font first paint, Chromium PDF/layout/history suite, and actual unpacked Chrome extension navigation and repair-prompt tests pass with Chrome 156.0.8078.80.
+
+Native `window.print()` with Save as PDF produced two four-page PDFs (53,291 bytes each, 8,272 characters in the regression extractor). Both real `afterprint` events restored the same preview. Rendered PDF pages were visually inspected, including healthy diagrams alongside a failed diagram's source/error and dark-theme text on white. Firefox package lint reports zero errors and its existing Android metadata warning. Desktop Firefox native printing was not newly checked.
+
+The corrected extension could not be reloaded and verified in the signed-in Chrome tab: computer control stopped because the tool could not establish its current URL confidently. The live HTTP 404 is established; its precise server cause and recovery using the new retry/fallback require a follow-up with 1.5.9 in that session. Synthetic regression success must not be reported as proof of complete authenticated live-site compatibility. No private message content or credentials were copied into fixtures.
 
 ## Version 1.5.8 PDF print lifecycle and compatibility checks — 2026-10-06
 

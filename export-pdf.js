@@ -282,9 +282,10 @@
 }`;
   }
   function hasIsland(element) {
-    if (element.querySelector('.latex-islands-container, .latex-islands-original-hidden')) return true;
-    const core = globalThis.LatexIslandsCore;
-    return Boolean(core && [...element.querySelectorAll('pre, code, .katex-error')].some(node => core.detectKind(node.getAttribute('data-latex') || node.textContent)));
+    // The snapshotter discovers renderable blocks before returning. TeX in a
+    // prompt, inline code or with rendering disabled is printable source, not
+    // an Island that the PDF must wait for.
+    return chatgpt.role(element) === 'assistant' && Boolean(element.querySelector('.latex-islands-container, .latex-islands-original-hidden'));
   }
   function pageMessages() {
     return chatgpt.getMessages().filter(element => !element.closest(OWN));
@@ -349,7 +350,7 @@
       const snapshotter = globalThis.LatexIslandsDiagramExport?.snapshot;
       if (!snapshotter && hasIsland(source)) throw Error('LaTeX Island export is unavailable. Reload the page and render the diagrams before exporting.');
       try {
-        snapshots = snapshotter ? await bounded(snapshotter(source, {signal, tolerateErrors:true}), signal, 'A diagram did not finish rendering for PDF export.') : [];
+        snapshots = snapshotter && chatgpt.role(source) === 'assistant' ? await bounded(snapshotter(source, {signal, tolerateErrors:true}), signal, 'A diagram did not finish rendering for PDF export.') : [];
         if (waitForDiagram && hasIsland(source) && !snapshots.length) throw Error('A LaTeX Island is not ready.');
         break;
       } catch (error) {

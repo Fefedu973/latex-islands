@@ -474,6 +474,21 @@ test('capture waits for a newly mounted diagram before freezing its rendered sna
   const pdf=await h.prepare({capture});t.after(pdf.dispose);assert.ok(pdf.root.querySelector('.li-pdf-island-image'));
 });
 
+test('PDF includes visible TeX source when it is not a rendered Island',async t=>{
+  const code='\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}';
+  const h=harness(t,`<main><article data-message-author-role="user"><p>Why does this fail?</p><pre><code>${code}</code></pre></article><article data-message-author-role="assistant"><p>Try <code>${code}</code> instead.</p><pre><code>${code}</code></pre></article></main>`);
+  fastCollection(h);
+  // Rendering is disabled, or the source is in a prompt or inline code.
+  // The renderer's synchronous discovery pass found nothing to snapshot.
+  h.w.LatexIslandsCore=require('../core.js');let now=1000,queries=0;
+  h.w.Date.now=()=>now;
+  h.w.LatexIslandsDiagramExport={snapshot:async()=>{queries++;now+=15001;return [];}};
+  const capture=await h.collect({replyElement:h.get('[data-message-author-role="assistant"]')});t.after(capture.dispose);
+  const pdf=await h.prepare({capture});t.after(pdf.dispose);
+  assert.deepEqual([...pdf.root.querySelectorAll('code')].map(el=>el.textContent),[code,code,code]);
+  assert.equal(pdf.warningCount,0);assert.ok(queries<=1,'user prompts must never trigger a diagram scan');
+});
+
 test('removing the host boot loader during snapshot readiness does not change the message fingerprint',async t=>{
   const h=harness(t,'<main><article data-message-author-role="assistant" data-message-id="a1"><p>Actual answer</p><pre id="tex" class="latex-islands-original-hidden">TikZ source</pre><div class="latex-islands-container"><iframe></iframe><div class="latex-islands-boot"><span role="status">Rendering diagram…</span><button>Show code</button></div></div></article></main>');
   fastCollection(h);let calls=0;

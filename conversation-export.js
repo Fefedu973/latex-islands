@@ -138,7 +138,7 @@
   function show(open){
     clearTimeout(previewTimer);previewTimer=0;
     hideTooltip();globalThis.LatexIslandsNativeControls.closeAll();
-    if(!open){if(running)cancelExport();try{panel.close?.();}catch{}snapshot=null;snapshotRevision=-1;previewRequested=false;previewBox.hidden=true;emptyPreview.hidden=false;status.textContent='';replyElement=null;pdfViewSequence++;pdfDocument?.dispose();pdfDocument=null;pdfCapture?.dispose();pdfCapture=null;pdfSelection=null;textSelection=null;previewMode='dialogue';search.value='';}
+    if(!open){if(running)cancelExport();try{panel.close?.();}catch{}snapshot=null;snapshotRevision=-1;previewRequested=false;previewBox.hidden=true;emptyPreview.hidden=false;status.textContent='';if(replyElement)format.value=preferences.format;replyElement=null;pdfViewSequence++;pdfDocument?.dispose();pdfDocument=null;pdfCapture?.dispose();pdfCapture=null;pdfSelection=null;textSelection=null;previewMode='dialogue';search.value='';}
     panel.hidden=!open;toggle.setAttribute('aria-expanded',String(open));
     if(open){lastFocus=document.activeElement;updateFormat();panel.showModal?.();(replyElement?inspect:dropdowns.get(format).trigger).focus();schedulePreview();}
     else if(lastFocus?.isConnected)lastFocus.focus();
@@ -298,7 +298,9 @@
         pdfAbort=new AbortController();
         if(!pdfCapture||action==='refresh'){
           pdfCapture?.dispose();pdfCapture=null;pdfSelection=null;
-          pdfCapture=await globalThis.LatexIslandsPDF.collect({replyElement,includePrecedingPrompt:true,signal:pdfAbort.signal,onProgress(){if(core.conversationId(location.pathname)!==id)cancelExport();}});
+          const capture=await globalThis.LatexIslandsPDF.collect({replyElement,includePrecedingPrompt:true,signal:pdfAbort.signal,onProgress(){if(core.conversationId(location.pathname)!==id)cancelExport();}});
+          if(canceled||core.conversationId(location.pathname)!==id){capture.dispose();throw new Error('Export cancelled.');}
+          pdfCapture=capture;
           if(replyElement)pdfSelection=new Set(pdfCapture.messages.filter(entry=>entry.role==='assistant'||pdfUser.checked).map(entry=>entry.key));
         }
         if(canceled||core.conversationId(location.pathname)!==id)throw new Error('Export cancelled.');
@@ -310,9 +312,9 @@
       }
       if(!snapshot||snapshotRevision!==revision||action==='refresh'){
         const startedRevision=revision;
-        snapshot=await core.collectConversation({id,fetchJSON,onProgress(){
+        const collected=await core.collectConversation({id,fetchJSON,onProgress(){
           if(core.conversationId(location.pathname)!==id){cancelExport();throw new Error('Conversation changed. Export cancelled.');}
-        }});snapshotRevision=startedRevision;
+        }});if(canceled||core.conversationId(location.pathname)!==id)throw new Error('Export cancelled.');snapshot=collected;snapshotRevision=startedRevision;
       }
       if(canceled||core.conversationId(location.pathname)!==id)throw new Error('Export cancelled.');
       const text=output(snapshot,selectedFormat,{...selectedOptions,selectedMessageIds:textSelection===null?null:[...textSelection]});
